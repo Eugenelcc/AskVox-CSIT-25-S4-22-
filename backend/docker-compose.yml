@@ -1,0 +1,15 @@
+services:
+  db:
+    image: postgres:16
+    container_name: askvox_db
+    environment:
+      POSTGRES_USER: askvox
+      POSTGRES_PASSWORD: askvox_pw
+      POSTGRES_DB: askvox
+    ports:
+      - "5432:5433"
+    volumes:
+      - askvox_pgdata:/var/lib/postgresql/data
+
+volumes:
+  askvox_pgdata:
