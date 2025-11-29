@@ -3,13 +3,27 @@ services:
     image: postgres:16
     container_name: askvox_postgres_container
     environment:
+      POSTGRES_DB: askvox_db
       POSTGRES_USER: askvox_user
       POSTGRES_PASSWORD: askvox_pw
-      POSTGRES_DB: askvox_db
     ports:
       - "5433:5432"
     volumes:
       - askvox_pgdata:/var/lib/postgresql/data
+
+  api:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: askvox_api_container
+    env_file:
+      - .env.docker
+    depends_on:
+      - db
+    ports:
+      - "8000:8000"
+    volumes:
+      - .:/app
 
 volumes:
   askvox_pgdata:
