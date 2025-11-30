@@ -17,13 +17,27 @@ services:
       dockerfile: Dockerfile
     container_name: askvox_api_container
     env_file:
-      - .env.docker
+      - .env
     depends_on:
       - db
     ports:
       - "8000:8000"
     volumes:
       - .:/app
+    environment:
+      # Hardcoding the hostname to be 'db', instead of the ".env" provided value
+      # (something like 'localhost' during dev)
+      #
+      # We used the ".env" provided hostname previously, and it caused issues.....
+      # When other things outside of docker requires connecting to the database (e.g alembic, database seeding scripts),
+      # they were unable to run because the hostname in the db connection string didn't resolve to anything
+      # (naturally, as they were running OUTSIDE of docker)
+      #
+      # As such, the simplest way was to just hardcode it in this specific instance,
+      # to the name of the 'postgres' service above
+      DATABASE_URL_SYNC: postgresql+psycopg://askvox_user:askvox_pw@db:5432/askvox_db
+      DATABASE_URL: postgresql+asyncpg://askvox_user:askvox_pw@db:5432/askvox_db
 
+    
 volumes:
   askvox_pgdata:

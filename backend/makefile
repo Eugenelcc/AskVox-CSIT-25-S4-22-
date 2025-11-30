@@ -9,3 +9,6 @@ logs:
 
 down:
 	docker compose down
+
+seed:
+	python seeding/seed_admin.py

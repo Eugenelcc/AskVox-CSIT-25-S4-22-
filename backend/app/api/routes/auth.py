@@ -1,5 +1,5 @@
 from datetime import datetime, timezone
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException,status
 from pydantic import BaseModel, EmailStr
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
@@ -45,7 +45,6 @@ async def register(payload: RegisterIn, db: AsyncSession = Depends(get_db)):
     res = await db.execute(select(User).where(User.email == payload.email))
     if res.scalar_one_or_none():
         raise HTTPException(status_code=400, detail="Email already exists")
-
     u = User(
         email=payload.email,
         password_hash=hash_password(payload.password),
@@ -62,7 +61,7 @@ async def login(payload: LoginIn, db: AsyncSession = Depends(get_db)):
     res = await db.execute(select(User).where(User.email == payload.email))
     user = res.scalar_one_or_none()
     if not user or not user.is_active or not verify_password(payload.password, user.password_hash):
-        raise HTTPException(status_code=401, detail="Invalid credentials")
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid credentials")
 
     # create session (refresh)
     raw_refresh = create_refresh_token()
@@ -85,10 +84,10 @@ async def refresh(payload: RefreshIn, db: AsyncSession = Depends(get_db)):
     res = await db.execute(select(UserSession).where(UserSession.refresh_token_hash == token_hash))
     session = res.scalar_one_or_none()
     if not session:
-        raise HTTPException(status_code=401, detail="Invalid refresh token")
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid refresh token")
 
     if session.revoked_at is not None or session.expires_at <= datetime.now(timezone.utc):
-        raise HTTPException(status_code=401, detail="Refresh token expired or revoked")
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Refresh token expired or revoked")
 
     # rotate refresh token: revoke old & create new
     session.revoked_at = datetime.now(timezone.utc)
