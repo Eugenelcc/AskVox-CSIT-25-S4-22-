@@ -122,27 +122,93 @@ python docker.py down    # docker compose down
 
 ---
 
+## Creating a Virtual Environment (venv) — explicit steps
+
+If you want to run the backend locally without Docker, create and use a Python virtual environment to isolate dependencies. The following steps show how to create, activate, install dependencies, and deactivate a venv on macOS/Linux and Windows.
+
+Note: the project also provides `dev.py` which automates some of these steps (see "Optional: Local Dev (venv)" below). The commands below are the manual equivalents.
+
+1) From the `backend/` folder, create the venv:
+- Mac / Linux
+  ```bash
+  python3 -m venv .venv
+  ```
+- Windows (PowerShell / CMD, where `python` points to your desired Python)
+  ```powershell
+  python -m venv .venv
+  ```
+
+2) Activate the venv:
+- Mac / Linux
+  ```bash
+  source .venv/bin/activate
+  ```
+- Windows PowerShell
+  ```powershell
+  .venv\Scripts\Activate.ps1
+  ```
+- Windows CMD
+  ```cmd
+  .venv\Scripts\activate.bat
+  ```
+
+3) Upgrade pip (recommended) and install requirements:
+```bash
+pip install --upgrade pip
+pip install -r requirements.txt
+```
+
+4) Verify installation and Python interpreter:
+```bash
+python -V
+pip list
+```
+
+5) Run the app (development mode with auto-reload):
+```bash
+uvicorn app.main:app --reload --host 0.0.0.0 --port 8000
+```
+Replace `app.main:app` with the actual import path for the FastAPI app if different.
+
+6) Deactivate the venv when done:
+```bash
+deactivate
+```
+
+Tips:
+- If `python3` is required on your machine, use `python3` instead of `python`.
+- If you prefer `poetry` or `pipenv`, you can use those tools instead — they provide similar isolation and dependency management.
+- If the repository includes `dev.py`, `python dev.py setup` may create and install the venv for you (see next section).
+
+---
+
 ## Optional: Local Dev (venv)
 
-If you prefer running FastAPI locally:
+If you prefer running FastAPI locally using the helper scripts in this repo:
 
-### 1) Create venv + install deps
+### 1) Create venv + install deps (helper)
 ```bash
 python dev.py setup
 ```
+This script typically:
+- creates a `.venv`
+- activates it (or instructs you to activate)
+- installs dependencies (from `requirements.txt`)
 
-### 2) Run migrations
+### 2) Run migrations (helper)
 ```bash
 python dev.py migrate
 ```
 
-### 3) Run API
+### 3) Run API (helper)
 ```bash
 python dev.py run
 ```
 
 Swagger:
 - http://127.0.0.1:8000/docs
+
+If you prefer to do the steps manually, follow the "Creating a Virtual Environment (venv)" section above.
 
 ---
 
