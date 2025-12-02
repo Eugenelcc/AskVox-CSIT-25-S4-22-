@@ -37,7 +37,7 @@ services:
       # to the name of the 'postgres' service above
       DATABASE_URL_SYNC: postgresql+psycopg://askvox_user:askvox_pw@db:5432/askvox_db
       DATABASE_URL: postgresql+asyncpg://askvox_user:askvox_pw@db:5432/askvox_db
-
+    command: ["sh", "/app/entrypoint.sh"]
     
 volumes:
   askvox_pgdata:
