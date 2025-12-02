@@ -34,6 +34,6 @@ echo "✅ Migrations done"
 # echo "== AskVox: seeding admin =="
 # python seeding/seed_admin.py
 # echo "✅ Seeding done"
-
+# Look 
 echo "== AskVox: starting server =="
 exec python -m uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
