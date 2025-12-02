@@ -12,3 +12,6 @@ down:
 
 seed:
 	python seeding/seed_admin.py
+
+start:
+	python -m uvicorn app.main:app --reload --port 8000
