@@ -25,3 +25,7 @@ migrate:
 #make dbcommit m='Random message'
 dbcommit:
 	alembic revision --autogenerate -m $(m)
+
+
+migrate-down:
+	alembic downgrade -1
