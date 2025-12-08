@@ -22,5 +22,6 @@ migrate:
 
 
 #Commit alembic changes
+#make dbcommit m='Random message'
 dbcommit:
 	alembic revision --autogenerate -m $(m)
