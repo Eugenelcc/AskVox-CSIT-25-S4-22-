@@ -18,7 +18,9 @@ load_dotenv(BASE_DIR / ".env")
 
 # --- Import metadata (models must be imported) ---
 from app.db.base import Base  # noqa: E402
-from app.models import *  # noqa: F401,E402
+# Import the models module so model classes are registered on Base.metadata.
+# Avoid `from app.models import *` which triggers linter errors (F403).
+import app.models  # noqa: F401,E402
 
 config = context.config
 
