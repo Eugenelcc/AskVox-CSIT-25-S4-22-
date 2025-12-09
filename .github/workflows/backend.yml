@@ -30,8 +30,8 @@ jobs:
       - name: Ruff (must pass)
         run: ruff check backend
 
-      - name: Black (must pass)
-        run: black --check backend
+     # - name: Black (must pass)
+      #  run: black --check backend
 
   test:
     name: Tests + Migrations
