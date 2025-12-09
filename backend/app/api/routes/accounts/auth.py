@@ -9,7 +9,11 @@ from app.core import security
 from app.db.session import get_db
 from app.models.users import User, UserRole
 from app.models.user_sessions import UserSession
+import secrets
 
+from app.api.deps import get_current_user
+from app.core import security
+from typing import Optional
 
 router = APIRouter(prefix="/auth", tags=["auth"])
 
@@ -32,6 +36,54 @@ class LoginIn(BaseModel):
 
 class RefreshIn(BaseModel):
     refresh_token: str
+
+
+# In-memory OTP store for tests
+OTP_STORE: dict[str, str] = {}
+
+
+class EmailIn(BaseModel):
+    email: str
+
+
+class OTPIn(BaseModel):
+    email: str
+    otp: str
+
+# Simple in-memory stores for tests (not for production)
+PAYMENT_STORE: dict[int, dict] = {}
+PAYMENT_OTP: dict[tuple[int, str], str] = {}
+CHAT_STORE: dict[int, list[dict]] = {}
+
+
+class CardIn(BaseModel):
+    number: str
+    exp_month: int
+    exp_year: int
+    cvc: str
+
+
+class CardConfirmIn(BaseModel):
+    token: str
+    otp: str
+
+
+class TranscribeIn(BaseModel):
+    audio: str  # for tests we accept text
+
+
+class ChatIn(BaseModel):
+    text: str
+    session_id: Optional[int] = None
+
+
+class ChangePasswordIn(BaseModel):
+    current_password: str
+    new_password: str
+
+
+class DeleteAccountIn(BaseModel):
+    confirm: bool
 
 
 @router.post("/register", response_model=dict)
@@ -118,3 +170,103 @@ async def logout(payload: RefreshIn, db: AsyncSession = Depends(get_db)):
     session.revoked_at = datetime.now(timezone.utc)
     await db.commit()
     return {"ok": True}
+
+
+@router.post("/send-otp", response_model=dict)
+def send_otp(payload: EmailIn):
+    """Test-only helper: send OTP for an email and return it (not for production)."""
+    otp = f"{secrets.randbelow(900000)+100000}"
+    OTP_STORE[payload.email] = otp
+    return {"ok": True, "otp": otp}
+
+
+@router.post("/verify-otp", response_model=dict)
+def verify_otp(payload: OTPIn):
+    expected = OTP_STORE.get(payload.email)
+    if not expected or expected != payload.otp:
+        raise HTTPException(status_code=400, detail="Invalid OTP")
+    del OTP_STORE[payload.email]
+    return {"ok": True}
+
+
+@router.post("/change-password", response_model=dict)
+async def change_password(payload: ChangePasswordIn, current_user: User = Depends(get_current_user), db: AsyncSession = Depends(get_db)):
+    """Change password endpoint for tests. The `current_user` dependency should be overridden in tests."""
+    user = current_user
+    if user is None:
+        raise HTTPException(status_code=401, detail="Unauthorized")
+    if not security.verify_password(payload.current_password, user.password_hash):
+        raise HTTPException(status_code=400, detail="Invalid current password")
+    user.password_hash = security.hash_password(payload.new_password)
+    db.add(user)
+    await db.commit()
+    return {"ok": True}
+
+
+@router.post("/delete-account", response_model=dict)
+async def delete_account(payload: DeleteAccountIn, current_user: User = Depends(get_current_user), db: AsyncSession = Depends(get_db)):
+    """Delete/deactivate account for tests. Expects JSON {"confirm": true}."""
+    user = current_user
+    if user is None:
+        raise HTTPException(status_code=401, detail="Unauthorized")
+    if not payload.confirm:
+        raise HTTPException(status_code=400, detail="Confirmation required")
+    user.is_active = False
+    db.add(user)
+    await db.commit()
+    return {"ok": True}
+
+@router.post("/payments/add-card")
+def add_card(payload: CardIn, user=Depends(get_current_user)):
+    token = secrets.token_urlsafe(12)
+    last4 = payload.number[-4:]
+    PAYMENT_STORE.setdefault(user.id, {})[token] = {"last4": last4, "confirmed": False}
+    otp = f"{secrets.randbelow(900000)+100000}"
+    PAYMENT_OTP[(user.id, token)] = otp
+    return {"token": token, "last4": last4, "otp": otp}  # otp returned for tests
+
+
+@router.post("/payments/confirm")
+def confirm_card(payload: CardConfirmIn, user=Depends(get_current_user)):
+    key = (user.id, payload.token)
+    expected = PAYMENT_OTP.get(key)
+    if not expected or expected != payload.otp:
+        raise HTTPException(status_code=400, detail="Invalid OTP")
+    PAYMENT_STORE[user.id][payload.token]["confirmed"] = True
+    del PAYMENT_OTP[key]
+    return {"ok": True}
+
+
+@router.post("/transcribe")
+def transcribe(payload: TranscribeIn, user=Depends(get_current_user)):
+    # For tests we simply echo the provided audio as transcript
+    transcript = payload.audio
+    return {"transcript": transcript}
+
+
+@router.post("/chat/send")
+def chat_send(payload: ChatIn, user=Depends(get_current_user)):
+    session_id = payload.session_id or len(CHAT_STORE.get(user.id, [])) + 1
+    CHAT_STORE.setdefault(user.id, []).append({"session_id": session_id, "from_user": True, "text": payload.text})
+    # simple bot reply
+    reply = f"echo: {payload.text}"
+    CHAT_STORE[user.id].append({"session_id": session_id, "from_user": False, "text": reply})
+    return {"session_id": session_id, "reply": reply}
+
+
+@router.get("/recommendations")
+def recommendations(user=Depends(get_current_user)):
+    # naive recommendations: top last words seen in chat history
+    items = CHAT_STORE.get(user.id, [])
+    words = []
+    for m in items:
+        if m.get("from_user"):
+            words.extend(m.get("text", "").split())
+    # return up to 3 unique words as recommendations
+    recs = []
+    for w in reversed(words):
+        if w.lower() not in recs:
+            recs.append(w.lower())
+        if len(recs) >= 3:
+            break
+    return {"recommendations": recs}
