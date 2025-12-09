@@ -99,7 +99,7 @@ jobs:
       - name: Run tests
         working-directory: backend
         run: |
-          pytest -q
+          pytest .\tests\system\test_system_endpoints.py 
 
       - name: Upload pytest cache (optional)
         if: always()

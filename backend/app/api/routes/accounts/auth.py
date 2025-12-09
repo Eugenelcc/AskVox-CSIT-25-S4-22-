@@ -5,13 +5,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
 
 from app.core.config import settings
-from app.core.security import (
-    hash_password,
-    verify_password,
-    create_access_token,
-    create_refresh_token,
-    hash_refresh_token,
-)
+from app.core import security
 from app.db.session import get_db
 from app.models.users import User, UserRole
 from app.models.user_sessions import UserSession
@@ -47,7 +41,7 @@ async def register(payload: RegisterIn, db: AsyncSession = Depends(get_db)):
         raise HTTPException(status_code=400, detail="Email already exists")
     u = User(
         email=payload.email,
-        password_hash=hash_password(payload.password),
+        password_hash=security.hash_password(payload.password),
         role=UserRole.user.value,
     )
     db.add(u)
@@ -60,26 +54,26 @@ async def register(payload: RegisterIn, db: AsyncSession = Depends(get_db)):
 async def login(payload: LoginIn, db: AsyncSession = Depends(get_db)):
     res = await db.execute(select(User).where(User.email == payload.email))
     user = res.scalar_one_or_none()
-    if not user or not user.is_active or not verify_password(payload.password, user.password_hash):
+    if not user or not user.is_active or not security.verify_password(payload.password, user.password_hash):
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid credentials")
 
     # create session (refresh)
-    raw_refresh = create_refresh_token()
+    raw_refresh = security.create_refresh_token()
     session = UserSession(
         user_id=user.id,
-        refresh_token_hash=hash_refresh_token(raw_refresh),
+        refresh_token_hash=security.hash_refresh_token(raw_refresh),
         expires_at=UserSession.default_expiry(settings.refresh_token_expire_days),
     )
     db.add(session)
     await db.commit()
 
-    access = create_access_token(user_id=user.id, role=user.role)
+    access = security.create_access_token(user_id=user.id, role=user.role)
     return TokenOut(access_token=access, refresh_token=raw_refresh)
 
 
 @router.post("/refresh", response_model=TokenOut)
 async def refresh(payload: RefreshIn, db: AsyncSession = Depends(get_db)):
-    token_hash = hash_refresh_token(payload.refresh_token)
+    token_hash = security.hash_refresh_token(payload.refresh_token)
 
     res = await db.execute(select(UserSession).where(UserSession.refresh_token_hash == token_hash))
     session = res.scalar_one_or_none()
@@ -97,10 +91,10 @@ async def refresh(payload: RefreshIn, db: AsyncSession = Depends(get_db)):
     if not user or not user.is_active:
         raise HTTPException(status_code=401, detail="User not found or inactive")
 
-    new_refresh = create_refresh_token()
+    new_refresh = security.create_refresh_token()
     new_session = UserSession(
         user_id=user.id,
-        refresh_token_hash=hash_refresh_token(new_refresh),
+        refresh_token_hash=security.hash_refresh_token(new_refresh),
         expires_at=UserSession.default_expiry(settings.refresh_token_expire_days),
         
     )
@@ -108,13 +102,13 @@ async def refresh(payload: RefreshIn, db: AsyncSession = Depends(get_db)):
 
     await db.commit()
 
-    access = create_access_token(user_id=user.id, role=user.role)
+    access = security.create_access_token(user_id=user.id, role=user.role)
     return TokenOut(access_token=access, refresh_token=new_refresh)
 
 
 @router.post("/logout", response_model=dict)
 async def logout(payload: RefreshIn, db: AsyncSession = Depends(get_db)):
-    token_hash = hash_refresh_token(payload.refresh_token)
+    token_hash = security.hash_refresh_token(payload.refresh_token)
     res = await db.execute(select(UserSession).where(UserSession.refresh_token_hash == token_hash))
     session = res.scalar_one_or_none()
     if not session:
