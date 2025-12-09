@@ -84,7 +84,7 @@ jobs:
       - name: Run tests (inside api container)
         run: |
           cd backend
-          docker compose exec -T api bash -lc "PYTHONPATH=/app pytest ./tests/system/test_system_endpoints.py -q"
+          docker compose exec -T api bash -lc "PYTHONPATH=/app pytest ./tests/system/test_system_endpoints.py -q -rs -vv"
 
       - name: Tear down compose
         if: always()
