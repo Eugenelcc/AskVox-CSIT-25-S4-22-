@@ -34,7 +34,7 @@ jobs:
       #  run: black --check backend
 
   test:
-    name: Tests + Migrations
+    name: Tests + Migrations + Postgres (Docker Compose)
     runs-on: ubuntu-latest
     needs: lint
 
