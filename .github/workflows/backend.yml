@@ -79,12 +79,12 @@ jobs:
       - name: Run Alembic migrations (inside api container)
         run: |
           cd backend
-          docker compose exec -T api alembic -c alembic.ini upgrade head
+          docker compose exec -T api bash -lc "PYTHONPATH=/app alembic -c alembic.ini upgrade head"
 
       - name: Run tests (inside api container)
         run: |
           cd backend
-          docker compose exec -T api pytest ./tests/system/test_system_endpoints.py -q
+          docker compose exec -T api bash -lc "PYTHONPATH=/app pytest ./tests/system/test_system_endpoints.py -q"
 
       - name: Tear down compose
         if: always()
