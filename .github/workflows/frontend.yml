@@ -38,17 +38,18 @@ jobs:
       - name: Run tests
         run: |
           if [ -f package.json ] && jq -e '.scripts.test' package.json > /dev/null 2>&1; then
-            npm test --silent || echo "Tests failed" && exit 1
+            npm test --silent || { echo "Tests failed"; exit 1; }
           else
             echo "No test script defined, skipping"
           fi
 
       - name: Configure GitHub Pages
-        uses: actions/configure-pages@v3
+        # upgrade to a version that no longer depends on upload-artifact@v3
+        uses: actions/configure-pages@v4
 
       - name: Upload artifact for GitHub Pages
-        # use v2 which avoids deprecated internal dependency on actions/upload-artifact@v3
-        uses: actions/upload-pages-artifact@v2
+        # use a newer upload-pages-artifact that depends on upload-artifact@v4
+        uses: actions/upload-pages-artifact@v3
         with:
           path: ${{ env.BUILD_DIR }}
 
