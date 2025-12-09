@@ -1,17 +1,16 @@
 import sys
+import asyncio
 from pathlib import Path
 
-BASE_DIR = Path(__file__).resolve().parents[1]
-sys.path.append(str(BASE_DIR))
-
-import asyncio
 from sqlalchemy import select
 
 from app.db.session import SessionLocal
 from app.models.users import User, UserRole 
-from app.models.user_sessions import UserSession
+#from app.models.user_sessions import UserSession
 from app.core.security import hash_password
 
+BASE_DIR = Path(__file__).resolve().parents[1]
+sys.path.append(str(BASE_DIR))
 
 ADMIN_EMAIL = "admin@askvox.com"
 ADMIN_PASSWORD = "Admin123!"  # change after first login
