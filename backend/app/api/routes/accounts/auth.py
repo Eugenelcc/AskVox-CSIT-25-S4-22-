@@ -12,7 +12,6 @@ from app.models.user_sessions import UserSession
 import secrets
 
 from app.api.deps import get_current_user
-from app.core import security
 from typing import Optional
 
 router = APIRouter(prefix="/auth", tags=["auth"])
