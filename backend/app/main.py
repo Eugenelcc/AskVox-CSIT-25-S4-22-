@@ -10,7 +10,8 @@ from app.api.me import router as me_router
 from app.api.admin import router as admin_router
 from app.api.chats.chat import router as chat_router
 
-from app.services.stt_router import router as services_router
+from app.services.stt_router import router as services_router   
+from app.services.google_stt import router as google_stt_router
 
 
 app = FastAPI(title="AskVox API")
@@ -29,6 +30,7 @@ app.include_router(me_router)
 app.include_router(admin_router)
 app.include_router(chat_router)
 app.include_router(services_router)
+app.include_router(google_stt_router)
 
 @app.get("/health")
 def health():

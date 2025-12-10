@@ -28,10 +28,22 @@ const ChatBar: FC<ChatBarProps> = ({
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
   const audioChunksRef = useRef<BlobPart[]>([]);
   const [isTranscribing, setIsTranscribing] = useState(false);
+  // guard to avoid submitting the same text twice in quick succession
+  const lastSubmittedRef = useRef<{ text: string; ts: number } | null>(null);
 
   const sendMessage = () => {
     const trimmed = value.trim();
     if (!trimmed || disabled) return;
+    // prevent duplicate submissions of the same text within 3s
+    const now = Date.now();
+    if (
+      lastSubmittedRef.current &&
+      lastSubmittedRef.current.text === trimmed &&
+      now - lastSubmittedRef.current.ts < 3000
+    ) {
+      return;
+    }
+    lastSubmittedRef.current = { text: trimmed, ts: now };
     onSubmit?.(trimmed);
     setValue("");
   };
@@ -90,7 +102,7 @@ const ChatBar: FC<ChatBarProps> = ({
           const formData = new FormData();
           formData.append("file", audioBlob, "recording.webm");
 
-          const res = await fetch("http://localhost:8000/stt", {
+          const res = await fetch("http://localhost:8000/gstt/transcribe", {
             method: "POST",
             body: formData,
           });
@@ -104,9 +116,24 @@ const ChatBar: FC<ChatBarProps> = ({
           const transcript = data.text ?? "";
 
           if (transcript) {
-            setValue((prev) =>
-              prev ? `${prev.trim()} ${transcript}` : transcript
-            );
+            const finalText = (() => {
+              // compute what the combined text would be
+              const current = textareaRef.current?.value ?? "";
+              return current ? `${current.trim()} ${transcript}` : transcript;
+            })();
+
+            // prevent duplicate auto-submit of identical text
+            const now = Date.now();
+            if (
+              !disabled &&
+              !(lastSubmittedRef.current && lastSubmittedRef.current.text === finalText.trim() && now - lastSubmittedRef.current.ts < 3000)
+            ) {
+              lastSubmittedRef.current = { text: finalText.trim(), ts: now };
+              onSubmit?.(finalText.trim());
+            }
+
+            // clear the local input because we've submitted
+            setValue("");
           }
         } catch (err) {
           console.error("Error calling STT endpoint", err);
