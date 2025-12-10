@@ -90,7 +90,7 @@ const ChatBar: FC<ChatBarProps> = ({
           const formData = new FormData();
           formData.append("file", audioBlob, "recording.webm");
 
-          const res = await fetch("http://localhost:8000/api/stt", {
+          const res = await fetch("http://localhost:8000/stt", {
             method: "POST",
             body: formData,
           });

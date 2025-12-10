@@ -8,8 +8,8 @@ import ChatMessages from "../components/chat/ChatMessages";
 import type { ChatMessage } from "../components/chat/ChatMessages";
 import "./cssfiles/UnregisteredMain.css";
 
-const USER_ID: 874902 = 874902;
-const LLAMA_ID: 212020 = 212020;
+const USER_ID = 874902 as const;
+const LLAMA_ID = 212020 as const;
 
 const UnregisteredMain: FC = () => {
   const [messages, setMessages] = useState<ChatMessage[]>([]);
@@ -41,7 +41,7 @@ const UnregisteredMain: FC = () => {
 
       // call the backend
     try {
-      const resp = await fetch("http://localhost:8000/api/chats", {
+      const resp = await fetch("http://localhost:8000/chats", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
