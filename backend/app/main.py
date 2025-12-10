@@ -4,9 +4,9 @@ from sqlalchemy import text
 from app.db.session import get_db
 
 
-from app.api.routes.accounts.auth import router as auth_router
-from app.api.routes.me import router as me_router
-from app.api.routes.admin import router as admin_router
+from app.api.accounts.auth import router as auth_router
+from app.api.me import router as me_router
+from app.api.admin import router as admin_router
 
 
 app = FastAPI(title="AskVox API")
