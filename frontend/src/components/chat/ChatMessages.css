@@ -1,0 +1,103 @@
+
+.av-chat-window {
+    position: relative;
+    width: min(900px, calc(100% - 40px));
+    margin: 0 auto;
+    padding-top: 16px;
+  }
+  
+
+
+  .av-chat-scroll {
+
+  
+    padding: 8px 4px 24px;
+    display: flex;
+    flex-direction: column;
+    gap: 30px;
+  }
+  
+  /* row alignment */
+  .av-chat-row {
+    display: flex;
+  }
+  
+  .av-chat-row-user {
+    justify-content: flex-end;
+  }
+  
+  .av-chat-row-assistant {
+    justify-content: flex-start;
+  }
+  
+
+  .av-chat-bubble {
+    display: inline-block;
+    max-width: 97%;
+    padding: 20px 22px;
+    border-radius: 30px;
+    font-size: 15px;
+    line-height: 1.5;
+    white-space: pre-wrap;
+    word-wrap: break-word;
+  }
+  
+  /* user bubble: right side */
+  .av-chat-bubble-user {
+    background: #874902 ;
+    color: #f5f5f5;
+    
+  }
+  
+  /* askvox bubble: left side */
+  .av-chat-bubble-assistant {
+    background: rgba(25, 25, 25, 0.9);
+    color: #f5f5f5;
+
+  }
+  
+
+.av-chat-loading {
+  padding: 6px 0;
+  display: flex;
+  align-items: center;
+  justify-content: flex-start; 
+}
+
+
+.av-md {
+  margin: 0;
+  line-height: 1.45;
+}
+
+
+.av-md p {
+  margin: 0 0 4px;  
+}
+
+
+.av-md p:has(+ ul),
+.av-md p:has(+ ol) {
+  margin-bottom: 0 !important;
+}
+
+/* Lists */
+.av-md ul,
+.av-md ol {
+  padding-left: 20px;
+  margin: 2px 0; 
+}
+
+.av-md li {
+  margin-bottom: 2px; 
+  line-height: 1.45; 
+}
+
+
+.av-md p:empty {
+  display: none !important;
+}
+
+.av-md li:last-child {
+  margin-bottom: 0;
+}

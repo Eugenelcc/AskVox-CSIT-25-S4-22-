@@ -1,15 +1,11 @@
-import React from 'react'
-import Header from './components/Header'
-import Home from './pages/Home'
-import Footer from './components/Footer'
-import './index.css'
+
+import UnregisteredMain from './pages/UnregisteredMain'
+
 
 function App() {
   return (
     <div className="app">
-      <Header />
-      <Home />
-      <Footer />
+      <UnregisteredMain />
     </div>
   )
 }
