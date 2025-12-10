@@ -102,7 +102,8 @@ const ChatBar: FC<ChatBarProps> = ({
           const formData = new FormData();
           formData.append("file", audioBlob, "recording.webm");
 
-          const res = await fetch("http://localhost:8000/gstt/transcribe", {
+          const res = await fetch("http://localhost:8000/gstt/transcribe", {   //Google STT endpoint
+          //const res = await fetch("http://localhost:8000/stt/", {   //Assembly STT endpoint
             method: "POST",
             body: formData,
           });
