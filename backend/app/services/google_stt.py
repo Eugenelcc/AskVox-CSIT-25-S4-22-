@@ -1,10 +1,7 @@
 import os
 import base64
 from fastapi import APIRouter, UploadFile, File, HTTPException
-from google.cloud import speech
 import httpx
-from google.cloud.speech import SpeechAsyncClient
-
 router = APIRouter(prefix="/gstt", tags=["gstt"])
 
 
