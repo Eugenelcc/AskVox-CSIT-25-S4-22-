@@ -1,19 +1,21 @@
 import sys
-import asyncio
 from pathlib import Path
 
-from sqlalchemy import select
-
-from app.db.session import SessionLocal
-from app.models.users import User, UserRole 
-#from app.models.user_sessions import UserSession
-from app.core.security import hash_password
-
+# Ensure the repository root (backend/) is on sys.path before importing `app`.
+# This allows running the script directly: `python seeding/seed_admin.py` from the backend folder.
 BASE_DIR = Path(__file__).resolve().parents[1]
 sys.path.append(str(BASE_DIR))
 
-ADMIN_EMAIL = "admin@askvox.com"
-ADMIN_PASSWORD = "Admin123!"  # change after first login
+import asyncio
+from sqlalchemy import select
+
+from app.db.session import SessionLocal
+from app.models.users import User, UserRole
+# from app.models.user_sessions import UserSession
+from app.core.security import hash_password
+
+ADMIN_EMAIL = "Eugene@askvox.com"
+ADMIN_PASSWORD = "Eugene!"  # change after first login
 
 
 async def main():
