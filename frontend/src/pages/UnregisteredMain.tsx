@@ -41,7 +41,9 @@ const UnregisteredMain: FC = () => {
 
       // call the backend
     try {
-      const resp = await fetch("http://localhost:8000/chats", {
+      // HERE TO COMMENT OR UNCOMMENT OUT
+      // const resp = await fetch ("http://localhost:8000/chats"), { 
+      const resp = await fetch("http://localhost:8000/chats/local", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
