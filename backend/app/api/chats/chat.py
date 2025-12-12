@@ -24,7 +24,6 @@ if not SEALION_API_KEY:
 
 
 
-router = APIRouter(prefix="/chats", tags=["chat"])
 router = APIRouter(prefix="/sealionchats", tags=["sealionchat"])
 
 Role = Literal["user", "assistant"]
