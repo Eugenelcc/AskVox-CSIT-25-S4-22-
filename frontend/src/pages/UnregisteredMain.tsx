@@ -41,15 +41,15 @@ const UnregisteredMain: FC = () => {
 
       // call the backend
     try {
-      // HERE TO COMMENT OR UNCOMMENT OUT
-      // const resp = await fetch ("http://localhost:8000/chats"), { 
-      const resp = await fetch("http://localhost:8000/chats/local", {
+      // Use the existing non-streaming `/chats/` endpoint to get the final
+      // cleaned reply in one request, then reveal it word-by-word. This avoids
+      // the extra round-trip and complexity of a streaming endpoint.
+      const streamId = `llama-${Date.now()}`;
+      const resp = await fetch("http://localhost:8000/llamachats/local", {    //llama chat endpoint
+      //const resp = await fetch("http://localhost:8000/sealionchats", {    //sealion chat endpoint
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          message: trimmed,
-          history: historyPayload,
-        }),
+        body: JSON.stringify({ message: trimmed, history: historyPayload }),
       });
 
       if (!resp.ok) {
@@ -66,14 +66,28 @@ const UnregisteredMain: FC = () => {
       const data = await resp.json();
       const replyText: string = data.answer ?? data.reply ?? "";
 
-      const llamaMsg: ChatMessage = {
-        id: `llama-${Date.now()}`,
+      // Reveal: stop showing loader, insert assistant bubble, then reveal words
+      setIsSending(false);
+      const assistantMsg: ChatMessage = {
+        id: streamId,
         senderId: LLAMA_ID,
-        content: replyText || "(No response received.)",
+        content: "",
         createdAt: new Date().toISOString(),
       };
+      setMessages((prev) => [...prev, assistantMsg]);
 
-      setMessages((prev) => [...prev, llamaMsg]);
+      const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
+      const words = (replyText || "").split(/\s+/).filter(Boolean);
+      const revealMs = 40;
+      for (let i = 1; i <= words.length; i++) {
+        const partial = words.slice(0, i).join(" ");
+        setMessages((prev) => prev.map((m) => (m.id === streamId ? { ...m, content: partial } : m)));
+        // eslint-disable-next-line no-await-in-loop
+        await sleep(revealMs);
+      }
+      if (!replyText) {
+        setMessages((prev) => prev.map((m) => (m.id === streamId ? { ...m, content: "(No response received.)" } : m)));
+      }
     } catch (err) {
       console.error("Network/LLM error", err);
       const errorMsg: ChatMessage = {
