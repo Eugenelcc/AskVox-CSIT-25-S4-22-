@@ -19,7 +19,7 @@ const UnregisteredMain: FC = () => {
     const trimmed = text.trim();
     if (!trimmed) return;
 
-    // This is to create user object
+    // 1. Create user object
     const userMsg: ChatMessage = {
       id: `user-${Date.now()}`,
       senderId: USER_ID,
@@ -30,7 +30,7 @@ const UnregisteredMain: FC = () => {
     setMessages((prev) => [...prev, userMsg]);
     setIsSending(true);
 
-    // this is to convert all messages to a {role, content} format
+    // 2. Prepare history payload
     const historyPayload = [...messages, userMsg]
       .filter((m) => m.content.trim())
       .map((m) => ({
@@ -38,15 +38,11 @@ const UnregisteredMain: FC = () => {
         content: m.content,
       }));
 
-
-      // call the backend
+    // 3. Call the backend
     try {
-      // Use the existing non-streaming `/chats/` endpoint to get the final
-      // cleaned reply in one request, then reveal it word-by-word. This avoids
-      // the extra round-trip and complexity of a streaming endpoint.
       const streamId = `llama-${Date.now()}`;
-      const resp = await fetch("http://localhost:8000/llamachats/cloud", {    //llama chat endpoint
-      //const resp = await fetch("http://localhost:8000/sealionchats", {    //sealion chat endpoint
+      const resp = await fetch("http://localhost:8000/llamachats/cloud", {  
+       //const resp = await fetch("http://localhost:8000/sealionchats",{
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ message: trimmed, history: historyPayload }),
@@ -66,8 +62,10 @@ const UnregisteredMain: FC = () => {
       const data = await resp.json();
       const replyText: string = data.answer ?? data.reply ?? "";
 
-      // Reveal: stop showing loader, insert assistant bubble, then reveal words
+      // 4. Reveal Response (Typewriter Effect)
       setIsSending(false);
+
+      // Add an empty assistant message first
       const assistantMsg: ChatMessage = {
         id: streamId,
         senderId: LLAMA_ID,
@@ -76,17 +74,36 @@ const UnregisteredMain: FC = () => {
       };
       setMessages((prev) => [...prev, assistantMsg]);
 
+      // --- NEW LOGIC START ---
+      // We reveal characters instead of splitting by words.
+      // This preserves '\n' (newlines) which splitting by whitespace destroys.
       const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
-      const words = (replyText || "").split(/\s+/).filter(Boolean);
-      const revealMs = 40;
-      for (let i = 1; i <= words.length; i++) {
-        const partial = words.slice(0, i).join(" ");
-        setMessages((prev) => prev.map((m) => (m.id === streamId ? { ...m, content: partial } : m)));
-        // eslint-disable-next-line no-await-in-loop
-        await sleep(revealMs);
+      
+      // 'step' controls speed. 2-4 chars at a time is smooth and fast.
+      const step = 4; 
+      
+      for (let i = 0; i <= replyText.length; i += step) {
+        // Slice the string from 0 to current index
+        const partial = replyText.slice(0, i);
+        
+        setMessages((prev) => 
+          prev.map((m) => (m.id === streamId ? { ...m, content: partial } : m))
+        );
+        
+        // Fast sleep (10-20ms) for a robotic typing feel
+        await sleep(15); 
       }
+      
+      // Ensure the full text is definitely shown at the very end
+      setMessages((prev) => 
+        prev.map((m) => (m.id === streamId ? { ...m, content: replyText } : m))
+      );
+      // --- NEW LOGIC END ---
+
       if (!replyText) {
-        setMessages((prev) => prev.map((m) => (m.id === streamId ? { ...m, content: "(No response received.)" } : m)));
+        setMessages((prev) => 
+          prev.map((m) => (m.id === streamId ? { ...m, content: "(No response received.)" } : m))
+        );
       }
     } catch (err) {
       console.error("Network/LLM error", err);

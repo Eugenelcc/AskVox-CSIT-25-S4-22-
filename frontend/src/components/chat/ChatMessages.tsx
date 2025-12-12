@@ -19,18 +19,27 @@ interface ChatMessagesProps {
 }
 
 function cleanMarkdown(md: string): string {
+  // Normalize Windows line endings
   let out = md.replace(/\r\n/g, "\n");
 
-  
+  // 🔹 If the model writes "1. ... 2. ... 3. ..." in a single paragraph,
+  // insert a newline before every numbered item.
+  // e.g. "1. AAA 2. BBB 3. CCC" -> "1. AAA\n2. BBB\n3. CCC"
+  out = out.replace(/\s+(\d+\.\s)/g, "\n$1");
+
+  // (Optional) also split inline bullet lists like "- item1 - item2"
+  out = out.replace(/\s+([-*]\s)/g, "\n$1");
+
+  // Collapse 3+ blank lines into max 2
   out = out.replace(/\n{3,}/g, "\n\n");
 
-
+  // Avoid blank line before list bullets
   out = out.replace(/\n\n([*+-] )/g, "\n$1");
 
-
+  // Avoid blank line before numbered lists
   out = out.replace(/\n\n(\d+\.) /g, "\n$1 ");
 
-
+  // Remove lines that are just spaces
   out = out.replace(/\n[ \t]+\n/g, "\n\n");
 
   return out.trim();

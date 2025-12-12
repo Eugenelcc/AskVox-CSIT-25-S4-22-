@@ -5,7 +5,7 @@ from fastapi.responses import StreamingResponse
 import os
 import json
 import httpx
-import time  # ✅ NEW
+import time
 from dotenv import load_dotenv
 
 # Load env vars
@@ -14,28 +14,37 @@ load_dotenv()
 router = APIRouter(prefix="/llamachats", tags=["llamachat"])
 
 # --- CONFIGURATION ---
-LLAMA_CLOUDRUN_URL = os.getenv("LLAMA_CLOUDRUN_URL", "") 
+LLAMA_CLOUDRUN_URL = os.getenv("LLAMA_CLOUDRUN_URL", "")
+
+# ⭐ How we want all answers to look
+FORMAT_INSTRUCTION = (
+    "Always format your answer clearly.\n"
+    "- Start with at most 1 short sentence introduction.\n"
+    "- When giving multiple suggestions, use a numbered list with ONE item per line, like:\n"
+    "  1. First recommendation\n"
+    "  2. Second recommendation\n"
+    "  3. Third recommendation\n"
+    "- Avoid giant wall-of-text paragraphs.\n"
+)
 
 # --- INITIALIZATION: LOCAL MODEL ---
-# We try to load the local model. If it fails (or if we are on a tiny cloud server),
-# we just log it and set local_llm to None.
 local_llm = None
 
-print(f"--- Llama Configuration ---")
+print("--- Llama Configuration ---")
 try:
     # Import locally to avoid crashing if library is missing in cloud
     from llama_cpp import Llama
     from concurrent.futures import ThreadPoolExecutor
-    
+
     HF_REPO = "cakebut/askvox_api"
     HF_FILENAME = "llama-2-7b-chat.Q4_K_M.gguf"
-    
+
     print("💻 Attempting to load Local Model...")
     # You can change n_gpu_layers to -1 if you have a GPU locally!
     local_llm = Llama.from_pretrained(
         repo_id=HF_REPO,
         filename=HF_FILENAME,
-        n_gpu_layers=0, 
+        n_gpu_layers=0,
         n_ctx=1024,
         verbose=False,
     )
@@ -51,9 +60,11 @@ class HistoryItem(BaseModel):
     role: Literal["user", "assistant"]
     content: str
 
+
 class ChatRequest(BaseModel):
     message: str
     history: List[HistoryItem] = []
+
 
 class ChatResponse(BaseModel):
     answer: str
@@ -62,49 +73,73 @@ class ChatResponse(BaseModel):
 # --- LOGIC 1: CLOUD GENERATION ---
 async def generate_cloud(message: str, history: List[HistoryItem]) -> str:
     if not LLAMA_CLOUDRUN_URL:
-        raise HTTPException(status_code=500, detail="LLAMA_CLOUDRUN_URL is missing in .env")
+        raise HTTPException(
+            status_code=500,
+            detail="LLAMA_CLOUDRUN_URL is missing in .env",
+        )
 
-    # Build a simple chat-style prompt from history + message
-    SYSTEM_PROMPT = "You are AskVox, a safe educational AI tutor."
-    parts = [f"[SYSTEM] {SYSTEM_PROMPT}"]
-
+    # ==========================================
+    # 1. HISTORY "BAKING" LOGIC (The Important Part)
+    # ==========================================
+    # We start with the System Prompt / Formatting Rules
+    full_prompt = f"[SYSTEM] {FORMAT_INSTRUCTION}\n"
+    
+    # LOOP THROUGH HISTORY:
+    # We take the last 3 turns of history and paste them into the prompt.
+    # This ensures the Cloud AI "sees" what was said before.
     for h in history[-3:]:
-        if h.role == "user":
-            parts.append(f"[USER] {h.content}")
-        else:
-            parts.append(f"[ASSISTANT] {h.content}")
+        role_tag = "USER" if h.role == "user" else "ASSISTANT"
+        full_prompt += f"[{role_tag}] {h.content}\n"
+    
+    # Add the NEW message at the end
+    full_prompt += f"[USER] {message}\n[ASSISTANT]"
 
-    parts.append(f"[USER] {message}")
-    parts.append("[ASSISTANT]")  # model continues this
+    # ==========================================
+    # 2. PAYLOAD PREPARATION
+    # ==========================================
+    # We send the entire "script" (full_prompt) as the "message".
+    # This tricks the simple Cloud Server into understanding context.
+    payload = {
+        "message": full_prompt 
+    }
 
-    prompt = "\n".join(parts)
+    # 3. Setup Timeout (5 Minutes for slow AI)
+    timeout = httpx.Timeout(
+        connect=10.0,
+        read=300.0, 
+        write=10.0,
+        pool=10.0,
+    )
 
-    print(f"☁️ Sending request to Cloud Run: {LLAMA_CLOUDRUN_URL}")
-    async with httpx.AsyncClient(timeout=120.0) as client:
-        t0 = time.perf_counter()  # ✅ start timer
+    print(f"☁️ Sending request to Cloud Run: {LLAMA_CLOUDRUN_URL}", flush=True)
+    
+    # --- LOG START ---
+    print(f"🧠 CloudRun LLaMA: generating...", flush=True)
+
+    async with httpx.AsyncClient(timeout=timeout) as client:
+        t0 = time.perf_counter()
         try:
-            # Cloud Run service exposes POST /chat and expects {"prompt": "..."}
             resp = await client.post(
                 LLAMA_CLOUDRUN_URL,
-                json={"prompt": prompt},
+                json=payload,
             )
             t1 = time.perf_counter()
-            print(f"⏱️ Cloud Run round-trip time: {t1 - t0:.2f}s")  # ✅ log latency
+            
+            # --- LOG END ---
+            print(f"⏱️ CloudRun generation time: {t1 - t0:.2f}s", flush=True)
+
         except httpx.RequestError as e:
             t1 = time.perf_counter()
-            print(f"❌ [CloudRun RequestError] {e} (after {t1 - t0:.2f}s)")
-            # Network/connection issues
+            print(f"❌ [CloudRun RequestError] {e} (after {t1 - t0:.2f}s)", flush=True)
             raise HTTPException(
                 status_code=502,
                 detail=f"Cloud Run request failed: {str(e)}",
             )
 
-    # Log status + body for debugging
-    print(f"🌐 Cloud Run status: {resp.status_code}")
-    text_body = resp.text
+    # Error Handling
     if resp.status_code >= 400:
-        print(f"📄 Cloud Run error body: {text_body[:500]}")
-
+        text_body = resp.text
+        print(f"📄 Cloud Run error body: {text_body[:500]}", flush=True)
         raise HTTPException(
             status_code=502,
             detail=f"Cloud Run returned {resp.status_code}: {text_body[:200]}",
@@ -114,51 +149,61 @@ async def generate_cloud(message: str, history: List[HistoryItem]) -> str:
     try:
         data = resp.json()
     except Exception as e:
-        print(f"❌ [CloudRun JSON Error] {e} | Raw body: {text_body[:500]}")
-        raise HTTPException(
-            status_code=502,
-            detail="Cloud Run returned invalid JSON",
-        )
+        print(f"❌ [CloudRun JSON Error] {e}", flush=True)
+        raise HTTPException(status_code=502, detail="Invalid JSON from Cloud Run")
 
-    answer = (data.get("response") or "").strip()
+    # Extract Answer
+    answer = data.get("response") or data.get("answer") or data.get("reply") or ""
+    
     if not answer:
-        print(f"⚠️ Cloud Run JSON did not contain 'response'. Full JSON: {json.dumps(data)[:500]}")
+        print(f"⚠️ Cloud Run JSON missing answer field. Keys found: {list(data.keys())}", flush=True)
         raise HTTPException(
             status_code=502,
             detail="Cloud Run response missing 'response' field",
         )
 
-    return answer
+    return answer.strip()
 
 
 # --- LOGIC 2: LOCAL GENERATION ---
 async def generate_local(message: str, history: List[HistoryItem]) -> str:
     if not local_llm:
-        raise HTTPException(status_code=500, detail="Local Model is not loaded (Check logs)")
+        raise HTTPException(
+            status_code=500,
+            detail="Local Model is not loaded (Check logs)",
+        )
 
-    # 1. Prepare Prompt
-    # Normalize history simple for Llama
+    # Normalize history for Llama
     normalized_history = []
     for h in history[-3:]:
         normalized_history.append({"role": h.role, "content": h.content})
 
-    final_messages = [
-        {"role": "system", "content": "You are AskVox, a safe educational AI tutor."}
-    ] + normalized_history + [{"role": "user", "content": message}]
+    # ⭐ Stronger system prompt with formatting rules
+    SYSTEM_PROMPT = (
+        "You are AskVox, a safe educational AI tutor.\n"
+        f"{FORMAT_INSTRUCTION}"
+    )
 
-    # 2. Run Inference (Blocking)
+    final_messages = (
+        [{"role": "system", "content": SYSTEM_PROMPT}]
+        + normalized_history
+        + [{"role": "user", "content": message}]
+    )
+
     print("💻 Running Local Inference...")
     try:
-        # Note: In a real app, use run_in_executor to avoid blocking event loop
         output = local_llm.create_chat_completion(
             messages=final_messages,
             max_tokens=512,
-            temperature=0.3
+            temperature=0.3,
         )
-        return output['choices'][0]['message']['content']
+        return output["choices"][0]["message"]["content"]
     except Exception as e:
         print(f"❌ Local Error: {e}")
-        raise HTTPException(status_code=500, detail=f"Local Generation Failed: {str(e)}")
+        raise HTTPException(
+            status_code=500,
+            detail=f"Local Generation Failed: {str(e)}",
+        )
 
 
 # --- ENDPOINTS ---
@@ -166,7 +211,7 @@ async def generate_local(message: str, history: List[HistoryItem]) -> str:
 @router.post("/cloud", response_model=ChatResponse)
 async def chat_cloud(req: ChatRequest):
     """
-    Forces the use of the Google Cloud Run API.
+    Uses the Google Cloud Run LLaMA endpoint.
     Requires LLAMA_CLOUDRUN_URL in .env
     """
     answer = await generate_cloud(req.message, req.history)
@@ -176,9 +221,8 @@ async def chat_cloud(req: ChatRequest):
 @router.post("/local", response_model=ChatResponse)
 async def chat_local(req: ChatRequest):
     """
-    Forces the use of the Local GGUF Model (RAM).
+    Uses the Local GGUF Model (RAM).
     Requires model to be loaded locally.
     """
     answer = await generate_local(req.message, req.history)
     return ChatResponse(answer=answer)
-
