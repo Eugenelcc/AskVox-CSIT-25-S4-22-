@@ -45,7 +45,7 @@ const UnregisteredMain: FC = () => {
       // cleaned reply in one request, then reveal it word-by-word. This avoids
       // the extra round-trip and complexity of a streaming endpoint.
       const streamId = `llama-${Date.now()}`;
-      const resp = await fetch("http://localhost:8000/llamachats/local", {    //llama chat endpoint
+      const resp = await fetch("http://localhost:8000/llamachats/cloud", {    //llama chat endpoint
       //const resp = await fetch("http://localhost:8000/sealionchats", {    //sealion chat endpoint
         method: "POST",
         headers: { "Content-Type": "application/json" },
