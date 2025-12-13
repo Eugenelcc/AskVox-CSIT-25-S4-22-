@@ -215,6 +215,7 @@ async def chat_cloud(req: ChatRequest):
     Requires LLAMA_CLOUDRUN_URL in .env
     """
     answer = await generate_cloud(req.message, req.history)
+    print("☁️ Cloud Answer:", answer)
     return ChatResponse(answer=answer)
 
 
@@ -225,4 +226,5 @@ async def chat_local(req: ChatRequest):
     Requires model to be loaded locally.
     """
     answer = await generate_local(req.message, req.history)
+    print("💻 Local Answer:", answer)
     return ChatResponse(answer=answer)

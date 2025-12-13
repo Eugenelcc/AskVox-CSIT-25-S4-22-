@@ -1,17 +1,21 @@
-// src/pages/UnregisteredMain.tsx
-import { type FC, useState } from "react";
+import {  useState } from "react";
+// ✅ 1. Import Session Type
+import type { Session } from "@supabase/supabase-js";
+
 import Background from "../components/background/background";
 import ChatBar from "../components/chat/ChatBar";
 import BlackHole from "../components/background/Blackhole";
 import UnregisteredTopBar from "../components/TopBars/unregisteredtopbar";
 import ChatMessages from "../components/chat/ChatMessages";
-import type { ChatMessage } from "../components/chat/ChatMessages";
+
+import type { ChatMessage } from "../types/database"; 
 import "./cssfiles/UnregisteredMain.css";
 
 const USER_ID = 874902 as const;
 const LLAMA_ID = 212020 as const;
 
-const UnregisteredMain: FC = () => {
+// ✅ 2. Update Component to accept 'session' prop
+const UnregisteredMain = ({ session }: { session: Session | null }) => {
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [isSending, setIsSending] = useState(false);
 
@@ -41,8 +45,7 @@ const UnregisteredMain: FC = () => {
     // 3. Call the backend
     try {
       const streamId = `llama-${Date.now()}`;
-      const resp = await fetch("http://localhost:8000/llamachats/cloud", {  
-       //const resp = await fetch("http://localhost:8000/sealionchats",{
+      const resp = await fetch("http://localhost:8000/llamachats/cloud", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ message: trimmed, history: historyPayload }),
@@ -54,6 +57,7 @@ const UnregisteredMain: FC = () => {
           id: `err-${Date.now()}`,
           senderId: LLAMA_ID,
           content: "Sorry, something went wrong when connecting with AskVox.",
+          createdAt: new Date().toISOString(),
         };
         setMessages((prev) => [...prev, errorMsg]);
         return;
@@ -65,7 +69,6 @@ const UnregisteredMain: FC = () => {
       // 4. Reveal Response (Typewriter Effect)
       setIsSending(false);
 
-      // Add an empty assistant message first
       const assistantMsg: ChatMessage = {
         id: streamId,
         senderId: LLAMA_ID,
@@ -75,34 +78,27 @@ const UnregisteredMain: FC = () => {
       setMessages((prev) => [...prev, assistantMsg]);
 
       // --- NEW LOGIC START ---
-      // We reveal characters instead of splitting by words.
-      // This preserves '\n' (newlines) which splitting by whitespace destroys.
       const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
-      
-      // 'step' controls speed. 2-4 chars at a time is smooth and fast.
-      const step = 4; 
-      
+      const step = 4;
+
       for (let i = 0; i <= replyText.length; i += step) {
-        // Slice the string from 0 to current index
         const partial = replyText.slice(0, i);
-        
-        setMessages((prev) => 
+        setMessages((prev) =>
           prev.map((m) => (m.id === streamId ? { ...m, content: partial } : m))
         );
-        
-        // Fast sleep (10-20ms) for a robotic typing feel
-        await sleep(15); 
+        await sleep(15);
       }
-      
-      // Ensure the full text is definitely shown at the very end
-      setMessages((prev) => 
+
+      setMessages((prev) =>
         prev.map((m) => (m.id === streamId ? { ...m, content: replyText } : m))
       );
       // --- NEW LOGIC END ---
 
       if (!replyText) {
-        setMessages((prev) => 
-          prev.map((m) => (m.id === streamId ? { ...m, content: "(No response received.)" } : m))
+        setMessages((prev) =>
+          prev.map((m) =>
+            m.id === streamId ? { ...m, content: "(No response received.)" } : m
+          )
         );
       }
     } catch (err) {
@@ -111,6 +107,7 @@ const UnregisteredMain: FC = () => {
         id: `err-${Date.now()}`,
         senderId: LLAMA_ID,
         content: "Sorry, I could not reach AskVox server.",
+        createdAt: new Date().toISOString(),
       };
       setMessages((prev) => [...prev, errorMsg]);
     } finally {
@@ -123,7 +120,9 @@ const UnregisteredMain: FC = () => {
   return (
     <div className="uv-root">
       <Background />
-      <UnregisteredTopBar />
+      
+      {/* ✅ 3. Pass the session to the TopBar */}
+      <UnregisteredTopBar session={session} />
 
       <main className="uv-main">
         {!hasMessages && (

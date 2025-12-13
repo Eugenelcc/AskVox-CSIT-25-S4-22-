@@ -1,0 +1,246 @@
+/* src/pages/cssfiles/Register.module.css */
+
+.registerContainer {
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  min-height: 100vh;
+  position: relative;
+  z-index: 10;
+  padding: 40px 20px; /* Add padding so it doesn't touch edges */
+}
+
+.registerForm {
+  background: rgba(0, 0, 0, 0.6);
+  padding: 50px 40px;
+  border-radius: 35px;
+  border: 1px solid #333;
+  width: 100%;
+  max-width: 500px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  backdrop-filter: blur(10px);
+}
+
+.logo {
+  width: 60px;
+  margin-bottom: 20px;
+}
+
+.title {
+  color: white;
+  margin-bottom: 10px;
+  text-align: center;
+  font-size: 24px;
+}
+
+.subtitle {
+  color: #aaa;
+  margin-bottom: 30px;
+  text-align: center;
+}
+
+.googleButton {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 100%;
+  padding: 14px;
+  border-radius: 30px;
+  border: 1px solid #333;
+  background: transparent;
+  color: white;
+  margin-bottom: 25px;
+  cursor: pointer;
+  transition: background-color 0.2s;
+  font-size: 15px;
+}
+
+.googleButton:hover {
+  background-color: rgba(255, 255, 255, 0.1);
+}
+
+.googleLogo {
+  width: 20px;
+  margin-right: 10px;
+}
+
+.divider {
+  display: flex;
+  align-items: center;
+  width: 100%;
+  margin-bottom: 25px;
+  color: #aaa;
+}
+
+.dividerLine {
+  flex: 1;
+  height: 1px;
+  background: #333;
+}
+
+.dividerText {
+  margin: 0 15px;
+  font-size: 14px;
+}
+
+.form {
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+  width: 100%;
+}
+
+.label {
+  color: #aaa;
+  display: block;
+  margin-bottom: 8px;
+  margin-left: 15px;
+  font-size: 14px;
+}
+
+/* Orange Rounded Input Style */
+.input {
+  width: 100%;
+  padding: 14px 25px;
+  border-radius: 30px;
+  border: 1px solid #333;
+  background: #1a1a1a;
+  color: white;
+  outline: none;
+  font-size: 15px;
+  transition: all 0.3s ease;
+}
+
+.input:focus {
+  border-color: #ff8c28;
+  box-shadow: 0 0 0 2px rgba(255, 140, 40, 0.2);
+}
+
+/* Gender Group */
+.genderGroup {
+  display: flex;
+  gap: 20px;
+  margin-left: 15px;
+  color: #fff;
+  flex-wrap: wrap; /* Allows wrapping if screen is tiny */
+}
+
+.radioLabel {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  cursor: pointer;
+  font-size: 14px;
+}
+
+.radio {
+  accent-color: #ff8c28;
+}
+
+/* Date of Birth Group */
+.dobGroup {
+  display: flex;
+  gap: 10px;
+  width: 100%;
+}
+
+/* Custom Select Style to match Inputs */
+.select {
+  flex: 1; /* Each dropdown takes equal width */
+  padding: 14px 15px;
+  border-radius: 30px;
+  border: 1px solid #333;
+  background: #1a1a1a;
+  color: white;
+  outline: none;
+  cursor: pointer;
+  appearance: none; /* Removes default ugly browser arrow */
+  text-align: center;
+  transition: all 0.3s ease;
+  font-size: 15px;
+  
+  /* Add custom arrow icon if you want, or keep simple */
+  background-image: linear-gradient(45deg, transparent 50%, #ff8c28 50%), linear-gradient(135deg, #ff8c28 50%, transparent 50%);
+  background-position: calc(100% - 20px) calc(1em + 2px), calc(100% - 15px) calc(1em + 2px);
+  background-size: 5px 5px, 5px 5px;
+  background-repeat: no-repeat;
+}
+
+.select:focus {
+  border-color: #ff8c28;
+  box-shadow: 0 0 0 2px rgba(255, 140, 40, 0.2);
+}
+
+.submitButton {
+  width: 100%;
+  padding: 14px;
+  border-radius: 30px;
+  border: none;
+  background: #ff8c28;
+  color: white;
+  font-weight: bold;
+  font-size: 16px;
+  cursor: pointer;
+  transition: background-color 0.2s;
+  margin-top: 25px;
+  box-shadow: 0 4px 15px rgba(255, 140, 40, 0.3);
+}
+
+.submitButton:hover:not(:disabled) {
+  background-color: #e67e22;
+  transform: translateY(-1px);
+}
+
+.loginText {
+  color: #aaa;
+  margin-top: 30px;
+  text-align: center;
+  font-size: 14px;
+}
+
+.loginLink {
+  color: #ff8c28;
+  text-decoration: none;
+  font-weight: 500;
+}
+
+.loginLink:hover {
+  text-decoration: underline;
+}
+
+/* --- 📱 CRITICAL MOBILE FIXES --- */
+
+@media (max-width: 768px) {
+  .registerContainer {
+    /* 1. Prevent top cut-off by using block instead of flex center */
+    display: block; 
+    padding-top: 40px; 
+    height: auto; 
+    overflow-y: auto;
+  }
+
+  .registerForm {
+    /* 2. Reset margin to be centered manually */
+    margin: 0 auto; 
+    padding: 30px 20px;
+    width: 100%;
+  }
+
+  .dobGroup {
+    /* 3. Stack Date of Birth vertically on mobile */
+    flex-direction: column;
+  }
+
+  .select {
+    width: 100%; /* Make dropdowns full width */
+    margin-bottom: 5px;
+    background-position: calc(100% - 20px) 50%, calc(100% - 15px) 50%; /* Adjust arrow */
+  }
+
+  .genderGroup {
+    /* 4. Allow gender options to wrap nicely */
+    gap: 15px;
+  }
+}

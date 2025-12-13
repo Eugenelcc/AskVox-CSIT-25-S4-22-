@@ -1,2 +1,47 @@
 @import "tailwindcss";
 
+/* src/index.css */
+
+/* --- 📱 GLOBAL RESPONSIVE RULES --- */
+
+/* 1. For the outer container (Main Wrapper) */
+@media (max-width: 768px) {
+  .uv-responsive-container {
+    padding: 20px 10px !important; /* Shrink outer padding */
+    align-items: flex-start !important; /* Push to top on small screens */
+    padding-top: 40px !important;
+    height: auto !important; /* Allow scrolling */
+    min-height: 100vh;
+  }
+}
+
+/* 2. For the Form Box (The glass card) */
+@media (max-width: 768px) {
+  .uv-responsive-form {
+    padding: 30px 20px !important; /* Smaller inner padding */
+    width: 100% !important;
+    max-width: 100% !important;
+    border-radius: 25px !important;
+    max-height: none !important; /* Remove height limits */
+  }
+}
+
+/* 3. For Inputs and Texts */
+@media (max-width: 480px) {
+  .uv-responsive-text {
+    font-size: 20px !important; /* Smaller Titles */
+  }
+  
+  /* Force groups to stack (like Gender/Date of Birth) */
+  .uv-stack-on-mobile {
+    flex-direction: column !important;
+    align-items: flex-start !important;
+    gap: 10px !important;
+  }
+  
+  /* Make all inputs full width */
+  .uv-full-width-mobile {
+    width: 100% !important;
+    min-width: 100% !important;
+  }
+}
