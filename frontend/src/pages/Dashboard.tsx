@@ -15,7 +15,8 @@ import "./cssfiles/UnregisteredMain.css";
 // Types
 import type { ChatMessage, DatabaseMessage, UserProfile } from "../types/database"; 
 
-const LLAMA_ID = "212020"; 
+// Constants
+const LLAMA_ID = 22020; 
 
 export default function Dashboard({ session }: { session: Session }) {
   const [messages, setMessages] = useState<ChatMessage[]>([]);
@@ -31,9 +32,17 @@ export default function Dashboard({ session }: { session: Session }) {
   // --- Data Fetching ---
   useEffect(() => {
     if (!session?.user?.id) return;
+    
+    // Fetch Profile
     supabase.from('profiles').select('*').eq('id', session.user.id).single()
-      .then(({ data }) => data && setProfile(data));
+      .then(({ data }) => {
+        if (data) {
+          console.log("✅ Profile Loaded:", data.username); // Debug Log
+          setProfile(data);
+        }
+      });
       
+    // Fetch Sessions
     supabase.from('chat_sessions').select('*').eq('user_id', session.user.id).order('created_at', { ascending: false })
       .then(({ data }) => data && setSessions(data));
   }, [session.user.id]);
@@ -47,9 +56,9 @@ export default function Dashboard({ session }: { session: Session }) {
         setMessages(data.map((msg: DatabaseMessage) => ({
           id: msg.id, 
           senderId: msg.role === "user" ? session.user.id : LLAMA_ID, 
-          content: msg.content, createdAt: msg.created_at,
-          // Optional: If you updated your types, you can map display_name here too
-          displayName: msg.display_name 
+          content: msg.content, 
+          createdAt: msg.created_at,
+          displayName: msg.display_name // Mapping the name from DB to UI
         })));
       }
     };
@@ -82,9 +91,8 @@ export default function Dashboard({ session }: { session: Session }) {
     const trimmed = text.trim();
     if (!trimmed || !session?.user?.id) return;
 
+    // 1. Determine Session ID
     let currentSessionId = activeSessionId;
-
-    // 1. Create Session if needed
     if (!currentSessionId) {
       const { data: newSession } = await supabase.from('chat_sessions')
         .insert({ user_id: session.user.id, title: trimmed.slice(0, 30) + '...' })
@@ -97,41 +105,73 @@ export default function Dashboard({ session }: { session: Session }) {
       }
     }
 
-    // Optimistic Update
-    setMessages(prev => [...prev, { id: `temp-${Date.now()}`, senderId: session.user.id, content: trimmed, createdAt: new Date().toISOString() }]);
+    // 2. Prepare Name
+    const userName = profile?.username || "User"; 
+    console.log("📝 Sending Message as:", userName); // Debug Log
+
+    // 3. Optimistic Update (Show on screen immediately)
+    setMessages(prev => [...prev, { 
+      id: `temp-${Date.now()}`, 
+      senderId: session.user.id, 
+      content: trimmed, 
+      createdAt: new Date().toISOString(),
+      displayName: userName 
+    }]);
+    
     setIsSending(true);
     
-    // ✅ UPDATE 1: Save User Message with "display_name"
-    const userName = profile?.username || "User"; 
-
+    // 4. Save USER message to Supabase
     supabase.from('chat_messages').insert({ 
       session_id: currentSessionId, 
       user_id: session.user.id, 
       role: 'user', 
       content: trimmed,
-      display_name: userName // Saves "Eugene123"
+      display_name: userName // <--- CRITICAL: Sending the name here
     }).then();
 
     try {
-      const response = await fetch("http://localhost:8000/llamachats/cloud", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ message: trimmed }) });
+      // 5. Call AI API
+      const response = await fetch("http://localhost:8000/llamachats/cloud", { 
+        method: "POST", 
+        headers: { "Content-Type": "application/json" }, 
+        body: JSON.stringify({ message: trimmed }) 
+      });
+      
       const data = await response.json();
+      console.log("🤖 AI Response Data:", data); // Debug Log
+
+      // Handle different API response formats
       const replyText = data.answer || data.response || data.reply || ""; 
+
+      // Guard against empty responses (Prevents the "Dots" issue)
+      if (!replyText) {
+        console.warn("⚠️ Empty response from AI. Not saving.");
+        setIsSending(false);
+        return;
+      }
       
       setIsSending(false);
       
-      // ✅ UPDATE 2: Save AI Message with "AskVox"
+      // 6. Save AI message to Supabase
       await supabase.from('chat_messages').insert({ 
         session_id: currentSessionId, 
         user_id: session.user.id, 
         role: 'assistant', 
         content: replyText,
-        display_name: "AskVox" // ✅ NEW: Save AI Name
+        display_name: "AskVox" 
       });
 
       const streamId = `llama-${Date.now()}`;
-      setMessages(prev => [...prev, { id: streamId, senderId: LLAMA_ID, content: replyText, createdAt: new Date().toISOString() }]);
+      setMessages(prev => [...prev, { 
+        id: streamId, 
+        senderId: LLAMA_ID, 
+        content: replyText, 
+        createdAt: new Date().toISOString(),
+        displayName: "AskVox"
+      }]);
+
     } catch (err) { 
-       console.error("Error sending message:", err);
+       console.error("❌ Error sending message:", err);
        setIsSending(false); 
     }
   };
