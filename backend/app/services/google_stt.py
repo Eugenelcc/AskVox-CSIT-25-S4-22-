@@ -1,6 +1,6 @@
 import os
 import base64
-from fastapi import APIRouter, UploadFile, File, HTTPException
+from fastapi import APIRouter, UploadFile, HTTPException
 import httpx
 router = APIRouter(prefix="/gstt", tags=["gstt"])
 

@@ -14,8 +14,8 @@ from app.models.users import User, UserRole
 # from app.models.user_sessions import UserSession
 from app.core.security import hash_password
 
-ADMIN_EMAIL = "Eugene@askvox.com"
-ADMIN_PASSWORD = "Eugene!"  # change after first login
+ADMIN_EMAIL = "justin@askvox.com"
+ADMIN_PASSWORD = "justin!"  # change after first login
 
 
 async def main():
@@ -26,12 +26,22 @@ async def main():
         if user:
             user.role = UserRole.admin.value
             user.is_active = True
-            print("Admin already exists -> promoted/ensured active.")
+            # Ensure existing users have required non-null fields (migration requires them)
+            if not getattr(user, "profile_name", None):
+                user.profile_name = "Admin"
+            if not getattr(user, "status", None):
+                user.status = "registered"
+            if not getattr(user, "wake_word", None):
+                user.wake_word = "askvox"
+            print("Admin already exists -> promoted/ensured active and required fields set.")
         else:
             user = User(
+                profile_name="Admin",
                 email=ADMIN_EMAIL,
                 password_hash=hash_password(ADMIN_PASSWORD),
                 role=UserRole.admin.value,
+                status="registered",
+                wake_word="askvox",
                 is_active=True,
             )
             db.add(user)

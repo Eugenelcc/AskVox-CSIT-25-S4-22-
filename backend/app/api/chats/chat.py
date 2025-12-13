@@ -4,16 +4,13 @@ from typing import List, Literal
 
 import httpx
 from dotenv import load_dotenv
-from fastapi import APIRouter, FastAPI, HTTPException
-from fastapi.middleware.cors import CORSMiddleware
+from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 
 
 
 # Load environment before importing modules that expect keys
 load_dotenv()
-
-from app.services.stt_router import router as stt_router
 
 SEALION_BASE_URL = os.getenv("SEALION_BASE_URL", "https://api.sea-lion.ai/v1").rstrip("/")
 SEALION_API_KEY = os.getenv("SEALION_API_KEY")
