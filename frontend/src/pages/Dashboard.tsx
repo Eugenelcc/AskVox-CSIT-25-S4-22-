@@ -16,7 +16,7 @@ import "./cssfiles/UnregisteredMain.css";
 import type { ChatMessage, DatabaseMessage, UserProfile } from "../types/database"; 
 
 // Constants
-const LLAMA_ID = 22020; 
+const LLAMA_ID = 212020; 
 
 export default function Dashboard({ session }: { session: Session }) {
   const [messages, setMessages] = useState<ChatMessage[]>([]);
