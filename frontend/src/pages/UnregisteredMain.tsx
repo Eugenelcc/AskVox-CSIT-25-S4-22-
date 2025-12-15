@@ -1,4 +1,4 @@
-import {  useState } from "react";
+import { useCallback, useState } from "react";
 // ✅ 1. Import Session Type
 import type { Session } from "@supabase/supabase-js";
 
@@ -7,6 +7,7 @@ import ChatBar from "../components/chat/ChatBar";
 import BlackHole from "../components/background/Blackhole";
 import UnregisteredTopBar from "../components/TopBars/unregisteredtopbar";
 import ChatMessages from "../components/chat/ChatMessages";
+import { useWakeWordBackend } from "../hooks/useWakeWordBackend.ts";
 
 import type { ChatMessage } from "../types/database"; 
 import "./cssfiles/UnregisteredMain.css";
@@ -18,6 +19,18 @@ const LLAMA_ID = 212020 as const;
 const UnregisteredMain = ({ session }: { session: Session | null }) => {
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [isSending, setIsSending] = useState(false);
+  const micEnabled = true;
+  const [wakeActive, setWakeActive] = useState(false);
+
+  const postLog = (text: string, kind: string) => {
+    try {
+      fetch('http://localhost:8000/voice/log', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ text, kind }),
+      }).catch(() => {});
+    } catch {}
+  };
 
   const handleSubmit = async (text: string) => {
     const trimmed = text.trim();
@@ -115,6 +128,30 @@ const UnregisteredMain = ({ session }: { session: Session | null }) => {
     }
   };
 
+  // Voice: start mic on user approval, listen continuously, wake → "Yes?", then forward command.
+  const speak = useCallback((s: string) => {
+    try {
+      const u = new SpeechSynthesisUtterance(s);
+      window.speechSynthesis.cancel();
+      window.speechSynthesis.speak(u);
+    } catch {}
+  }, []);
+
+  useWakeWordBackend({
+    enabled: micEnabled,
+    onWake: () => {
+      setWakeActive(true);
+      speak("Yes?");
+    },
+    onCommand: (cmd: string) => {
+      if (cmd && cmd.trim()) {
+        setWakeActive(false);
+        // For wake-word testing, do NOT send to chat/Cloud Run
+        postLog(`(wake-test) captured command: ${cmd}`, 'command');
+      }
+    },
+  });
+
   const hasMessages = messages.length > 0;
 
   return (
@@ -125,6 +162,7 @@ const UnregisteredMain = ({ session }: { session: Session | null }) => {
       <UnregisteredTopBar session={session} />
 
       <main className="uv-main">
+        {/* Mic badge intentionally hidden; mic still active when permitted */}
         {!hasMessages && (
           <section className="uv-hero">
             <BlackHole />
