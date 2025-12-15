@@ -6,10 +6,10 @@ import type { Session } from "@supabase/supabase-js";
 import Background from "../components/background/background";
 import ChatBar from "../components/chat/ChatBar";
 import BlackHole from "../components/background/Blackhole";
-import UnregisteredTopBar from "../components/TopBars/unregisteredtopbar"; 
+import RegisteredTopBar from "../components/TopBars/RegisteredTopBar"; 
 import ChatMessages from "../components/chat/ChatMessages"; 
-import Sidebar from "../components/TopBars/Chat_Sidebar"; 
-import NavRail from "../components/TopBars/NavRail"; 
+import Sidebar from "../components/Sidebar/Chat_Sidebar"; 
+import NavRail from "../components/Sidebar/NavRail"; 
 import "./cssfiles/UnregisteredMain.css";
 
 // Types
@@ -43,7 +43,7 @@ export default function Dashboard({ session }: { session: Session }) {
       });
       
     // Fetch Sessions
-    supabase.from('chat_sessions').select('*').eq('user_id', session.user.id).order('created_at', { ascending: false })
+    supabase.from('chat_sessions').select('*,display_name').eq('user_id', session.user.id).order('created_at', { ascending: false })
       .then(({ data }) => data && setSessions(data));
   }, [session.user.id]);
 
@@ -202,7 +202,7 @@ export default function Dashboard({ session }: { session: Session }) {
         flexDirection: 'column'
       }}>
         
-        <UnregisteredTopBar session={session} />
+        <RegisteredTopBar session={session} />
 
         <main className="uv-main">
           {!activeSessionId && (

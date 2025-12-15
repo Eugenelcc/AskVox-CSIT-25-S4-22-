@@ -1,122 +1,193 @@
-import { useState, type FormEvent } from 'react' 
-import { supabase } from '../../supabaseClient'
-import { Link, useNavigate } from 'react-router-dom'
-import '../cssfiles/UnregisteredMain.css' 
-import styles from '../cssfiles/Login.module.css' 
-import Background from '../../components/background/background'
-import AskVoxLogo from '../../components/TopBars/AskVox.png' 
+import { useState, type FormEvent } from "react";
+import { supabase } from "../../supabaseClient";
+import { Link, useNavigate } from "react-router-dom";
+import Background from "../../components/background/background";
+import AskVoxLogo from "../../components/TopBars/AskVox.png";
+import styles from "../cssfiles/Login.module.css";
+
+import GoogleLogo from "./Google.png";
+import { Eye, EyeOff } from "lucide-react";
+
+type UserRole = "registered" | "paid";
 
 export default function Login() {
-  const [email, setEmail] = useState('')
-  const [password, setPassword] = useState('')
-  const [loading, setLoading] = useState(false)
-  const navigate = useNavigate()
+  const [email, setEmail] = useState("");
+  const [password, setPassword] = useState("");
+
+  const [showPass, setShowPass] = useState(false);
+  const [remember, setRemember] = useState(false);
+
+  const [loading, setLoading] = useState(false);
+  const [errorMsg, setErrorMsg] = useState<string | null>(null);
+
+  const navigate = useNavigate();
+
+  const routeByRole = (role: UserRole) => {
+    if (role === "paid") navigate("/paid");
+    else navigate("/registered");
+  };
 
   const handleLogin = async (e: FormEvent) => {
-    e.preventDefault()
-    setLoading(true)
-    
-    const { error } = await supabase.auth.signInWithPassword({
+    e.preventDefault();
+    setErrorMsg(null);
+
+    if (!email.trim() || !password.trim()) {
+      setErrorMsg("Please enter both email and password.");
+      return;
+    }
+
+    setLoading(true);
+
+    const { data, error } = await supabase.auth.signInWithPassword({
       email,
       password,
-    })
+    });
 
     if (error) {
-      alert(error.message)
-    } else {
-      // Go to dashboard after successful login
-      navigate('/dashboard')
+      setErrorMsg(error.message);
+      setLoading(false);
+      return;
     }
-    
-    setLoading(false)
-  }
+
+    // ✅ Role (placeholder) – later fetch from profiles table / metadata
+    const role: UserRole =
+      (data.user?.user_metadata?.role as UserRole) || "registered";
+
+    // Remember me: Supabase persists session by default.
+    setLoading(false);
+    routeByRole(role);
+  };
 
   const handleGoogleLogin = async () => {
+    setErrorMsg(null);
+
     const { error } = await supabase.auth.signInWithOAuth({
-      provider: 'google',
+      provider: "google",
       options: {
+        // after google login, you can land on registered first
         redirectTo: `${window.location.origin}/dashboard`,
       },
-    })
-    if (error) alert(error.message)
-  }
+    });
+
+    if (error) setErrorMsg(error.message);
+  };
+
+  const handleCancel = () => {
+    navigate("/"); // back to UnregisteredMain
+  };
 
   return (
-    <div className="uv-root">
+    <div className={styles.pageRoot}>
       <Background />
-      {/* ✅ Added Global Class: uv-responsive-container */}
-      <div className={`${styles.loginContainer} uv-responsive-container`}>
-        
-        {/* ✅ Added Global Class: uv-responsive-form */}
-        <div className={`${styles.loginForm} uv-responsive-form`}>
+
+      <div className={styles.loginContainer}>
+        <div className={styles.loginForm}>
+          {/* Cancel / Close */}
+          <button
+            type="button"
+            className={styles.closeBtn}
+            onClick={handleCancel}
+            aria-label="Close"
+          >
+            ✕
+          </button>
+
           <img src={AskVoxLogo} alt="AskVox" className={styles.logo} />
-          
-          {/* ✅ Added Global Class: uv-responsive-text */}
-          <h2 className={`${styles.title} uv-responsive-text`}>WELCOME BACK</h2>
+
+          <h2 className={styles.title}>WELCOME BACK</h2>
           <p className={styles.subtitle}>Please enter your details</p>
 
-          <button onClick={handleGoogleLogin} className={styles.googleButton}>
-            <img 
-              src="https://www.gstatic.com/firebasejs/ui/2.0.0/images/auth/google.svg" 
-              alt="Google" 
-              className={styles.googleLogo} 
-            />
+          <button
+            type="button"
+            onClick={handleGoogleLogin}
+            className={styles.googleButton}
+            disabled={loading}
+            style={{ opacity: loading ? 0.7 : 1 }}
+          >
+            <img src={GoogleLogo} alt="Google" className={styles.googleLogo} />
             Sign in with Google
           </button>
-          
+
           <div className={styles.divider}>
-            <div className={styles.dividerLine}></div>
+            <div className={styles.dividerLine} />
             <span className={styles.dividerText}>or</span>
-            <div className={styles.dividerLine}></div>
+            <div className={styles.dividerLine} />
           </div>
 
           <form onSubmit={handleLogin} className={styles.form}>
             <div>
               <label className={styles.label}>Email Address:</label>
-              <input 
-                type="email" 
-                placeholder="Enter your email address ..." 
+              <input
+                type="email"
+                placeholder="Enter your email address ..."
                 value={email}
-                onChange={(e) => setEmail(e.target.value)} 
+                onChange={(e) => setEmail(e.target.value)}
                 className={styles.input}
                 required
               />
             </div>
+
             <div>
               <label className={styles.label}>Password:</label>
-              <input 
-                type="password" 
-                placeholder="Enter your password ..." 
-                value={password}
-                onChange={(e) => setPassword(e.target.value)} 
-                className={styles.input}
-                required
-              />
+
+              {/* ✅ password field same size as email + icon inside */}
+              <div className={styles.passwordField}>
+                <input
+                  type={showPass ? "text" : "password"}
+                  placeholder="Enter your password ..."
+                  value={password}
+                  onChange={(e) => setPassword(e.target.value)}
+                  className={`${styles.input} ${styles.passwordInput}`}
+                  required
+                />
+
+                <button
+                  type="button"
+                  className={styles.passwordToggle}
+                  onClick={() => setShowPass((v) => !v)}
+                  aria-label={showPass ? "Hide password" : "Show password"}
+                >
+                  {showPass ? <EyeOff size={22} /> : <Eye size={22} />}
+                </button>
+              </div>
             </div>
 
             <div className={styles.rememberForgot}>
               <label className={styles.rememberLabel}>
-                <input type="checkbox" className={styles.checkbox} />
+                <input
+                  type="checkbox"
+                  className={styles.checkbox}
+                  checked={remember}
+                  onChange={(e) => setRemember(e.target.checked)}
+                />
                 Remember me
               </label>
-              <Link to="/forgot-password" className={styles.forgotLink}>Forgot your password?</Link>
+
+              <Link to="/forgot-password" className={styles.forgotLink}>
+                Forgot your password?
+              </Link>
             </div>
 
-            <button 
-              type="submit" 
+            {errorMsg && <p className={styles.errorText}>{errorMsg}</p>}
+
+            <button
+              type="submit"
               disabled={loading}
               className={styles.signInButton}
               style={{ opacity: loading ? 0.7 : 1 }}
             >
-              {loading ? 'SIGNING IN...' : 'SIGN IN'}
+              {loading ? "SIGNING IN..." : "SIGN IN"}
             </button>
           </form>
 
           <p className={styles.signUpText}>
-            Don't have an account? <Link to="/register" className={styles.signUpLink}>Sign up</Link>
+            Don't have an account?{" "}
+            <Link to="/register" className={styles.signUpLink}>
+              Sign up
+            </Link>
           </p>
         </div>
       </div>
     </div>
-  )
+  );
 }

@@ -4,7 +4,7 @@ import { supabase } from './supabaseClient'
 import type { Session } from '@supabase/supabase-js'
 import Login from './pages/auth/Login'
 import Register from './pages/auth/Register'
-import Dashboard from './pages/Dashboard'
+import RegisterMain from './pages/RegisteredMain'
 import UnregisteredMain from './pages/UnregisteredMain'
 
 function App() {
@@ -39,7 +39,7 @@ function App() {
         {/* Protected Route */}
         <Route 
           path="/dashboard" 
-          element={session ? <Dashboard session={session} /> : <Navigate to="/login" />} 
+          element={session ? <RegisterMain session={session} /> : <Navigate to="/login" />} 
         />
       </Routes>
     </BrowserRouter>

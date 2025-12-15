@@ -12,7 +12,7 @@ except Exception as e:  # pragma: no cover
     whisper = None
 
 
-USER_WAKE_PHRASE = os.getenv("USER_WAKE_PHRASE", "Hey Jarvis")
+USER_WAKE_PHRASE = os.getenv("USER_WAKE_PHRASE", "Hey AskVox")
 WAKE_THRESHOLD = int(os.getenv("WAKE_THRESHOLD", "75"))
 WHISPER_MODEL = os.getenv("WHISPER_MODEL", "base")
 WHISPER_LANGUAGE = os.getenv("WHISPER_LANGUAGE", "en")

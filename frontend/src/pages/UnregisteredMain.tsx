@@ -6,7 +6,7 @@ import Background from "../components/background/background";
 import ChatBar from "../components/chat/ChatBar";
 import BlackHole from "../components/background/Blackhole";
 import UnregisteredTopBar from "../components/TopBars/unregisteredtopbar";
-import ChatMessages from "../components/chat/ChatMessages";
+import ChatMessages from "../components/chat/UnregisteredChatMessages";
 import { useWakeWordBackend } from "../hooks/useWakeWordBackend.ts";
 
 import type { ChatMessage } from "../types/database"; 

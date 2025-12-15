@@ -1,20 +1,33 @@
 import { type FC } from "react";
 import { useNavigate } from "react-router-dom";
+import { supabase } from "../../supabaseClient";
 import type { Session } from "@supabase/supabase-js";
 import "./UnregisteredTopBar.css";
 import AskVoxLogo from "./AskVox.png";
 
-interface TopBarProps {
+interface RegisteredTopBarProps {
   session?: Session | null;
 }
 
-const UnregisteredTopBar: FC<TopBarProps> = ({ session }) => {
+const RegisteredTopBar: FC<RegisteredTopBarProps> = ({ session }) => {
   const navigate = useNavigate();
 
-  // Keep smart logo click (still uses session)
   const handleLogoClick = () => {
-    if (session) navigate("/RegisteredMain"); 
-    else navigate("/");
+    // logged-in home
+    navigate("/registered");
+  };
+
+  const handleLogout = async () => {
+    // Navigate away first 
+    navigate("/");
+
+    const { error } = await supabase.auth.signOut();
+    if (error) console.error("Error logging out:", error);
+  };
+
+  const handleUpgrade = () => {
+    
+    navigate("/upgrade"); 
   };
 
   return (
@@ -30,22 +43,27 @@ const UnregisteredTopBar: FC<TopBarProps> = ({ session }) => {
       </div>
 
       <div className="uv-topbar-right">
+        
         <button
           className="uv-top-btn uv-top-btn-outline"
-          onClick={() => navigate("/register")}
+          onClick={handleUpgrade}
+          disabled={!session}
+          style={{ opacity: !session ? 0.6 : 1 }}
         >
-          Create account
+          Upgrade
         </button>
 
         <button
           className="uv-top-btn uv-top-btn-outline"
-          onClick={() => navigate("/login")}
+          onClick={handleLogout}
+          disabled={!session}
+          style={{ opacity: !session ? 0.6 : 1 }}
         >
-          Log in
+          Logout
         </button>
       </div>
     </header>
   );
 };
 
-export default UnregisteredTopBar;
+export default RegisteredTopBar;
