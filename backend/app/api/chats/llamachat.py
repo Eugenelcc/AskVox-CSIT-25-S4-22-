@@ -15,6 +15,8 @@ router = APIRouter(prefix="/llamachats", tags=["llamachat"])
 
 # --- CONFIGURATION ---
 LLAMA_CLOUDRUN_URL = os.getenv("LLAMA_CLOUDRUN_URL", "")
+SUPABASE_URL = os.getenv("SUPABASE_URL", "")
+SUPABASE_SERVICE_ROLE_KEY = os.getenv("SUPABASE_SERVICE_ROLE_KEY", "")
 
 # ⭐ How we want all answers to look
 FORMAT_INSTRUCTION = (
@@ -64,6 +66,9 @@ class HistoryItem(BaseModel):
 class ChatRequest(BaseModel):
     message: str
     history: List[HistoryItem] = []
+    # Optional linkage for DB persistence
+    query_id: str | None = None
+    session_id: str | None = None
 
 
 class ChatResponse(BaseModel):
@@ -216,6 +221,41 @@ async def chat_cloud(req: ChatRequest):
     """
     answer = await generate_cloud(req.message, req.history)
     print("☁️ Cloud Answer:", answer)
+    # Persist response + assistant chat_message to Supabase if linkage provided
+    if SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY:
+        headers = {
+            "apikey": SUPABASE_SERVICE_ROLE_KEY,
+            "Authorization": f"Bearer {SUPABASE_SERVICE_ROLE_KEY}",
+            "Content-Type": "application/json",
+            "Prefer": "return=representation",
+        }
+        async with httpx.AsyncClient() as client:
+            # Insert into responses (backend-only)
+            if req.query_id:
+                try:
+                    payload = {
+                        "query_id": req.query_id,
+                        "response_text": answer,
+                        "model_used": "llama2-cloud",
+                    }
+                    await client.post(f"{SUPABASE_URL}/rest/v1/responses", headers=headers, json=payload)
+                except Exception as e:
+                    print(f"⚠️ Failed to insert response into Supabase: {e}")
+
+            # Optionally mirror assistant message in chat_messages
+            if req.session_id:
+                try:
+                    payload = {
+                        "session_id": req.session_id,
+                        "user_id": None,
+                        "role": "assistant",
+                        "content": answer,
+                        "display_name": "AskVox",
+                    }
+                    await client.post(f"{SUPABASE_URL}/rest/v1/chat_messages", headers=headers, json=payload)
+                except Exception as e:
+                    print(f"⚠️ Failed to insert assistant chat_message: {e}")
+
     return ChatResponse(answer=answer)
 
 

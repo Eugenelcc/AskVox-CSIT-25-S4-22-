@@ -1,4 +1,4 @@
-import { useCallback, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 // ✅ 1. Import Session Type
 import type { Session } from "@supabase/supabase-js";
 
@@ -8,6 +8,7 @@ import BlackHole from "../components/background/Blackhole";
 import UnregisteredTopBar from "../components/TopBars/unregisteredtopbar";
 import ChatMessages from "../components/chat/UnregisteredChatMessages";
 import { useWakeWordBackend } from "../hooks/useWakeWordBackend.ts";
+import { supabase } from "../supabaseClient";
 
 import type { ChatMessage } from "../types/database"; 
 import "./cssfiles/UnregisteredMain.css";
@@ -19,8 +20,8 @@ const LLAMA_ID = 212020 as const;
 const UnregisteredMain = ({ session }: { session: Session | null }) => {
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [isSending, setIsSending] = useState(false);
+  const [guestSessionId, setGuestSessionId] = useState<string | null>(null);
   const micEnabled = true;
-  const [wakeActive, setWakeActive] = useState(false);
 
   const postLog = (text: string, kind: string) => {
     try {
@@ -31,6 +32,37 @@ const UnregisteredMain = ({ session }: { session: Session | null }) => {
       }).catch(() => {});
     } catch {}
   };
+
+  // Load existing guest session id if present
+  useEffect(() => {
+    const existing = sessionStorage.getItem('guest_session_id');
+    if (existing) setGuestSessionId(existing);
+  }, []);
+
+  // Ensure a guest chat_session exists (DB-backed only)
+  const ensureGuestSession = async (titleHint: string): Promise<string> => {
+    if (guestSessionId) return guestSessionId;
+
+    const { data, error } = await supabase
+      .from('chat_sessions')
+      .insert({
+        user_id: null,
+        title: (titleHint || 'Guest Chat').slice(0, 30) + '...',
+      })
+      .select()
+      .single();
+
+    if (error || !data?.id) {
+      console.error('chat_sessions insert failed:', error);
+      throw new Error('Guest session not created');
+    }
+
+    sessionStorage.setItem('guest_session_id', data.id);
+    setGuestSessionId(data.id);
+    return data.id;
+  };
+
+
 
   const handleSubmit = async (text: string) => {
     const trimmed = text.trim();
@@ -47,6 +79,56 @@ const UnregisteredMain = ({ session }: { session: Session | null }) => {
     setMessages((prev) => [...prev, userMsg]);
     setIsSending(true);
 
+    // Ensure guest session id for linking rows
+    let currentSessionId: string;
+    try {
+      currentSessionId = await ensureGuestSession(trimmed);
+    } catch (e) {
+      console.error(e);
+      const errorMsg: ChatMessage = {
+        id: `err-${Date.now()}`,
+        senderId: LLAMA_ID,
+        content: "Sorry, we couldn't start a guest session.",
+        createdAt: new Date().toISOString(),
+      };
+      setMessages((prev) => [...prev, errorMsg]);
+      setIsSending(false);
+      return;
+    }
+
+    /* 👉 INSERT THE GUARD HERE 👈 */
+    if (!currentSessionId) {
+      console.error("No valid session_id, aborting inserts");
+      setIsSending(false);
+      return;
+}
+
+    // Insert into queries (capture query_id to link response)
+    const queryId = globalThis.crypto?.randomUUID?.() ?? `${Date.now()}-${Math.random()}`;
+    try {
+      await supabase.from('queries').insert({
+        id: queryId,
+        session_id: currentSessionId,
+        user_id: null,
+        input_mode: 'text',
+        raw_audio_path: null,
+        transcribed_text: trimmed,
+        detected_domain: 'general'
+      });
+    } catch {}
+
+    // Mirror RegisteredMain: persist user chat message
+    try {
+      await supabase.from('chat_messages').insert({
+        session_id: currentSessionId,
+        user_id: null,
+        role: 'user',
+        content: trimmed,
+        display_name: 'Guest'
+      });
+    } 
+    catch {}
+
     // 2. Prepare history payload
     const historyPayload = [...messages, userMsg]
       .filter((m) => m.content.trim())
@@ -61,7 +143,12 @@ const UnregisteredMain = ({ session }: { session: Session | null }) => {
       const resp = await fetch("http://localhost:8000/llamachats/cloud", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ message: trimmed, history: historyPayload }),
+        body: JSON.stringify({
+          message: trimmed,
+          history: historyPayload,
+          query_id: queryId,
+          session_id: currentSessionId,
+        }),
       });
 
       if (!resp.ok) {
@@ -107,6 +194,17 @@ const UnregisteredMain = ({ session }: { session: Session | null }) => {
       );
       // --- NEW LOGIC END ---
 
+      // Mirror RegisteredMain: persist assistant chat message (optional)
+      try {
+        await supabase.from('chat_messages').insert({
+          session_id: currentSessionId,
+          user_id: null,
+          role: 'assistant',
+          content: replyText || '(No response received.)',
+          display_name: 'AskVox'
+        });
+      } catch {}
+
       if (!replyText) {
         setMessages((prev) =>
           prev.map((m) =>
@@ -140,12 +238,10 @@ const UnregisteredMain = ({ session }: { session: Session | null }) => {
   useWakeWordBackend({
     enabled: micEnabled,
     onWake: () => {
-      setWakeActive(true);
       speak("Yes?");
     },
     onCommand: (cmd: string) => {
       if (cmd && cmd.trim()) {
-        setWakeActive(false);
         // For wake-word testing, do NOT send to chat/Cloud Run
         postLog(`(wake-test) captured command: ${cmd}`, 'command');
       }
