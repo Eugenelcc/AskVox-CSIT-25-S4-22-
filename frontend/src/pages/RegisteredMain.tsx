@@ -67,7 +67,7 @@ export default function Dashboard({ session }: { session: Session }) {
   }, [session.user.id]);
 
   useEffect(() => {
-    if (!activeSessionId) return; 
+    if (!activeSessionId || isNewChat) return; 
 
     const fetchMessages = async () => {
        const { data } = await supabase.from("chat_messages").select("*").eq("session_id", activeSessionId).order("created_at", { ascending: true });
@@ -82,7 +82,7 @@ export default function Dashboard({ session }: { session: Session }) {
       }
     };
     fetchMessages();
-  }, [activeSessionId, session.user.id]); 
+  }, [activeSessionId, isNewChat, session.user.id]); 
 
   const loadFolders = async () => {
     if (!session?.user?.id) return;
@@ -130,18 +130,24 @@ export default function Dashboard({ session }: { session: Session }) {
   const handleSelectSession = (sessionId: string) => {
     setActiveSessionId(sessionId);
     setMessages([]);
+    setIsNewChat(false);
   };
 
   const handleTabClick = (tab: string) => {
-    setActiveTab(tab);
-    if (tab === 'chats') {
-      setSidebarOpen(true); 
-    } else {
-      setSidebarOpen(false); 
+    if (tab === 'newchat') {
+      // Enter new chat mode, close sidebar, highlight New Chat on the rail
+      handleNewChat();
+      setActiveTab('newchat');
+      setSidebarOpen(false);
+      return;
     }
+    setActiveTab(tab);
+    setSidebarOpen(tab === 'chats');
   };
 
   const handleNewChat = () => {
+    // Clear UI only; DO NOT create a session yet.
+    // A new chat_session will be created lazily on first send.
     setActiveSessionId(null);
     setMessages([]);
     setIsNewChat(true);
@@ -198,6 +204,7 @@ export default function Dashboard({ session }: { session: Session }) {
 
       currentSessionId = newSession.id;
       setActiveSessionId(currentSessionId);
+      setIsNewChat(false);
 
       // ✅ Refresh sidebar sessions from DB
       const { data: allSessions } = await supabase
@@ -311,7 +318,7 @@ export default function Dashboard({ session }: { session: Session }) {
         folders={folders}
         activeId={activeSessionId}
         onSelectSession={handleSelectSession}
-        onNewChat={handleNewChat}
+        onNewChat={() => { handleNewChat(); setActiveTab('newchat'); setSidebarOpen(false); }}
         onClose={() => setSidebarOpen(false)}
         isOpen={showSidebar}
         onMoveChatToFolder={handleMoveChatToFolder}
@@ -339,7 +346,7 @@ export default function Dashboard({ session }: { session: Session }) {
             </section>
           )}
 
-          {activeSessionId && (
+          {activeSessionId && !isNewChat && (
             <div className="uv-chat-scroll-outer">
               <div className="uv-chat-area">
                 <ChatMessages messages={messages} isLoading={isSending} />

@@ -17,8 +17,12 @@ function App() {
       setLoading(false)
     })
 
-    const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => {
+    const { data: { subscription } } = supabase.auth.onAuthStateChange((event, session) => {
       setSession(session)
+      // Redirect to login on sign-out
+      if (event === 'SIGNED_OUT') {
+        // Optional: clear any local app state here
+      }
     })
 
     return () => subscription.unsubscribe()
@@ -38,8 +42,8 @@ function App() {
         
         {/* Protected Route */}
         <Route 
-          path="/reguserhome" 
-          element={session ? <RegisterMain session={session} /> : <Navigate to="/login" />} 
+          path="/dashboard" 
+          element={session ? <RegisterMain session={session} /> : <Navigate to="/" />} 
         />
       </Routes>
     </BrowserRouter>

@@ -15,11 +15,13 @@ const RegisteredTopBar: FC<RegisteredTopBarProps> = ({ session }) => {
 
 
   const handleLogout = async () => {
-    // Navigate away first 
-    navigate("/");
-
-    const { error } = await supabase.auth.signOut();
-    if (error) console.error("Error logging out:", error);
+    // Sign out first to clear persisted session, then go to public landing
+    const { error } = await supabase.auth.signOut({ scope: 'local' });
+    if (error) {
+      console.error("Error logging out:", error);
+      return;
+    }
+    navigate("/", { replace: true });
   };
 
   const handleUpgrade = () => {
