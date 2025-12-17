@@ -10,7 +10,7 @@ import RegisteredTopBar from "../components/TopBars/RegisteredTopBar";
 import ChatMessages from "../components/chat/ChatMessages"; 
 import Sidebar from "../components/Sidebar/Chat_Sidebar"; 
 import NavRail from "../components/Sidebar/NavRail"; 
-import "./cssfiles/UnregisteredMain.css";
+import "./cssfiles/registeredMain.css";
 
 // Types
 import type { ChatMessage, DatabaseMessage, UserProfile } from "../types/database"; 
@@ -346,8 +346,8 @@ export default function Dashboard({ session }: { session: Session }) {
           {!activeSessionId && (
             <section className="uv-hero">
               <BlackHole />
-              <h3 style={{color: '#888', marginTop: '20px'}}>
-                Welcome back, {profile?.username ?? "User"}
+              <h3 className="orb-caption">
+                Hi {profile?.username ?? "User"}, say <span className="visual-askvox">"Hey AskVox"</span> to begin or type below.
               </h3>
             </section>
           )}

@@ -68,3 +68,22 @@
 }
 
 
+/*  text below the orb */
+.orb-caption {
+  font-family: "ABeeZee", system-ui, -apple-system, BlinkMacSystemFont,
+    "Segoe UI", sans-serif;
+  font-size: 40px;
+  line-height: 1.4;
+  letter-spacing: 0.02em;
+  color: #f0f0f0;
+  text-align: center;
+}
+
+
+/* Gradient "Hey AskVox"  */
+.visual-askvox {
+  background: linear-gradient(91.06deg, #ffa81c 2.26%, #ff4d00 100%);
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  background-clip: text;
+}

@@ -4,9 +4,10 @@
     position: fixed;
     left: 0;
     top: -5px;
-    width: 100px;
-    height: 1122px;
+    width: 110px;
+    height: 100vh;
     z-index: 100;
+    
   
     background: transparent;
     box-shadow:   6px 0 24px rgba(255, 255, 255, 0.12);;
@@ -35,6 +36,8 @@
     height: 98px;
     object-fit: contain;
     border-radius: 18px;
+    margin-top: 8px;            /* pushes the image down inside the button */
+    display: block;
   }
   
   .av-rail__item {
