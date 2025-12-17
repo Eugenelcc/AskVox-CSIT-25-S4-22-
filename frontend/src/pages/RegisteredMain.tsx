@@ -28,6 +28,8 @@ export default function Dashboard({ session }: { session: Session }) {
   const [activeSessionId, setActiveSessionId] = useState<string | null>(null);
   const [activeTab, setActiveTab] = useState('chats'); 
   const [isSidebarOpen, setSidebarOpen] = useState(true); 
+  const [isNewChat, setIsNewChat] = useState(false);
+
 
   // --- Data Fetching ---
   useEffect(() => {
@@ -69,7 +71,7 @@ export default function Dashboard({ session }: { session: Session }) {
 
   const handleSelectSession = (sessionId: string) => {
     setActiveSessionId(sessionId);
-    setMessages([]); 
+    setMessages([]);
   };
 
   const handleTabClick = (tab: string) => {
@@ -82,10 +84,11 @@ export default function Dashboard({ session }: { session: Session }) {
   };
 
   const handleNewChat = () => {
-    setActiveSessionId(null); 
+    setActiveSessionId(null);
     setMessages([]);
-    if (window.innerWidth < 768) setSidebarOpen(false);
+    setIsNewChat(true);
   };
+
 
   const handleSubmit = async (text: string) => {
     const trimmed = text.trim();
@@ -94,15 +97,32 @@ export default function Dashboard({ session }: { session: Session }) {
     // 1. Determine Session ID
     let currentSessionId = activeSessionId;
     if (!currentSessionId) {
-      const { data: newSession } = await supabase.from('chat_sessions')
-        .insert({ user_id: session.user.id, title: trimmed.slice(0, 30) + '...' })
-        .select().single();
-      
-      if (newSession) {
-        currentSessionId = newSession.id;
-        setActiveSessionId(currentSessionId);
-        setSessions(prev => [newSession, ...prev]);
+      // ✅ Create ONE new chat session
+      const { data: newSession, error } = await supabase
+        .from('chat_sessions')
+        .insert({
+          user_id: session.user.id,
+          title: trimmed.slice(0, 30) + '...',
+        })
+        .select()
+        .single();
+
+      if (error || !newSession) {
+        console.error('Failed to create chat session', error);
+        return;
       }
+
+      currentSessionId = newSession.id;
+      setActiveSessionId(currentSessionId);
+
+      // ✅ Refresh sidebar sessions from DB
+      const { data: allSessions } = await supabase
+        .from('chat_sessions')
+        .select('id, title')
+        .eq('user_id', session.user.id)
+        .order('created_at', { ascending: false });
+
+      if (allSessions) setSessions(allSessions);
     }
 
     // 2. Prepare Name
@@ -119,6 +139,19 @@ export default function Dashboard({ session }: { session: Session }) {
     }]);
     
     setIsSending(true);
+
+    const queryId = globalThis.crypto?.randomUUID?.() ?? `${Date.now()}-${Math.random()}`;
+
+    await supabase.from("queries").insert({
+      id: queryId,
+      session_id: currentSessionId,
+      user_id: session.user.id,
+      input_mode: "text",
+      raw_audio_path: null,
+      transcribed_text: trimmed,
+      detected_domain: "general",
+    });
+
     
     // 4. Save USER message to Supabase
     supabase.from('chat_messages').insert({ 
@@ -131,11 +164,21 @@ export default function Dashboard({ session }: { session: Session }) {
 
     try {
       // 5. Call AI API
-      const response = await fetch("http://localhost:8000/llamachats/cloud", { 
-        method: "POST", 
-        headers: { "Content-Type": "application/json" }, 
-        body: JSON.stringify({ message: trimmed }) 
+      const response = await fetch("http://localhost:8000/llamachats/cloud", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          message: trimmed,
+          history: messages.map(m => ({
+            role: m.senderId === session.user.id ? "user" : "assistant",
+            content: m.content,
+          })),
+          query_id: queryId,         
+          session_id: currentSessionId,
+          user_id: session.user.id,
+        })
       });
+
       
       const data = await response.json();
       console.log("🤖 AI Response Data:", data); // Debug Log
@@ -152,14 +195,6 @@ export default function Dashboard({ session }: { session: Session }) {
       
       setIsSending(false);
       
-      // 6. Save AI message to Supabase
-      await supabase.from('chat_messages').insert({ 
-        session_id: currentSessionId, 
-        user_id: session.user.id, 
-        role: 'assistant', 
-        content: replyText,
-        display_name: "AskVox" 
-      });
 
       const streamId = `llama-${Date.now()}`;
       setMessages(prev => [...prev, { 

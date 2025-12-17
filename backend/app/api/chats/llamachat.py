@@ -69,6 +69,7 @@ class ChatRequest(BaseModel):
     # Optional linkage for DB persistence
     query_id: str | None = None
     session_id: str | None = None
+    user_id: str | None = None
 
 
 class ChatResponse(BaseModel):
@@ -247,11 +248,12 @@ async def chat_cloud(req: ChatRequest):
                 try:
                     payload = {
                         "session_id": req.session_id,
-                        "user_id": None,
+                        "user_id": req.user_id,   # 👈 SAME USER AS QUERY
                         "role": "assistant",
                         "content": answer,
                         "display_name": "AskVox",
                     }
+
                     await client.post(f"{SUPABASE_URL}/rest/v1/chat_messages", headers=headers, json=payload)
                 except Exception as e:
                     print(f"⚠️ Failed to insert assistant chat_message: {e}")

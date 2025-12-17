@@ -130,12 +130,11 @@ const UnregisteredMain = ({ session }: { session: Session | null }) => {
     catch {}
 
     // 2. Prepare history payload
-    const historyPayload = [...messages, userMsg]
-      .filter((m) => m.content.trim())
-      .map((m) => ({
-        role: m.senderId === USER_ID ? "user" : "assistant",
-        content: m.content,
-      }));
+    const historyPayload = [...messages, userMsg].map(m => ({
+      role: m.senderId === USER_ID ? "user" : "assistant",
+      content: m.content,
+    }));
+
 
     // 3. Call the backend
     try {
