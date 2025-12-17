@@ -249,3 +249,9 @@
   text-decoration: underline;
   font-weight: 600;
 }
+
+.successText {
+  margin-top: 10px;
+  font-size: 14px;
+  color: #b8ffb8; /* soft green */
+}

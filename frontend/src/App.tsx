@@ -8,12 +8,8 @@ import RegisterMain from './pages/RegisteredMain'
 import UnregisteredMain from './pages/UnregisteredMain'
 import Upgrade from './pages/subscription/subscription_detail'
 import AccountDetails from './pages/settings/AccountDetails'; 
-// import EditProfileName from "./pages/settings/EditProfileName";
-// import EditEmail from "./pages/settings/EditEmail";
-// import EditDob from "./pages/settings/EditDob";
-// import EditGender from "./pages/settings/EditGender";
-// import EditAvatar from "./pages/settings/EditAvatar";
-// import ChangePassword from "./pages/settings/ChangePassword";
+import ForgotPassword from './pages/auth/ForgotPassword'
+import ResetPassword from './pages/auth/ResetPassword'
 
 
 function App() {
@@ -59,6 +55,9 @@ function App() {
           element={session ? <Upgrade /> : <Navigate to="/login" />}
         />
         <Route path="/settings/account" element={session ? <AccountDetails session={session} /> : <Navigate to="/login" />} />
+        <Route path="/forgot-password" element={<ForgotPassword />} />
+        <Route path="/reset-password" element={<ResetPassword />} />
+
 
 
       </Routes>
