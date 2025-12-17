@@ -4,6 +4,7 @@
     padding: 24px;
     display: flex;
     justify-content: center;
+    margin-top: 50px;
   }
   
   .acc-card{
@@ -118,5 +119,176 @@
   .acc-editAvatarBtn:hover{
     color: #ff951c;
     border-color: rgba(255,149,28,0.6);
+  }
+  
+
+  .acc-modalOverlay {
+    position: absolute;
+    inset: 0;
+    background: rgba(15, 15, 15, 0.92);
+    border-radius: 49px;
+  
+    display: flex;
+    align-items: center;
+    justify-content: center;
+  
+    z-index: 30;
+  }
+
+  /* Rectangle 263 */
+.acc-modal {
+    width: 766px;
+    height: 210px;
+    background: #2c2c2c;
+    border-radius: 22px;
+    position: relative;
+    padding: 32px;
+  }
+  
+  /* Close */
+  .acc-modalClose {
+    position: absolute;
+    top: -5px;
+    right: 18px;
+    border: none;
+    background: transparent;
+    font-size: 50px;
+    cursor: pointer;
+    color: #ff951c;
+  }
+  
+  /* Title */
+  .acc-modalTitle {
+    font-family: "ABeeZee", system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif;
+    font-weight: 400;
+    font-size: 22px;
+    line-height: 26px;
+    letter-spacing: 0.02em;
+    color: #ffffff;
+    margin-bottom: 16px;
+  }
+  
+  /* Input */
+  .acc-modalInput {
+    width: 702px;
+    height: 58px;
+  
+    background: #1c1c1c;
+    border: 1px solid #754b1c;
+    border-radius: 32px;
+  
+    padding: 0 20px;
+  
+    font-family: "ABeeZee", system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif;
+    font-weight: 400;
+    font-size: 24px;
+    line-height: 28px;
+    letter-spacing: 0.02em;
+    color: #ffffff;
+  
+    outline: none;
+  }
+  
+  .acc-modalInput:focus {
+    border-color: rgba(255, 149, 28, 0.75);
+  }
+  
+  /* Error text */
+  .acc-modalError {
+    margin-top: 10px;
+    font-family: "ABeeZee", system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif;
+    font-size: 14px;
+    color: rgba(255, 255, 255, 0.8);
+  }
+  
+  /* Save button */
+  .acc-modalSave {
+    margin-top: 22px;
+    width: 155px;
+    height: 38px;
+  
+    background: #434343;
+    border: 1px solid #754b1c;
+    border-radius: 16px;
+  
+    font-family: "ABeeZee", system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif;
+    font-weight: 400;
+    font-size: 20px;
+    line-height: 24px;
+    letter-spacing: 0.02em;
+    color: #f0f0f0;
+  
+    cursor: pointer;
+  }
+  
+  .acc-modalSave:disabled {
+    opacity: 0.6;
+    cursor: not-allowed;
+  }
+
+  /* Gender radio group inside modal */
+.acc-radioGroup {
+    margin-top: 15px;
+    display: flex;
+    gap: 50px;
+    align-items: center;
+    flex-wrap: wrap;
+  }
+  
+  /* Each radio option */
+  .acc-radio {
+    display: inline-flex;
+    align-items: center;
+    gap: 10px;
+    cursor: pointer;
+  
+    font-family: "ABeeZee", system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif;
+    font-weight: 400;
+    font-size: 20px;
+    line-height: 24px;
+    letter-spacing: 0.02em;
+    color: #ffffff;
+  }
+  
+  /* Keep radios clean and visible on dark bg */
+  .acc-radio input[type="radio"] {
+    width: 16px;
+    height: 16px;
+    accent-color: #ed8b1b; /* orange dot */
+    cursor: pointer;
+  }
+  
+  .acc-radioLabel {
+    user-select: none;
+  }
+  
+  /* Date input inside modal (matches the same pill field look) */
+.acc-dateInput {
+    box-sizing: border-box;
+    width: 300px;
+    height: 58px;
+    margin-top: 10px;
+    margin-right: 400px;
+  
+    background: #1c1c1c;
+    border: 1px solid #754b1c;
+    border-radius: 32px;
+  
+    padding: 0 18px;
+  
+    font-family: "ABeeZee", system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif;
+    font-weight: 400;
+    font-size: 24px;
+    line-height: 28px;
+    letter-spacing: 0.02em;
+  
+    color: #f0f0f0;
+    outline: none;
+  }
+  
+  /* Make the calendar icon visible on dark bg (browser-dependent but helps) */
+  .acc-dateInput::-webkit-calendar-picker-indicator {
+    filter: invert(1) opacity(0.85);
+    cursor: pointer;
   }
   
