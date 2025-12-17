@@ -311,7 +311,13 @@ export default function Dashboard({ session }: { session: Session }) {
     <div className="uv-root" style={{ display: 'flex', overflowX: 'hidden' }}>
       <Background />
       
-      <NavRail activeTab={activeTab} onTabClick={handleTabClick} />
+      <NavRail
+        activeTab={activeTab}
+        onTabClick={handleTabClick}
+        onOpenSidebar={(tab) => setSidebarOpen(tab === "chats" || tab === "settings")}
+        avatarPath={profile?.avatar_url ?? "defaults/default.png"}
+      />
+
 
       <Sidebar
         sessions={standaloneSessions}

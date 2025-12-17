@@ -1,28 +1,28 @@
-
-
-interface NavRailProps {
-  activeTab: string;
-  onTabClick: (tab: string) => void;
-
-  
-  onOpenSidebar?: (tab: string) => void;
-}
-
-
+import { useEffect, useState } from "react";
+import { supabase } from "../../supabaseClient"; 
 import askvoxLogo from "../TopBars/AskVox.png";
 import chatsIcon from "./chat.png";
 import discoverIcon from "./news.png";
 import smartrecIcon from "./rec.png";
 import newChatIcon from "./newchat.png";
-// settings later (you said come to it later) — keep placeholder if you want
-// import settingsIcon from "../../assets/settings.png";
+import { Settings } from "lucide-react";
 import "./cssfiles/NavRail.css";
+
+interface NavRailProps {
+  activeTab: string;
+  onTabClick: (tab: string) => void;
+  onOpenSidebar?: (tab: string) => void;
+
+  // ✅ Add these so NavRail can display the avatar
+  // Store this as a STORAGE PATH for private bucket, e.g. "defaults/default.png" or "userId/avatar.png"
+  avatarPath?: string | null;
+}
 
 type NavItem = {
   key: string;
   label: string;
   icon: string;
-  top: number; // px from top inside the rail
+  top: number;
 };
 
 const ITEMS: NavItem[] = [
@@ -32,11 +32,51 @@ const ITEMS: NavItem[] = [
   { key: "smartrec", label: "SmartRec", icon: smartrecIcon, top: 424 },
 ];
 
-export default function NavRail({ activeTab, onTabClick, onOpenSidebar }: NavRailProps) {
+export default function NavRail({ activeTab, onTabClick, onOpenSidebar, avatarPath }: NavRailProps) {
+  const [avatarSrc, setAvatarSrc] = useState<string>("");
+
   const handleClick = (tab: string) => {
     onTabClick(tab);
-    onOpenSidebar?.(tab); // opens sidebar options
+    onOpenSidebar?.(tab);
   };
+
+  // ✅ Private bucket: convert stored path -> signed URL for display
+  useEffect(() => {
+    let cancelled = false;
+
+
+    const loadAvatar = async () => {
+      if (!avatarPath) {
+        setAvatarSrc("");
+        return;
+      }
+
+      if (/^https?:\/\//i.test(avatarPath)) {
+        setAvatarSrc(avatarPath);
+        return;
+      }
+
+      const { data, error } = await supabase.storage
+        .from("avatars")
+        .createSignedUrl(avatarPath, 60 * 60 * 24 * 7); // 7 days
+
+      if (cancelled) return;
+
+      if (error) {
+        console.error("Failed to create signed avatar URL:", error.message);
+        setAvatarSrc("");
+        return;
+      }
+      
+      setAvatarSrc(data?.signedUrl ?? "");
+    };
+
+    loadAvatar();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [avatarPath]);
 
   return (
     <div className="av-rail">
@@ -65,16 +105,26 @@ export default function NavRail({ activeTab, onTabClick, onOpenSidebar }: NavRai
         );
       })}
 
-      {/* SETTINGS (later)
-          Keeping the slot so layout matches your design.
-          When ready, just swap the placeholder button into a real one with settings.png.
-      */}
+      {/* ✅ PROFILE + SETTINGS (bottom) */}
       <button
         type="button"
-        className="av-rail__settingsSlot"
+        className="av-rail__profileBtn"
         onClick={() => handleClick("settings")}
-        aria-label="Settings"
-      />
+        aria-label="Profile settings"
+        title="Settings"
+      >
+        <span className="av-rail__profileRing">
+          {avatarSrc ? (
+            <img className="av-rail__profileImg" src={avatarSrc} alt="Profile" />
+          ) : (
+            <span className="av-rail__profileFallback" />
+          )}
+        </span>
+
+        <span className="av-rail__profileGear" aria-hidden="true">
+          <Settings size={18} />
+        </span>
+      </button>
     </div>
   );
 }
