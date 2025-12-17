@@ -1,4 +1,4 @@
-import { useState, useEffect, useMemo } from "react";
+import { useState, useEffect, useMemo, useRef } from "react";
 import { supabase } from "../supabaseClient";
 import type { Session } from "@supabase/supabase-js";
 
@@ -12,6 +12,8 @@ import ChatMessages from "../components/chat/ChatMessages";
 import Sidebar from "../components/Sidebar/Chat_Sidebar"; 
 import NavRail from "../components/Sidebar/NavRail"; 
 import "./cssfiles/registerMain.css";
+import { useWakeWordBackend } from "../hooks/useWakeWordBackend";
+import "./cssfiles/registerMain.css";
 import SettingsSidebar from "../components/Sidebar/Settings_Sidebar";
 
 // Types
@@ -24,9 +26,23 @@ const LLAMA_ID = 212020;
 type SettingsKey = "account" | "billing" | "delete" | "wakeword";
 
 export default function Dashboard({ session }: { session: Session }) {
-  const [messages, setMessages] = useState<ChatMessage[]>([]); // chat messages on the screen, starts empty first, add messages
-  const [isSending, setIsSending] = useState(false); // Disable input, when AI is loading message also used to show loading animation 
-  const [profile, setProfile] = useState<UserProfile | null>(null); // Stores the logged in user profile
+  const [messages, setMessages] = useState<ChatMessage[]>([]);
+  const [isSending, setIsSending] = useState(false);
+  const [profile, setProfile] = useState<UserProfile | null>(null);
+  const [isVoiceMode, setIsVoiceMode] = useState(false);
+  // Voice capture (reuse ChatBar approach)
+  const [isRecording, setIsRecording] = useState(false);
+  const [isTranscribing, setIsTranscribing] = useState(false);
+  const mediaRecorderRef = useRef<MediaRecorder | null>(null);
+  const audioChunksRef = useRef<BlobPart[]>([]);
+  const audioPlayRef = useRef<HTMLAudioElement | null>(null);
+  const voiceAudioCtxRef = useRef<AudioContext | null>(null);
+  const voiceAnalyserRef = useRef<AnalyserNode | null>(null);
+  const voiceSourceRef = useRef<MediaStreamAudioSourceNode | null>(null);
+  const hadSpeechRef = useRef(false);
+  const voiceModeRef = useRef(false);
+  const ttsActiveRef = useRef(false);
+  const ttsSanitizeRef = useRef<((t: string) => string) | null>(null);
   
   // Sidebar & Navigation State
   const [sessions, setSessions] = useState<{id: string, title: string}[]>([]); // all chats the user has created, shown in the sidebar
@@ -159,12 +175,38 @@ export default function Dashboard({ session }: { session: Session }) {
     setSidebarOpen(tab === "chats" || tab === "settings");
   };
 
-  const handleNewChat = () => {
+
+  const handleNewChat = async () => {
     // Clear UI only; DO NOT create a session yet.
     // A new chat_session will be created lazily on first send.
+    // For voice mode we now persist per turn, no batch save on exit
     setActiveSessionId(null);
-    setMessages([]);
     setIsNewChat(true);
+    // Exit voice mode and stop any active audio/recording
+    voiceModeRef.current = false;
+    setIsVoiceMode(false);
+    ttsActiveRef.current = false;
+    try {
+      if (mediaRecorderRef.current && mediaRecorderRef.current.state !== "inactive") {
+        mediaRecorderRef.current.stop();
+      }
+    } catch {}
+    mediaRecorderRef.current = null;
+    setIsRecording(false);
+    try {
+      audioPlayRef.current?.pause();
+    } catch {}
+    audioPlayRef.current = null;
+    try {
+      voiceAnalyserRef.current?.disconnect();
+      voiceSourceRef.current?.disconnect();
+      voiceAudioCtxRef.current?.close();
+    } catch {}
+    voiceAnalyserRef.current = null;
+    voiceSourceRef.current = null;
+    voiceAudioCtxRef.current = null;
+    // Finally clear messages after teardown
+    setMessages([]);
   };
 
   const handleMoveChatToFolder = async (chatId: string, folderId: string) => {
@@ -194,6 +236,7 @@ export default function Dashboard({ session }: { session: Session }) {
   const handleSubmit = async (text: string) => {
     const trimmed = text.trim();
     if (!trimmed || !session?.user?.id) return;
+    console.log("💬 [Text] route=llamachats/cloud payload=", trimmed);
 
     // 1. Determine Session ID
     let currentSessionId = activeSessionId;
@@ -249,7 +292,6 @@ export default function Dashboard({ session }: { session: Session }) {
       session_id: currentSessionId,
       user_id: session.user.id,
       input_mode: "text",
-      raw_audio_path: null,
       transcribed_text: trimmed,
       detected_domain: "general",
     });
@@ -317,7 +359,406 @@ export default function Dashboard({ session }: { session: Session }) {
   };
 
   const showSidebar = isSidebarOpen && activeTab === 'chats';
-  
+
+  // ---- Voice Mode (wake -> voice-only flow) ----
+  const cleanTextForTTS = (text: string) => {
+    try {
+      let t = text ?? "";
+      // Strip code fences and inline code
+      t = t.replace(/```[\s\S]*?```/g, " ");
+      t = t.replace(/`([^`]+)`/g, "$1");
+      // Convert Markdown links [text](url) -> text
+      t = t.replace(/\[([^\]]+)\]\(([^)]+)\)/g, "$1");
+      // Remove bold/italic markers *, _, ~, #, >
+      t = t.replace(/[\*#_~>]+/g, "");
+      // Drop citations like [1], [^note]
+      t = t.replace(/\[[^\]]*\]/g, "");
+      // Normalize bullet lines
+      t = t.replace(/^\s*[-•\d+\.)]+\s+/gm, "");
+      // Collapse excessive whitespace and punctuation
+      t = t.replace(/[\s\u00A0]+/g, " ").trim();
+      t = t.replace(/([,.!?])\1+/g, "$1");
+      // Prevent TTS from reading stray symbols
+      t = t.replace(/[\u2000-\u206F]/g, "");
+      return t;
+    } catch {
+      return text ?? "";
+    }
+  };
+  ttsSanitizeRef.current = cleanTextForTTS;
+
+  // Keep a ref in sync with isVoiceMode to avoid stale-closure bugs
+  useEffect(() => {
+    voiceModeRef.current = isVoiceMode;
+  }, [isVoiceMode]);
+
+  // Removed local beep/speech confirmation; using Google TTS for consistency
+  const speakWithGoogleTTS = async (text: string, rearmAfterPlayback: boolean = true) => {
+    try {
+      const safeText = (ttsSanitizeRef.current?.(text)) ?? text;
+      console.log("🔊 [TTS] requesting playback for:", safeText);
+      // Mark TTS active BEFORE stopping recorder to avoid re-arm race in onstop
+      ttsActiveRef.current = true;
+      // Request MP3 audio from backend
+      const res = await fetch("http://localhost:8000/tts/google", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ text: safeText, language_code: "en-US" }),
+      });
+      if (!res.ok) { console.error("TTS request failed"); return; }
+      const blob = await res.blob();
+      const url = URL.createObjectURL(blob);
+      // Stop any current playback
+      if (audioPlayRef.current) { try { audioPlayRef.current.pause(); } catch {} }
+      // Stop active recording to avoid feedback while TTS plays
+      try {
+        if (mediaRecorderRef.current && mediaRecorderRef.current.state !== "inactive") {
+          mediaRecorderRef.current.stop();
+          try { setIsRecording(false); } catch {}
+        }
+      } catch {}
+      const audio = new Audio(url);
+      audio.preload = "auto";
+      audioPlayRef.current = audio;
+      try {
+        await audio.play(); // resolves when playback starts, not ends
+        console.log("🔊 [TTS] playback started");
+      } catch (e) {
+        console.warn("🔊 [TTS] playback blocked or failed, fallback to immediate listen", e);
+        try { URL.revokeObjectURL(url); } catch {}
+        ttsActiveRef.current = false;
+        if (voiceModeRef.current && rearmAfterPlayback) {
+          setTimeout(() => { if (voiceModeRef.current) void startVoiceRecording(); }, 150);
+        }
+        return;
+      }
+      const restart = () => {
+        console.log("🔊 [TTS] playback ended, starting to listen");
+        try { URL.revokeObjectURL(url); } catch {}
+        ttsActiveRef.current = false;
+        if (voiceModeRef.current && rearmAfterPlayback) {
+          setTimeout(() => { if (voiceModeRef.current) void startVoiceRecording(); }, 200);
+        }
+      };
+      const fail = (err?: any) => {
+        console.warn("🔊 [TTS] playback error or stalled, restarting listen", err);
+        try { URL.revokeObjectURL(url); } catch {}
+        ttsActiveRef.current = false;
+        if (voiceModeRef.current && rearmAfterPlayback) {
+          setTimeout(() => { if (voiceModeRef.current) void startVoiceRecording(); }, 300);
+        }
+      };
+      audio.addEventListener("ended", restart, { once: true });
+      audio.addEventListener("error", fail, { once: true });
+      // Fallback timer in case 'ended' doesn't fire
+      const fallbackMs = 30000; // 30s safety
+      const timerId = window.setTimeout(() => fail("fallback-timeout"), fallbackMs);
+      // Clear timer on cleanup
+      audio.addEventListener("ended", () => window.clearTimeout(timerId), { once: true });
+      audio.addEventListener("error", () => window.clearTimeout(timerId), { once: true });
+      // Wait until playback finishes or errors to resolve
+      await new Promise<void>((resolve) => {
+        const done = () => resolve();
+        audio.addEventListener("ended", done, { once: true });
+        audio.addEventListener("error", done, { once: true });
+      });
+    } catch (e) {
+      console.error("Error playing TTS audio", e);
+      ttsActiveRef.current = false;
+      if (voiceModeRef.current) { setTimeout(() => { if (voiceModeRef.current) void startVoiceRecording(); }, 200); }
+    }
+  };
+
+  const startVoiceRecording = async () => {
+    if (isRecording || !voiceModeRef.current || ttsActiveRef.current) return;
+    console.log("🎙️  [VoiceMode] startVoiceRecording() called");
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({
+        audio: {
+          channelCount: 1,
+          noiseSuppression: true,
+          echoCancellation: true,
+        } as MediaTrackConstraints,
+      });
+      console.log("🎙️  [VoiceMode] mic stream acquired");
+      const recorder = new MediaRecorder(stream);
+      audioChunksRef.current = [];
+
+      recorder.ondataavailable = (event) => {
+        if (event.data.size > 0) {
+          audioChunksRef.current.push(event.data);
+        }
+      };
+
+      recorder.onstop = async () => {
+        // Ensure flags and refs reset on any stop (silence or manual)
+        try { setIsRecording(false); } catch {}
+        mediaRecorderRef.current = null;
+        stream.getTracks().forEach((t) => t.stop());
+        try {
+          voiceAnalyserRef.current?.disconnect();
+          voiceSourceRef.current?.disconnect();
+          await voiceAudioCtxRef.current?.close();
+        } catch {}
+        voiceAnalyserRef.current = null;
+        voiceSourceRef.current = null;
+        voiceAudioCtxRef.current = null;
+        const audioBlob = new Blob(audioChunksRef.current, { type: "audio/webm" });
+
+        try {
+          setIsTranscribing(true);
+          const formData = new FormData();
+          formData.append("file", audioBlob, "utterance.webm");
+
+          const sttRes = await fetch("http://localhost:8000/stt/", { method: "POST", body: formData });
+          if (!sttRes.ok) { console.error("STT request failed"); return; }
+          const sttData = await sttRes.json();
+          const transcript: string = sttData.text ?? "";
+          if (transcript) {
+            console.log("🎙️  [VoiceMode STT] transcript:", transcript);
+          }
+
+          if (transcript) {
+            // Exit phrase to leave voice mode safely
+            const tnorm = transcript.toLowerCase();
+            if (
+              tnorm.includes("stop listening") ||
+              tnorm.includes("goodbye") ||
+              tnorm.includes("bye") ||
+              tnorm.includes("end")
+            ) {
+              exitVoiceMode();
+              return;
+            }
+
+            // Ensure there is a chat session (create lazily on first voice turn)
+            let currentSessionId = activeSessionId;
+            if (!currentSessionId) {
+              const { data: newSession, error: sessErr } = await supabase
+                .from('chat_sessions')
+                .insert({
+                  user_id: session.user.id,
+                  title: transcript.slice(0, 30) + '...',
+                })
+                .select()
+                .single();
+              if (sessErr || !newSession?.id) {
+                console.error('Failed to create chat session for voice mode', sessErr);
+              } else {
+                currentSessionId = newSession.id;
+                setActiveSessionId(currentSessionId);
+                setIsNewChat(false);
+                // Refresh sidebar sessions list
+                try {
+                  const { data: allSessions } = await supabase
+                    .from('chat_sessions')
+                    .select('id, title')
+                    .eq('user_id', session.user.id)
+                    .order('created_at', { ascending: false });
+                  if (allSessions) setSessions(allSessions);
+                } catch {}
+              }
+            }
+
+            // Append user's utterance to history for contextual turns
+            const userMsgId = globalThis.crypto?.randomUUID?.() ?? `vuser-${Date.now()}-${Math.random()}`;
+            setMessages(prev => [
+              ...prev,
+              {
+                id: userMsgId,
+                senderId: session.user.id,
+                content: transcript,
+                createdAt: new Date().toISOString(),
+                displayName: profile?.username ?? "User",
+              },
+            ]);
+
+            // Save USER message to Supabase immediately
+            if (currentSessionId) {
+              try {
+                await supabase.from('chat_messages').insert({
+                  session_id: currentSessionId,
+                  user_id: session.user.id,
+                  role: 'user',
+                  content: transcript,
+                  display_name: profile?.username ?? 'User',
+                });
+              } catch (e) {
+                console.warn('Failed to insert user voice chat_message', e);
+              }
+            }
+
+            // Create a query row (Voice) now so backend can attach response
+            const queryId = globalThis.crypto?.randomUUID?.() ?? `${Date.now()}-${Math.random()}`;
+            try {
+              await supabase.from('queries').insert({
+                id: queryId,
+                session_id: currentSessionId,
+                user_id: session.user.id,
+                input_mode: 'voice',
+                transcribed_text: transcript,
+                detected_domain: 'general',
+              });
+            } catch (e) {
+              console.warn('Failed to insert voice query', e);
+            }
+
+            // Send to Sealion (server should route to SeaLion model), pass query linkage
+            console.log("🌊 [VoiceMode] route=sealionchats payload=", transcript);
+            const sealionRes = await fetch("http://localhost:8000/sealionchats/", {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({
+                message: transcript,
+                history: messages.map(m => ({
+                  role: m.senderId === session.user.id ? "user" : "assistant",
+                  content: m.content,
+                })),
+                query_id: queryId,
+                session_id: currentSessionId,
+                user_id: session.user.id,
+              }),
+            });
+            const sealionData = await sealionRes.json();
+            const replyText = sealionData.answer || sealionData.response || sealionData.reply || "";
+            if (replyText) {
+              // Append assistant reply to history to keep context growing
+              const botMsgId = globalThis.crypto?.randomUUID?.() ?? `vbot-${Date.now()}-${Math.random()}`;
+              setMessages(prev => [
+                ...prev,
+                {
+                  id: botMsgId,
+                  senderId: LLAMA_ID,
+                  content: replyText,
+                  createdAt: new Date().toISOString(),
+                  displayName: "AskVox",
+                },
+              ]);
+              // Fire TTS and let it handle re-arming on 'ended'
+              void speakWithGoogleTTS(replyText);
+            } else {
+              // No reply; resume listening so the loop continues
+              if (voiceModeRef.current) { setTimeout(() => { if (voiceModeRef.current) void startVoiceRecording(); }, 250); }
+            }
+          }
+        } catch (err) {
+          console.error("Error in voice mode STT/Sealion flow", err);
+          // On error, resume listening to avoid getting stuck
+          if (voiceModeRef.current) { setTimeout(() => { if (voiceModeRef.current) void startVoiceRecording(); }, 400); }
+        } finally {
+          setIsTranscribing(false);
+          // Ensure we always re-arm the mic if still in voice mode
+          if (voiceModeRef.current && !ttsActiveRef.current) {
+            setTimeout(() => {
+              if (voiceModeRef.current && (!audioPlayRef.current || audioPlayRef.current.paused)) {
+                void startVoiceRecording();
+              }
+            }, 300);
+          }
+        }
+      };
+
+      mediaRecorderRef.current = recorder;
+      recorder.start();
+      setIsRecording(true);
+
+      // Silence detection (stop after ~1.2s of silence, with an 10s cap)
+      const audioCtx = new AudioContext();
+      try { await audioCtx.resume(); } catch {}
+      const source = audioCtx.createMediaStreamSource(stream);
+      const analyser = audioCtx.createAnalyser();
+      analyser.fftSize = 2048;
+      source.connect(analyser);
+      voiceAudioCtxRef.current = audioCtx;
+      voiceAnalyserRef.current = analyser;
+      voiceSourceRef.current = source;
+
+      const buf = new Float32Array(analyser.fftSize);
+      const silenceThreshold = 0.008; // ~-42 dBFS
+      const silenceHoldMs = 1200;
+      const hardCapMs = 10000;
+      let lastVoiceAt = Date.now();
+      hadSpeechRef.current = false;
+
+      const tick = () => {
+        if (!voiceAnalyserRef.current || !mediaRecorderRef.current || mediaRecorderRef.current.state === "inactive") return;
+        analyser.getFloatTimeDomainData(buf);
+        let sum = 0; for (let i = 0; i < buf.length; i++) sum += buf[i] * buf[i];
+        const rms = Math.sqrt(sum / buf.length);
+        const now = Date.now();
+        if (rms >= silenceThreshold) {
+          lastVoiceAt = now;
+          hadSpeechRef.current = true;
+        }
+        // Stop when we have speech and then sustained silence
+        if (hadSpeechRef.current && now - lastVoiceAt >= silenceHoldMs) {
+          try { mediaRecorderRef.current?.stop(); } catch {}
+          mediaRecorderRef.current = null;
+          setIsRecording(false);
+          return;
+        }
+        // Hard cap to avoid runaway
+        if (now - (audioCtx as any).startTimeMs >= hardCapMs) {
+          try { mediaRecorderRef.current?.stop(); } catch {}
+          mediaRecorderRef.current = null;
+          setIsRecording(false);
+          return;
+        }
+        requestAnimationFrame(tick);
+      };
+   
+      (audioCtx as any).startTimeMs = Date.now();
+      requestAnimationFrame(tick);
+    } catch (err) {
+      console.error("Error accessing microphone (voice mode)", err);
+      setIsRecording(false);
+    }
+  };
+
+  const enterVoiceMode = () => {
+    // Hide chat UI; show BlackHole only
+    setIsVoiceMode(true);
+    voiceModeRef.current = true;
+    // No chatbar, no messages list during voice mode
+    setActiveSessionId(null);
+    setIsNewChat(true);
+    // Close sidebar for focused voice mode
+    setSidebarOpen(false);
+    // Speak confirmation via Google TTS, then re-arm mic after playback ends
+    void speakWithGoogleTTS("AskVox is listening", true);
+  };
+
+  const exitVoiceMode = () => {
+    voiceModeRef.current = false;
+    setIsVoiceMode(false);
+    setIsNewChat(false);
+    try { (window as any).speechSynthesis?.cancel?.(); } catch {}
+    // Stop recorder and playback when exiting
+    try {
+      if (mediaRecorderRef.current && mediaRecorderRef.current.state !== "inactive") {
+        mediaRecorderRef.current.stop();
+      }
+    } catch {}
+    mediaRecorderRef.current = null;
+    setIsRecording(false);
+    try { audioPlayRef.current?.pause(); } catch {}
+    audioPlayRef.current = null;
+    try {
+      voiceAnalyserRef.current?.disconnect();
+      voiceSourceRef.current?.disconnect();
+      voiceAudioCtxRef.current?.close();
+    } catch {}
+    voiceAnalyserRef.current = null;
+    voiceSourceRef.current = null;
+    voiceAudioCtxRef.current = null;
+  };
+
+  // Wake detection: when wake triggers, enter voice mode
+  useWakeWordBackend({
+    enabled: !isVoiceMode,
+    onWake: enterVoiceMode,
+  });
+
   return (
     <div className="uv-root" style={{ display: 'flex', overflowX: 'hidden' }}>
       <Background />
@@ -377,19 +818,19 @@ export default function Dashboard({ session }: { session: Session }) {
                 </section>
               )}
 
-              {activeSessionId && !isNewChat && (
-                <div className="uv-chat-scroll-outer">
-                  <div className="uv-chat-area">
-                    <ChatMessages messages={messages} isLoading={isSending} />
-                  </div>
-                </div>
-              )}
-
-              <div className="uv-input-container">
-                <ChatBar onSubmit={handleSubmit} disabled={isSending} />
+          {activeSessionId && !isNewChat && !isVoiceMode && (
+            <div className="uv-chat-scroll-outer">
+              <div className="uv-chat-area">
+                <ChatMessages messages={messages} isLoading={isSending} />
               </div>
-            </>
+            </div>
           )}
+          
+           {!isVoiceMode && (
+             <div className="uv-input-container">
+               <ChatBar onSubmit={handleSubmit} disabled={isSending} />
+             </div>
+           )}
         </main>
       </div>
     </div>

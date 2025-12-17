@@ -76,11 +76,19 @@ def request_transcription(upload_url: str) -> str:
 async def stt_endpoint(file: UploadFile = File(...)):
     """Receives audio from frontend, sends to AssemblyAI, returns transcript."""
     audio_bytes = await file.read()
+    try:
+        print(f"🗣️  [STT] Using AssemblyAI; recv bytes={len(audio_bytes)}")
+    except Exception:
+        pass
 
     # 1. Upload recording to AssemblyAI
     upload_url = upload_to_assemblyai(audio_bytes)
 
     # 2. Request transcription + wait
     text = request_transcription(upload_url)
+    try:
+        print(f"✍️  [STT] transcript='{(text or '').strip()[:120]}'")
+    except Exception:
+        pass
 
     return {"text": text}

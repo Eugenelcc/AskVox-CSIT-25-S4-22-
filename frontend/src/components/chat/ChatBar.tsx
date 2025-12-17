@@ -117,6 +117,10 @@ const ChatBar: FC<ChatBarProps> = ({
           const transcript = data.text ?? "";
 
           if (transcript) {
+            console.log("🎤 [ChatBar STT] transcript:", transcript);
+          }
+
+          if (transcript) {
             const finalText = (() => {
               // compute what the combined text would be
               const current = textareaRef.current?.value ?? "";
@@ -129,6 +133,7 @@ const ChatBar: FC<ChatBarProps> = ({
               !disabled &&
               !(lastSubmittedRef.current && lastSubmittedRef.current.text === finalText.trim() && now - lastSubmittedRef.current.ts < 3000)
             ) {
+              console.log("➡️  [ChatBar] submitting to llama2-cloud:", finalText.trim());
               lastSubmittedRef.current = { text: finalText.trim(), ts: now };
               onSubmit?.(finalText.trim());
             }

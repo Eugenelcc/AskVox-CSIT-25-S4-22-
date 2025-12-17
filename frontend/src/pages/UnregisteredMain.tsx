@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 // ✅ 1. Import Session Type
 import type { Session } from "@supabase/supabase-js";
 
@@ -21,7 +21,19 @@ const UnregisteredMain = ({ session }: { session: Session | null }) => {
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [isSending, setIsSending] = useState(false);
   const [guestSessionId, setGuestSessionId] = useState<string | null>(null);
-  const micEnabled = true;
+  const [isVoiceMode, setIsVoiceMode] = useState(false);
+  const [isRecording, setIsRecording] = useState(false);
+  const [isTranscribing, setIsTranscribing] = useState(false);
+  const mediaRecorderRef = useRef<MediaRecorder | null>(null);
+  const audioChunksRef = useRef<BlobPart[]>([]);
+  const audioPlayRef = useRef<HTMLAudioElement | null>(null);
+  const voiceAudioCtxRef = useRef<AudioContext | null>(null);
+  const voiceAnalyserRef = useRef<AnalyserNode | null>(null);
+  const voiceSourceRef = useRef<MediaStreamAudioSourceNode | null>(null);
+  const hadSpeechRef = useRef(false);
+  const voiceModeRef = useRef(false);
+  const ttsActiveRef = useRef(false);
+  const ttsSanitizeRef = useRef<((t: string) => string) | null>(null);
 
   const postLog = (text: string, kind: string) => {
     try {
@@ -111,7 +123,6 @@ const UnregisteredMain = ({ session }: { session: Session | null }) => {
         session_id: currentSessionId,
         user_id: null,
         input_mode: 'text',
-        raw_audio_path: null,
         transcribed_text: trimmed,
         detected_domain: 'general'
       });
@@ -225,26 +236,257 @@ const UnregisteredMain = ({ session }: { session: Session | null }) => {
     }
   };
 
-  // Voice: start mic on user approval, listen continuously, wake → "Yes?", then forward command.
-  const speak = useCallback((s: string) => {
+  // --- Voice Mode (wake -> voice-only flow for guests) ---
+  const cleanTextForTTS = (text: string) => {
     try {
-      const u = new SpeechSynthesisUtterance(s);
-      window.speechSynthesis.cancel();
-      window.speechSynthesis.speak(u);
-    } catch {}
-  }, []);
+      let t = text ?? "";
+      t = t.replace(/```[\s\S]*?```/g, " ");
+      t = t.replace(/`([^`]+)`/g, "$1");
+      t = t.replace(/\[([^\]]+)\]\(([^)]+)\)/g, "$1");
+      t = t.replace(/[\*#_~>]+/g, "");
+      t = t.replace(/\[[^\]]*\]/g, "");
+      t = t.replace(/^\s*[-•\d+\.)]+\s+/gm, "");
+      t = t.replace(/[\s\u00A0]+/g, " ").trim();
+      t = t.replace(/([,.!?])\1+/g, "$1");
+      t = t.replace(/[\u2000-\u206F]/g, "");
+      return t;
+    } catch {
+      return text ?? "";
+    }
+  };
+  ttsSanitizeRef.current = cleanTextForTTS;
 
-  useWakeWordBackend({
-    enabled: micEnabled,
-    onWake: () => {
-      speak("Yes?");
-    },
-    onCommand: (cmd: string) => {
-      if (cmd && cmd.trim()) {
-        // For wake-word testing, do NOT send to chat/Cloud Run
-        postLog(`(wake-test) captured command: ${cmd}`, 'command');
+  // Keep a ref in sync with isVoiceMode to avoid stale-closure bugs
+  useEffect(() => {
+    voiceModeRef.current = isVoiceMode;
+  }, [isVoiceMode]);
+
+  const speakWithGoogleTTS = async (text: string, rearmAfterPlayback: boolean = true) => {
+    try {
+      const safeText = (ttsSanitizeRef.current?.(text)) ?? text;
+      postLog(`TTS request: ${safeText}`, 'tts');
+      // Mark TTS active BEFORE stopping recorder to avoid re-arm race in onstop
+      ttsActiveRef.current = true;
+      const res = await fetch("http://localhost:8000/tts/google", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ text: safeText, language_code: "en-US" }),
+      });
+      if (!res.ok) { console.error("TTS request failed"); return; }
+      const blob = await res.blob();
+      const url = URL.createObjectURL(blob);
+      if (audioPlayRef.current) { try { audioPlayRef.current.pause(); } catch {} }
+      try {
+        if (mediaRecorderRef.current && mediaRecorderRef.current.state !== "inactive") {
+          mediaRecorderRef.current.stop();
+          try { setIsRecording(false); } catch {}
+        }
+      } catch {}
+      const audio = new Audio(url);
+      audio.preload = "auto";
+      audioPlayRef.current = audio;
+      try {
+        await audio.play();
+        postLog('TTS playback started', 'tts');
+      } catch (e) {
+        try { URL.revokeObjectURL(url); } catch {}
+        ttsActiveRef.current = false;
+        if (voiceModeRef.current && rearmAfterPlayback) {
+          setTimeout(() => { if (voiceModeRef.current) void startVoiceRecording(); }, 150);
+        }
+        return;
       }
-    },
+      const restart = () => {
+        try { URL.revokeObjectURL(url); } catch {}
+        ttsActiveRef.current = false;
+        if (voiceModeRef.current && rearmAfterPlayback) {
+          setTimeout(() => { if (voiceModeRef.current) void startVoiceRecording(); }, 200);
+        }
+      };
+      const fail = () => {
+        try { URL.revokeObjectURL(url); } catch {}
+        ttsActiveRef.current = false;
+        if (voiceModeRef.current && rearmAfterPlayback) {
+          setTimeout(() => { if (voiceModeRef.current) void startVoiceRecording(); }, 300);
+        }
+      };
+      audio.addEventListener("ended", restart, { once: true });
+      audio.addEventListener("error", fail, { once: true });
+      const timerId = window.setTimeout(() => fail(), 30000);
+      audio.addEventListener("ended", () => window.clearTimeout(timerId), { once: true });
+      audio.addEventListener("error", () => window.clearTimeout(timerId), { once: true });
+      await new Promise<void>((resolve) => {
+        const done = () => resolve();
+        audio.addEventListener("ended", done, { once: true });
+        audio.addEventListener("error", done, { once: true });
+      });
+    } catch (e) {
+      ttsActiveRef.current = false;
+      if (voiceModeRef.current) { setTimeout(() => { if (voiceModeRef.current) void startVoiceRecording(); }, 200); }
+    }
+  };
+
+  const startVoiceRecording = async () => {
+    if (isRecording || !voiceModeRef.current || ttsActiveRef.current) return;
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({
+        audio: {
+          channelCount: 1,
+          noiseSuppression: true,
+          echoCancellation: true,
+        } as MediaTrackConstraints,
+      });
+      const recorder = new MediaRecorder(stream);
+      audioChunksRef.current = [];
+      recorder.ondataavailable = (event) => {
+        if (event.data.size > 0) audioChunksRef.current.push(event.data);
+      };
+      recorder.onstop = async () => {
+        try { setIsRecording(false); } catch {}
+        mediaRecorderRef.current = null;
+        stream.getTracks().forEach((t) => t.stop());
+        try {
+          voiceAnalyserRef.current?.disconnect();
+          voiceSourceRef.current?.disconnect();
+          await voiceAudioCtxRef.current?.close();
+        } catch {}
+        voiceAnalyserRef.current = null;
+        voiceSourceRef.current = null;
+        voiceAudioCtxRef.current = null;
+        const audioBlob = new Blob(audioChunksRef.current, { type: "audio/webm" });
+        try {
+          setIsTranscribing(true);
+          const formData = new FormData();
+          formData.append("file", audioBlob, "utterance.webm");
+          const sttRes = await fetch("http://localhost:8000/stt/", { method: "POST", body: formData });
+          if (!sttRes.ok) { return; }
+          const sttData = await sttRes.json();
+          const transcript: string = sttData.text ?? "";
+          if (transcript) postLog(transcript, 'stt');
+          if (transcript) {
+            const tnorm = transcript.toLowerCase();
+            if (
+              tnorm.includes("stop listening") ||
+              tnorm.includes("goodbye") ||
+              tnorm.includes("bye") ||
+              tnorm.includes("end")
+            ) {
+              exitVoiceMode();
+              return;
+            }
+            const userMsgId = globalThis.crypto?.randomUUID?.() ?? `vuser-${Date.now()}-${Math.random()}`;
+            setMessages(prev => [...prev, { id: userMsgId, senderId: USER_ID, content: transcript, createdAt: new Date().toISOString() }]);
+            const sealionRes = await fetch("http://localhost:8000/sealionchats/", {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({
+                message: transcript,
+                history: messages.map(m => ({ role: m.senderId === USER_ID ? "user" : "assistant", content: m.content })),
+              }),
+            });
+            const sealionData = await sealionRes.json();
+            const replyText = sealionData.answer || sealionData.response || sealionData.reply || "";
+            if (replyText) {
+              const botMsgId = globalThis.crypto?.randomUUID?.() ?? `vbot-${Date.now()}-${Math.random()}`;
+              setMessages(prev => [...prev, { id: botMsgId, senderId: LLAMA_ID, content: replyText, createdAt: new Date().toISOString() }]);
+              void speakWithGoogleTTS(replyText);
+            } else {
+              if (voiceModeRef.current) { setTimeout(() => { if (voiceModeRef.current) void startVoiceRecording(); }, 250); }
+            }
+          }
+        } catch (err) {
+          if (voiceModeRef.current) { setTimeout(() => { if (voiceModeRef.current) void startVoiceRecording(); }, 400); }
+        } finally {
+          setIsTranscribing(false);
+          if (voiceModeRef.current && !ttsActiveRef.current) {
+            setTimeout(() => {
+              if (voiceModeRef.current && (!audioPlayRef.current || audioPlayRef.current.paused)) {
+                void startVoiceRecording();
+              }
+            }, 300);
+          }
+        }
+      };
+      mediaRecorderRef.current = recorder;
+      recorder.start();
+      setIsRecording(true);
+      const audioCtx = new AudioContext();
+      try { await audioCtx.resume(); } catch {}
+      const source = audioCtx.createMediaStreamSource(stream);
+      const analyser = audioCtx.createAnalyser();
+      analyser.fftSize = 2048;
+      source.connect(analyser);
+      voiceAudioCtxRef.current = audioCtx;
+      voiceAnalyserRef.current = analyser;
+      voiceSourceRef.current = source;
+      const buf = new Float32Array(analyser.fftSize);
+      const silenceThreshold = 0.008;
+      const silenceHoldMs = 1200;
+      const hardCapMs = 10000;
+      let lastVoiceAt = Date.now();
+      hadSpeechRef.current = false;
+      const tick = () => {
+        if (!voiceAnalyserRef.current || !mediaRecorderRef.current || mediaRecorderRef.current.state === "inactive") return;
+        analyser.getFloatTimeDomainData(buf);
+        let sum = 0; for (let i = 0; i < buf.length; i++) sum += buf[i] * buf[i];
+        const rms = Math.sqrt(sum / buf.length);
+        const now = Date.now();
+        if (rms >= silenceThreshold) { lastVoiceAt = now; hadSpeechRef.current = true; }
+        if (hadSpeechRef.current && now - lastVoiceAt >= silenceHoldMs) {
+          try { mediaRecorderRef.current?.stop(); } catch {}
+          mediaRecorderRef.current = null;
+          setIsRecording(false);
+          return;
+        }
+        if (now - (audioCtx as any).startTimeMs >= hardCapMs) {
+          try { mediaRecorderRef.current?.stop(); } catch {}
+          mediaRecorderRef.current = null;
+          setIsRecording(false);
+          return;
+        }
+        requestAnimationFrame(tick);
+      };
+      (audioCtx as any).startTimeMs = Date.now();
+      requestAnimationFrame(tick);
+    } catch {
+      setIsRecording(false);
+    }
+  };
+
+  const enterVoiceMode = () => {
+    setIsVoiceMode(true);
+    voiceModeRef.current = true;
+    // In voice mode, hide chat input, show BlackHole, start with TTS confirmation
+    void speakWithGoogleTTS("AskVox is listening", true);
+  };
+
+  const exitVoiceMode = () => {
+    voiceModeRef.current = false;
+    setIsVoiceMode(false);
+    try { (window as any).speechSynthesis?.cancel?.(); } catch {}
+    try {
+      if (mediaRecorderRef.current && mediaRecorderRef.current.state !== "inactive") {
+        mediaRecorderRef.current.stop();
+      }
+    } catch {}
+    mediaRecorderRef.current = null;
+    setIsRecording(false);
+    try { audioPlayRef.current?.pause(); } catch {}
+    audioPlayRef.current = null;
+    try {
+      voiceAnalyserRef.current?.disconnect();
+      voiceSourceRef.current?.disconnect();
+      voiceAudioCtxRef.current?.close();
+    } catch {}
+    voiceAnalyserRef.current = null;
+    voiceSourceRef.current = null;
+    voiceAudioCtxRef.current = null;
+  };
+
+  // Wake detection: when wake triggers, enter voice mode; disable during voice mode
+  useWakeWordBackend({
+    enabled: !isVoiceMode,
+    onWake: enterVoiceMode,
   });
 
   const hasMessages = messages.length > 0;
@@ -257,14 +499,18 @@ const UnregisteredMain = ({ session }: { session: Session | null }) => {
       <UnregisteredTopBar session={session} />
 
       <main className="uv-main">
-        {/* Mic badge intentionally hidden; mic still active when permitted */}
-        {!hasMessages && (
+        {(!hasMessages || isVoiceMode) && (
           <section className="uv-hero">
             <BlackHole />
+            {isVoiceMode && (
+              <h4 className="orb-caption" style={{ fontSize: 22, opacity: 0.75, marginTop: 16 }}>
+                {isRecording || isTranscribing ? "Listening…" : ""}
+              </h4>
+            )}
           </section>
         )}
 
-        {hasMessages && (
+        {!isVoiceMode && hasMessages && (
           <div className="uv-chat-scroll-outer">
             <div className="uv-chat-area">
               <ChatMessages messages={messages} isLoading={isSending} />
@@ -273,7 +519,7 @@ const UnregisteredMain = ({ session }: { session: Session | null }) => {
         )}
       </main>
 
-      <ChatBar onSubmit={handleSubmit} disabled={isSending} />
+      {!isVoiceMode && (<ChatBar onSubmit={handleSubmit} disabled={isSending} />)}
     </div>
   );
 };

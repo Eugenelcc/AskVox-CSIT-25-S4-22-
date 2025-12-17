@@ -40,7 +40,15 @@ def _get_model():
     if _model is None:
         if whisper is None:
             raise RuntimeError("whisper is not installed; ensure openai-whisper is in requirements")
+        try:
+            print(f"🛎️  [Wake] Loading Whisper model: {WHISPER_MODEL}")
+        except Exception:
+            pass
         _model = whisper.load_model(WHISPER_MODEL)
+        try:
+            print(f"✅ [Wake] Whisper model loaded: {WHISPER_MODEL}")
+        except Exception:
+            pass
     return _model
 
 

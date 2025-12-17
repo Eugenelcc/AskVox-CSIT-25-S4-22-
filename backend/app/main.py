@@ -12,6 +12,7 @@ from app.api.chats.chat import router as chat_router
 from app.api.chats.llamachat import router as llamachat_router
 from app.services.stt_router import router as services_router
 from app.services.google_stt import router as google_stt_router
+from app.services.google_tts import router as google_tts_router
 from app.services.wake_stt import router as wake_router
 from app.services.voice_logs import router as voice_logs_router
 
@@ -42,6 +43,7 @@ app.include_router(chat_router)
 app.include_router(llamachat_router)
 app.include_router(services_router)
 app.include_router(google_stt_router)
+app.include_router(google_tts_router)
 app.include_router(wake_router)
 app.include_router(voice_logs_router)
 
