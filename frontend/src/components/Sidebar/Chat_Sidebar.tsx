@@ -44,6 +44,7 @@ interface SidebarProps {
   onRenameFolder?: (folderId: string) => void;
   onDeleteFolder?: (folderId: string) => void;
   onMoveOutOfFolder?: (folderId: string) => void;
+  onCreateFolder?: () => void;
 
   onRenameChat?: (chatId: string) => void;
   onMoveChatToFolder?: (chatId: string, folderId: string) => void;
@@ -57,6 +58,8 @@ export default function Sidebar({
   onClose,
   isOpen,
   folders = [],
+
+  onCreateFolder,
 
   onRenameFolder,
   onDeleteFolder,
@@ -182,7 +185,12 @@ export default function Sidebar({
             <div className="av-sectionHeader__title">Chat Folders</div>
           </div>
 
-          <button className="av-plusBtn" type="button" title="Add folder (later)">
+          <button
+            className="av-plusBtn"
+            type="button"
+            title="Add folder"
+            onClick={() => onCreateFolder?.()}
+          >
             +
           </button>
         </div>
@@ -388,8 +396,9 @@ export default function Sidebar({
               className="av-menuItem"
               type="button"
               onClick={() => {
-                // placeholder for "Add Folder"
-
+                onCreateFolder?.();
+                setMoveSubmenu(null);
+                setChatMenu(null);
               }}
             >
               <FolderIcon size={14} />

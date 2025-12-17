@@ -793,6 +793,91 @@ export default function Dashboard({ session }: { session: Session }) {
     onWake: enterVoiceMode,
   });
 
+  const handleCreateFolder = async () => {
+    const name = window.prompt("Folder name?");
+    if (!name?.trim()) return;
+  
+    const { error } = await supabase.from("chat_folders").insert({
+      user_id: session.user.id,
+      name: name.trim(),
+    });
+  
+    if (error) {
+      console.error("Failed to create folder", error);
+      return;
+    }
+  
+    await loadFolders();
+  };
+
+  const handleRenameFolder = async (folderId: string) => {
+    const folder = folders.find((f) => f.id === folderId);
+    const nextName = window.prompt("Rename folder:", folder?.name ?? "");
+    if (!nextName?.trim()) return;
+  
+    const { error } = await supabase
+      .from("chat_folders")
+      .update({ name: nextName.trim() })
+      .eq("id", folderId)
+      .eq("user_id", session.user.id);
+  
+    if (error) {
+      console.error("Failed to rename folder", error);
+      return;
+    }
+  
+    await loadFolders();
+  };
+
+  const handleDeleteFolder = async (folderId: string) => {
+    const ok = window.confirm("Delete this folder? Chats will NOT be deleted.");
+    if (!ok) return;
+  
+    // 1) delete join links first
+    const { error: linkErr } = await supabase
+      .from("chat_session_folders")
+      .delete()
+      .eq("folder_id", folderId);
+  
+    if (linkErr) {
+      console.error("Failed to remove folder links", linkErr);
+      return;
+    }
+  
+    // 2) delete folder
+    const { error } = await supabase
+      .from("chat_folders")
+      .delete()
+      .eq("id", folderId)
+      .eq("user_id", session.user.id);
+  
+    if (error) {
+      console.error("Failed to delete folder", error);
+      return;
+    }
+  
+    await loadFolders();
+  };
+
+  const handleMoveOutOfFolder = async (folderId: string) => {
+    // removes all chats from that folder
+    const { error } = await supabase
+      .from("chat_session_folders")
+      .delete()
+      .eq("folder_id", folderId);
+  
+    if (error) {
+      console.error("Failed to move chats out of folder", error);
+      return;
+    }
+  
+    await loadFolders();
+  };
+  
+  
+  
+  
+
   return (
     <div className="uv-root" style={{ display: 'flex', overflowX: 'hidden' }}>
       <Background />
@@ -814,6 +899,12 @@ export default function Dashboard({ session }: { session: Session }) {
         onClose={() => setSidebarOpen(false)}
         isOpen={showSidebar}
         onMoveChatToFolder={handleMoveChatToFolder}
+        onCreateFolder={handleCreateFolder}
+        onRenameFolder={handleRenameFolder}
+        onDeleteFolder={handleDeleteFolder}
+        onMoveOutOfFolder={handleMoveOutOfFolder}
+
+
       />
 
       <SettingsSidebar
