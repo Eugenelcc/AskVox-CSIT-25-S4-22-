@@ -41,7 +41,7 @@ export default function NavRail({ activeTab, onTabClick, onOpenSidebar }: NavRai
   return (
     <div className="av-rail">
       {/* LOGO */}
-      <button className="av-rail__logoBtn" type="button" onClick={() => handleClick("registered")}>
+      <button className="av-rail__logoBtn" type="button" onClick={() => handleClick("reguserhome")}>
         <img className="av-rail__logo" src={askvoxLogo} alt="AskVox" />
       </button>
 

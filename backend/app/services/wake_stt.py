@@ -8,7 +8,7 @@ from rapidfuzz import fuzz
 
 try:
     import whisper
-except Exception as e:  # pragma: no cover
+except Exception as e: 
     whisper = None
 
 

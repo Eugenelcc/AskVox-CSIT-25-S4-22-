@@ -1,5 +1,11 @@
 /* src/pages/cssfiles/Register.module.css */
 
+.pageRoot {
+  position: relative;
+  min-height: 100vh;
+  z-index: 10;
+}
+
 .registerContainer {
   display: flex;
   justify-content: center;
@@ -7,132 +13,251 @@
   min-height: 100vh;
   position: relative;
   z-index: 10;
-  padding: 40px 20px; /* Add padding so it doesn't touch edges */
+  padding: 28px;
 }
 
 .registerForm {
-  background: rgba(0, 0, 0, 0.6);
-  padding: 50px 40px;
-  border-radius: 35px;
-  border: 1px solid #333;
+  position: relative;
+  background: rgba(35, 35, 35, 0.8);
+  padding: 60px 40px 28px 40px;
+  border-radius: 40px;
+  border: 1px solid rgba(255, 149, 28, 0.4);
   width: 100%;
-  max-width: 500px;
+  max-width: 520px;
   display: flex;
   flex-direction: column;
   align-items: center;
   backdrop-filter: blur(10px);
+  box-shadow: 0 15px 60px rgba(0, 0, 0, 0.7);
+}
+
+/* ✅ close / cancel button (same UX as Login) */
+.closeBtn {
+  position: absolute;
+  top: 17px;
+  right: 40px;
+  background: none;
+  border: none;
+  color: #ff951c;
+  font-size: 50px;
+  cursor: pointer;
+  opacity: 0.6;
+}
+.closeBtn:hover {
+  opacity: 1;
 }
 
 .logo {
-  width: 60px;
-  margin-bottom: 20px;
+  width: 100px;
+  margin-bottom: 10px;
+  margin-top: -60px;
 }
 
 .title {
   color: white;
-  margin-bottom: 10px;
+  margin-bottom: 8px;
   text-align: center;
-  font-size: 24px;
+  font-size: 25px;
+  letter-spacing: 0.02em;
+  margin-top: -25px;
 }
 
 .subtitle {
-  color: #aaa;
-  margin-bottom: 30px;
+  color: rgba(255, 255, 255, 0.75);
+  margin-bottom: 18px;
   text-align: center;
+  font-size: 18px;
+  margin-top: -10px;
+  
 }
 
+/*  (profile picture) */
+.avatarRow {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: center; 
+  gap: 16px;
+  margin: 10px 0 18px;
+  margin-top: -5px;
+}
+
+.avatarCircle {
+  position: relative;
+  width: 96px;
+  height: 96px;
+  border-radius: 999px;
+  background: #0b0a00;
+  border: 1px solid rgba(255, 149, 28, 0.9);
+  overflow: visible;
+  cursor: pointer;
+  box-shadow: 0 10px 35px rgba(0, 0, 0, 0.55);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.avatarImg {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.avatarPlaceholder {
+  width: 100%;
+  height: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.avatarPlus {
+  font-size: 42px;
+  color: rgba(255, 255, 255, 0.6);
+  line-height: 1;
+  transform: translateY(-1px);
+}
+
+.avatarEditBtn {
+  position: absolute;
+  right: 6px;
+  bottom: 6px;
+  width: 32px;
+  height: 32px;
+  border-radius: 999px;
+  background: #2c2c2c;
+  border: 1px solid rgba(255, 149, 28, 0.9);
+  color: rgba(255, 255, 255, 0.85);
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  opacity: 0.95;
+  transition: 0.2s;
+}
+
+.avatarEditBtn:hover {
+  box-shadow: 0 0 12px rgba(255, 140, 40, 0.35);
+  color: #ff8c28;
+}
+
+.avatarText {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.avatarTitle {
+  color: rgba(255, 255, 255, 0.9);
+  font-size: 16px;
+}
+
+.avatarHint {
+  color: rgba(255, 255, 255, 0.6);
+  font-size: 13px;
+}
+
+.avatarInput {
+  display: none;
+}
+
+/* Google button */
 .googleButton {
   display: flex;
   align-items: center;
   justify-content: center;
   width: 100%;
+  height: 55px;
   padding: 14px;
-  border-radius: 30px;
-  border: 1px solid #333;
-  background: transparent;
+  border-radius: 32px;
+  border: 1px solid rgba(255, 149, 28, 0.35);
+  background: #1c1c1c;
   color: white;
-  margin-bottom: 25px;
+  margin-bottom: 5px;
   cursor: pointer;
-  transition: background-color 0.2s;
-  font-size: 15px;
+  transition: 0.2s;
+  font-size: 18px;
 }
-
-.googleButton:hover {
-  background-color: rgba(255, 255, 255, 0.1);
+.googleButton:hover:not(:disabled) {
+  border-color: #ff8c28;
+  box-shadow: 0 0 12px rgba(255, 140, 40, 0.35);
 }
 
 .googleLogo {
-  width: 20px;
+  width: 26px;
   margin-right: 10px;
 }
 
+/* Divider */
 .divider {
   display: flex;
   align-items: center;
   width: 100%;
-  margin-bottom: 25px;
-  color: #aaa;
+  margin: 14px 0 10px;
+  color: rgba(255, 255, 255, 0.65);
 }
 
 .dividerLine {
   flex: 1;
-  height: 1px;
-  background: #333;
+  height: 2px;
+  background: #666;
 }
 
 .dividerText {
   margin: 0 15px;
-  font-size: 14px;
+  font-size: 18px;
 }
 
+/* Form */
 .form {
   display: flex;
   flex-direction: column;
-  gap: 20px;
+  gap: 18px;
   width: 100%;
 }
 
 .label {
-  color: #aaa;
+  color: rgba(255, 255, 255, 0.78);
   display: block;
-  margin-bottom: 8px;
+  margin-bottom: 10px;
   margin-left: 15px;
-  font-size: 14px;
+  font-size: 16px;
 }
 
-/* Orange Rounded Input Style */
+/* Inputs */
 .input {
   width: 100%;
-  padding: 14px 25px;
-  border-radius: 30px;
-  border: 1px solid #333;
-  background: #1a1a1a;
+  height: 55px;
+  padding: 0 18px;
+  border-radius: 32px;
+  border: 1px solid rgba(255, 149, 28, 0.35);
+  background: #1c1c1c;
   color: white;
   outline: none;
-  font-size: 15px;
-  transition: all 0.3s ease;
+  font-size: 16px;
+  transition: 0.2s;
 }
 
 .input:focus {
   border-color: #ff8c28;
-  box-shadow: 0 0 0 2px rgba(255, 140, 40, 0.2);
+  box-shadow: 0 0 10px rgba(255, 140, 40, 0.3);
 }
 
 /* Gender Group */
 .genderGroup {
   display: flex;
-  gap: 20px;
+  gap: 22px;
   margin-left: 15px;
   color: #fff;
-  flex-wrap: wrap; /* Allows wrapping if screen is tiny */
+  flex-wrap: wrap;
 }
 
 .radioLabel {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: 10px;
   cursor: pointer;
-  font-size: 14px;
+  font-size: 16px;
 }
 
 .radio {
@@ -146,101 +271,135 @@
   width: 100%;
 }
 
-/* Custom Select Style to match Inputs */
+/* Selects */
 .select {
-  flex: 1; /* Each dropdown takes equal width */
-  padding: 14px 15px;
-  border-radius: 30px;
-  border: 1px solid #333;
-  background: #1a1a1a;
+  flex: 1;
+  height: 55px;
+  padding: 0 16px;
+  border-radius: 32px;
+  border: 1px solid rgba(255, 149, 28, 0.35);
+  background: #1c1c1c;
   color: white;
   outline: none;
   cursor: pointer;
-  appearance: none; /* Removes default ugly browser arrow */
+  appearance: none;
   text-align: center;
-  transition: all 0.3s ease;
-  font-size: 15px;
-  
-  /* Add custom arrow icon if you want, or keep simple */
-  background-image: linear-gradient(45deg, transparent 50%, #ff8c28 50%), linear-gradient(135deg, #ff8c28 50%, transparent 50%);
-  background-position: calc(100% - 20px) calc(1em + 2px), calc(100% - 15px) calc(1em + 2px);
-  background-size: 5px 5px, 5px 5px;
+  transition: 0.2s;
+  font-size: 16px;
+
+  background-image: linear-gradient(45deg, transparent 50%, #ff8c28 50%),
+    linear-gradient(135deg, #ff8c28 50%, transparent 50%);
+  background-position: calc(100% - 20px) 50%, calc(100% - 15px) 50%;
+  background-size: 6px 6px, 6px 6px;
   background-repeat: no-repeat;
 }
 
 .select:focus {
   border-color: #ff8c28;
-  box-shadow: 0 0 0 2px rgba(255, 140, 40, 0.2);
+  box-shadow: 0 0 10px rgba(255, 140, 40, 0.3);
 }
 
 .submitButton {
   width: 100%;
-  padding: 14px;
-  border-radius: 30px;
-  border: none;
+  height: 55px;
+  border-radius: 32px;
+  border: 1px solid #1c1c1c;
   background: #ff8c28;
-  color: white;
-  font-weight: bold;
-  font-size: 16px;
+  color: #000;
+  font-weight: 700;
+  font-size: 18px;
   cursor: pointer;
-  transition: background-color 0.2s;
-  margin-top: 25px;
-  box-shadow: 0 4px 15px rgba(255, 140, 40, 0.3);
+  transition: 0.2s;
+  margin-top: 10px;
+  box-shadow: 0 4px 15px rgba(255, 140, 40, 0.25);
 }
 
 .submitButton:hover:not(:disabled) {
-  background-color: #e67e22;
-  transform: translateY(-1px);
+  box-shadow: 0 0 12px rgba(255, 174, 71, 0.55);
 }
 
 .loginText {
-  color: #aaa;
-  margin-top: 30px;
+  color: rgba(255, 255, 255, 0.7);
+  margin-top: 13px;
   text-align: center;
   font-size: 14px;
 }
 
 .loginLink {
   color: #ff8c28;
-  text-decoration: none;
-  font-weight: 500;
-}
-
-.loginLink:hover {
   text-decoration: underline;
+  font-weight: 600;
 }
 
-/* --- 📱 CRITICAL MOBILE FIXES --- */
-
+/* --- 📱 MOBILE --- */
 @media (max-width: 768px) {
   .registerContainer {
-    /* 1. Prevent top cut-off by using block instead of flex center */
-    display: block; 
-    padding-top: 40px; 
-    height: auto; 
+    display: block;
+    padding-top: 40px;
+    height: auto;
     overflow-y: auto;
   }
 
   .registerForm {
-    /* 2. Reset margin to be centered manually */
-    margin: 0 auto; 
-    padding: 30px 20px;
+    margin: 0 auto;
+    padding: 34px 20px;
     width: 100%;
   }
 
+  .closeBtn {
+    right: 18px;
+    top: 12px;
+    font-size: 46px;
+  }
+
+  .avatarRow {
+    gap: 12px;
+  }
+
+  .avatarCircle {
+    width: 86px;
+    height: 86px;
+  }
+
   .dobGroup {
-    /* 3. Stack Date of Birth vertically on mobile */
     flex-direction: column;
   }
 
   .select {
-    width: 100%; /* Make dropdowns full width */
-    margin-bottom: 5px;
-    background-position: calc(100% - 20px) 50%, calc(100% - 15px) 50%; /* Adjust arrow */
+    width: 100%;
   }
+}
 
-  .genderGroup {
-    /* 4. Allow gender options to wrap nicely */
-    gap: 15px;
-  }
+
+
+.passwordField {
+  position: relative;
+  width: 100%;
+}
+
+.passwordInput {
+  padding-right: 54px; 
+}
+
+.passwordToggle {
+  position: absolute;
+  top: 50%;
+  right: 14px;
+  transform: translateY(-50%);
+  width: 34px;
+  height: 34px;
+  border: none;
+  background: transparent;
+  cursor: pointer;
+  opacity: 0.75;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: rgba(255, 255, 255, 0.85);
+  transition: 0.2s;
+}
+
+.passwordToggle:hover {
+  opacity: 1;
+  color: #ff8c28;
 }

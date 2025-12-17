@@ -13,7 +13,7 @@ const UnregisteredTopBar: FC<TopBarProps> = ({ session }) => {
 
   // Keep smart logo click (still uses session)
   const handleLogoClick = () => {
-    if (session) navigate("/RegisteredMain"); 
+    if (session) navigate("/reguserhome"); 
     else navigate("/");
   };
 

@@ -3,7 +3,7 @@ import { useNavigate } from "react-router-dom";
 import { supabase } from "../../supabaseClient";
 import type { Session } from "@supabase/supabase-js";
 import "./UnregisteredTopBar.css";
-import AskVoxLogo from "./AskVox.png";
+
 
 interface RegisteredTopBarProps {
   session?: Session | null;
@@ -12,10 +12,7 @@ interface RegisteredTopBarProps {
 const RegisteredTopBar: FC<RegisteredTopBarProps> = ({ session }) => {
   const navigate = useNavigate();
 
-  const handleLogoClick = () => {
-    // logged-in home
-    navigate("/registered");
-  };
+
 
   const handleLogout = async () => {
     // Navigate away first 
@@ -33,13 +30,6 @@ const RegisteredTopBar: FC<RegisteredTopBarProps> = ({ session }) => {
   return (
     <header className="uv-topbar">
       <div className="uv-topbar-left">
-        <img
-          src={AskVoxLogo}
-          alt="AskVox"
-          className="uv-logo"
-          onClick={handleLogoClick}
-          style={{ cursor: "pointer" }}
-        />
       </div>
 
       <div className="uv-topbar-right">

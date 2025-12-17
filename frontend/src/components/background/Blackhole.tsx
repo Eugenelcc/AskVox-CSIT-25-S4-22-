@@ -1,189 +1,162 @@
-import React, { useEffect, useRef } from "react";
-import "./BlackHole.css";
+import { motion } from "framer-motion";
+import svgPaths from "./imports/svg";
 
-const STAR_COUNT = 140;
 
-const CosmicVoiceOrb: React.FC = () => {
-  const starsRef = useRef<HTMLDivElement | null>(null);
-  const orbRef = useRef<HTMLButtonElement | null>(null);
-  const orbGlowRef = useRef<HTMLDivElement | null>(null);
+interface BlackHoleProps {
+  isActivated?: boolean;
+  className?: string;
+}
 
-  const listeningRef = useRef(false);
-  const audioCtxRef = useRef<AudioContext | null>(null);
-  const analyserRef = useRef<AnalyserNode | null>(null);
-  const dataArrayRef = useRef<Uint8Array | null>(null);
-  const mediaStreamRef = useRef<MediaStream | null>(null);
-  const rafIdRef = useRef<number | null>(null);
-
-  
-  useEffect(() => {
-    if (!starsRef.current) return;
-
-    const container = starsRef.current;
-    container.innerHTML = "";
-
-    for (let i = 0; i < STAR_COUNT; i++) {
-      const star = document.createElement("div");
-      star.className = "star";
-
-      const x = Math.random() * 100;
-      const y = Math.random() * 100;
-
-      const scale = 0.4 + Math.random() * 1.3;
-      const delay = Math.random() * 6;
-      const duration = 4 + Math.random() * 6;
-
-      star.style.left = x + "%";
-      star.style.top = y + "%";
-      star.style.setProperty("--base-scale", scale.toString());
-      star.style.setProperty(
-        "--base-opacity",
-        (0.4 + Math.random() * 0.6).toString()
-      );
-      star.style.animationDelay = delay + "s";
-      star.style.animationDuration = duration + "s";
-
-      container.appendChild(star);
-    }
-  }, []);
-
- 
-  const animateFromMic = () => {
-    if (!listeningRef.current) return;
-    const analyser = analyserRef.current;
-    const dataArray = dataArrayRef.current;
-    const orb = orbRef.current;
-    const orbGlow = orbGlowRef.current;
-    const stars = starsRef.current;
-
-    if (!analyser || !dataArray || !orb || !orbGlow || !stars) return;
-
-    analyser.getByteTimeDomainData(dataArray);
-
-    let sumSquares = 0;
-    for (let i = 0; i < dataArray.length; i++) {
-      const v = (dataArray[i] - 128) / 128;
-      sumSquares += v * v;
-    }
-    const rms = Math.sqrt(sumSquares / dataArray.length);
-    const level = Math.min(rms * 4, 1); 
-
-    const scale = 1 + level * 0.25;
-    const glowOpacity = 0.35 + level * 0.8;
-    const starScale = 1 + level * 0.4;
-
-    orb.style.transform = `scale(${scale})`;
-    orbGlow.style.opacity = glowOpacity.toString();
-    stars.style.transform = `scale(${starScale})`;
-
-    rafIdRef.current = requestAnimationFrame(animateFromMic);
-  };
-
-  const startListening = async () => {
-    if (listeningRef.current || !orbRef.current || !orbGlowRef.current) return;
-
-    try {
-      const mediaStream = await navigator.mediaDevices.getUserMedia({
-        audio: true,
-      });
-      mediaStreamRef.current = mediaStream;
-    } catch (err) {
-      console.error("Microphone permission error:", err);
-      return;
-    }
-
-    const AudioContextClass =
-      (window as any).AudioContext || (window as any).webkitAudioContext;
-    const audioCtx: AudioContext = new AudioContextClass();
-    const analyser = audioCtx.createAnalyser();
-    analyser.fftSize = 512;
-
-    const source = audioCtx.createMediaStreamSource(
-      mediaStreamRef.current as MediaStream
-    );
-    source.connect(analyser);
-
-    const dataArray = new Uint8Array(analyser.frequencyBinCount);
-
-    audioCtxRef.current = audioCtx;
-    analyserRef.current = analyser;
-    dataArrayRef.current = dataArray;
-
-    listeningRef.current = true;
-    orbRef.current.classList.remove("idle");
-
-    animateFromMic();
-  };
-
-  const stopListening = () => {
-    listeningRef.current = false;
-    if (orbRef.current) {
-      orbRef.current.classList.add("idle");
-      orbRef.current.style.transform = "scale(1)";
-    }
-    if (orbGlowRef.current) {
-      orbGlowRef.current.style.opacity = "0.35";
-    }
-    if (starsRef.current) {
-      starsRef.current.style.transform = "scale(1)";
-    }
-    if (rafIdRef.current !== null) {
-      cancelAnimationFrame(rafIdRef.current);
-      rafIdRef.current = null;
-    }
-    if (mediaStreamRef.current) {
-      mediaStreamRef.current.getTracks().forEach((t) => t.stop());
-      mediaStreamRef.current = null;
-    }
-    if (audioCtxRef.current) {
-      audioCtxRef.current.close();
-      audioCtxRef.current = null;
-    }
-  };
-
-  
-  useEffect(() => {
-    return () => {
-      stopListening();
-    };
-    
-  }, []);
-
-  const handleClick = () => {
-    if (!listeningRef.current) {
-      startListening();
-    } else {
-      stopListening();
-    }
-  };
-
+export function BlackHole({ isActivated = false, className = "" }: BlackHoleProps) {
   return (
-    <section className="orb-section">
-      <div className="scene">
-        <div className="ambient-glow"></div>
+    <motion.div
+      className={`relative ${className}`}
+      style={{ width: "610px", height: "630px" }}
+      animate={
+        isActivated
+          ? {
+              scale: [1, 1.08, 1],
+            }
+          : {}
+      }
+      transition={{
+        duration: 0.8,
+        ease: "easeInOut",
+      }}
+    >
+      {/*  Spiral  */}
+      <motion.div
+        className="absolute inset-0"
+        animate={{
+          rotate: isActivated ? [0, 360] : 360,
+        }}
+        transition={{
+          duration: isActivated ? 2 : 20,
+          ease: isActivated ? "easeOut" : "linear",
+          repeat: Infinity,
+        }}
+      >
+        <svg className="block size-full" fill="none" preserveAspectRatio="none" viewBox="0 0 697 722">
+          <g>
+            <path d={svgPaths.p32904e80} opacity="0" stroke="#FF951C" strokeWidth="2" />
+            <path d={svgPaths.p1a01f880} opacity="0.0241379" stroke="#FF951C" strokeWidth="2" />
+            <path d={svgPaths.p15ce5400} opacity="0.0482759" stroke="#FF951C" strokeWidth="2" />
+            <path d={svgPaths.p2ed3da00} opacity="0.0724138" stroke="#FF951C" strokeWidth="2" />
+            <path d={svgPaths.p2d154000} opacity="0.0965517" stroke="#FF951C" strokeWidth="2" />
+            <path d={svgPaths.pd3402a0} opacity="0.12069" stroke="#FF951C" strokeWidth="2" />
+            <path d={svgPaths.p34e02600} opacity="0.144828" stroke="#FF951C" strokeWidth="2" />
+            <path d={svgPaths.p31cbab00} opacity="0.168966" stroke="#FF951C" strokeWidth="2" />
+            <path d={svgPaths.p29314b80} opacity="0.193103" stroke="#FF951C" strokeWidth="2" />
+            <path d={svgPaths.p1d305f30} opacity="0.217241" stroke="#FF951C" strokeWidth="2" />
+            <path d={svgPaths.pa26b800} opacity="0.241379" stroke="#FF951C" strokeWidth="2" />
+            <path d={svgPaths.p3264c500} opacity="0.265517" stroke="#FF951C" strokeWidth="2" />
+            <path d={svgPaths.p3c80ec00} opacity="0.289655" stroke="#FF951C" strokeWidth="2" />
+            <path d={svgPaths.p3ccb2700} opacity="0.313793" stroke="#FF951C" strokeWidth="2" />
+            <path d={svgPaths.p9524d00} opacity="0.337931" stroke="#FF951C" strokeWidth="2" />
+            <path d={svgPaths.p1739b400} opacity="0.362069" stroke="#FF951C" strokeWidth="2" />
+            <path d={svgPaths.p11de8a00} opacity="0.386207" stroke="#FF951C" strokeWidth="2" />
+            <path d={svgPaths.p1673d900} opacity="0.410345" stroke="#FF951C" strokeWidth="2" />
+            <path d={svgPaths.p2d35e200} opacity="0.434483" stroke="#FF951C" strokeWidth="2" />
+            <path d={svgPaths.pae89c00} opacity="0.458621" stroke="#FF951C" strokeWidth="2" />
+            <path d={svgPaths.p3e8e1700} opacity="0.482759" stroke="#FF951C" strokeWidth="2" />
+            <path d={svgPaths.p3fe5ef40} opacity="0.506897" stroke="#FF951C" strokeWidth="2" />
+            <path d={svgPaths.p330f0000} opacity="0.531034" stroke="#FF951C" strokeWidth="2" />
+            <path d={svgPaths.p37e1e280} opacity="0.555172" stroke="#FF951C" strokeWidth="2" />
+            <path d={svgPaths.p17f4b900} opacity="0.57931" stroke="#FF951C" strokeWidth="2" />
+            <path d={svgPaths.p31f0b480} opacity="0.603448" stroke="#FF951C" strokeWidth="2" />
+            <path d={svgPaths.p28749880} opacity="0.627586" stroke="#FF951C" strokeWidth="2" />
+            <path d={svgPaths.p3fe85580} opacity="0.651724" stroke="#FF951C" strokeWidth="2" />
+            <path d={svgPaths.pbe92400} opacity="0.675862" stroke="#FF951C" strokeWidth="2" />
+            <path d={svgPaths.p35929a80} opacity="0.7" stroke="#FF951C" strokeWidth="2" />
+          </g>
+        </svg>
+      </motion.div>
 
-        <div className="orb-wrapper">
-          <div className="orb-border"></div>
+      {/* Glow */}
+      <div className="absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2">
+        {/* Outer glow layer which is transparent gray */}
+        <motion.div
+          className="absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2"
+          style={{ width: "330px", height: "340px" }}
+          animate={
+            isActivated
+              ? {
+                  scale: [1, 1.4, 1],
+                  opacity: [0.5, 0.8, 0.5],
+                }
+              : {}
+          }
+          transition={{
+            duration: 0.8,
+            ease: "easeInOut",
+          }}
+        >
+          <div
+            className="absolute inset-0 rounded-full"
+            style={{
+              background: "radial-gradient(circle, rgba(255, 240, 220, 0.3) 0%, rgba(255, 220, 180, 0.2) 40%, transparent 70%)",
+              filter: "blur(40px)",
+            }}
+          />
+        </motion.div>
 
-          <button
-            className="voice-core idle"
-            ref={orbRef}
-            aria-label="Voice Input"
-            onClick={handleClick}
-          >
-            <div className="orb-glow" ref={orbGlowRef}></div>
-            <div className="stars" ref={starsRef}></div>
-          </button>
-        </div>
+        {/* the biggest circle */}
+        <motion.div
+          className="absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2"
+          style={{ width: "260px", height: "280px" }}
+          animate={
+            isActivated
+              ? {
+                  scale: [1, 1.2, 1],
+                  opacity: [1, 1, 1],
+                }
+              : {}
+          }
+          transition={{
+            duration: 0.6,
+            ease: "easeInOut",
+          }}
+        >
+          <div
+            className="absolute inset-0 rounded-full"
+            style={{
+              background: "radial-gradient(circle, rgba(159, 182, 227, 0.7) 0%, rgba(159, 182, 227, 0.7) 25%, rgba(245, 175, 106, 0.9) 70%, transparent 100%)",
+              mixBlendMode: "lighten",
+              filter: "blur(8px)",
+            }}
+          />
+        </motion.div>
+
+        {/* to provide a reddish colour */}
+        <motion.div
+          className="absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2"
+          style={{ width: "180px", height: "180px" }}
+          animate={
+            isActivated
+              ? {
+                  scale: [1, 1.2, 1],
+                  opacity: [1, 1, 1],
+                }
+              : {}
+          }
+          transition={{
+            duration: 0.6,
+            ease: "easeInOut",
+          }}
+        >
+          <div
+            className="absolute inset-0 rounded-full"
+            style={{
+              background: "rgba(245, 106, 106, 0.9)",
+              opacity: 0.18,
+              mixBlendMode: "lighten",
+              filter: "blur(14px)",
+            }}
+          />
+        </motion.div>
       </div>
-
-
-      <p className="orb-caption">
-        Say <span className="orb-caption-askvox">"Hey AskVox"</span> to begin or
-        type below.
-      </p>
-    </section>
+    </motion.div>
   );
-};
+}
 
-export default CosmicVoiceOrb;
+export default BlackHole;

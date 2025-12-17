@@ -33,12 +33,12 @@ function App() {
         <Route path="/" element={<UnregisteredMain session={session} />} />
         
         {/* Auth Routes: Redirect to Dashboard if already logged in */}
-        <Route path="/login" element={!session ? <Login /> : <Navigate to="/dashboard" />} />
-        <Route path="/register" element={!session ? <Register /> : <Navigate to="/dashboard" />} />
+        <Route path="/login" element={!session ? <Login /> : <Navigate to="/reguserhome" />} />
+        <Route path="/register" element={!session ? <Register /> : <Navigate to="/reguserhome" />} />
         
         {/* Protected Route */}
         <Route 
-          path="/dashboard" 
+          path="/reguserhome" 
           element={session ? <RegisterMain session={session} /> : <Navigate to="/login" />} 
         />
       </Routes>

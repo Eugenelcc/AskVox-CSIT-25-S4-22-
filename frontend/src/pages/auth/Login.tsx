@@ -24,7 +24,7 @@ export default function Login() {
 
   const routeByRole = (role: UserRole) => {
     if (role === "paid") navigate("/paid");
-    else navigate("/registered");
+    else navigate("/reguserhome");
   };
 
   const handleLogin = async (e: FormEvent) => {
@@ -65,7 +65,7 @@ export default function Login() {
       provider: "google",
       options: {
         // after google login, you can land on registered first
-        redirectTo: `${window.location.origin}/dashboard`,
+        redirectTo: `${window.location.origin}/reguserhome`,
       },
     });
 
@@ -73,7 +73,7 @@ export default function Login() {
   };
 
   const handleCancel = () => {
-    navigate("/"); // back to UnregisteredMain
+    navigate("/"); 
   };
 
   return (
