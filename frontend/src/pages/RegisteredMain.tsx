@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useMemo } from "react";
 import { supabase } from "../supabaseClient";
 import type { Session } from "@supabase/supabase-js";
 
@@ -29,6 +29,23 @@ export default function Dashboard({ session }: { session: Session }) {
   const [activeTab, setActiveTab] = useState('chats'); 
   const [isSidebarOpen, setSidebarOpen] = useState(true); 
   const [isNewChat, setIsNewChat] = useState(false);
+  const [folders, setFolders] = useState<{
+    id: string;
+    name: string;
+    items: { id: string; title: string }[];
+  }[]>([]);
+  const sessionIdsInFolders = useMemo(
+    () => new Set(folders.flatMap(f => f.items.map(i => i.id))),
+    [folders]
+  );
+
+  const standaloneSessions = useMemo(
+    () => sessions.filter(s => !sessionIdsInFolders.has(s.id)),
+    [sessions, sessionIdsInFolders]
+  );
+
+
+
 
 
   // --- Data Fetching ---
@@ -67,6 +84,47 @@ export default function Dashboard({ session }: { session: Session }) {
     fetchMessages();
   }, [activeSessionId, session.user.id]); 
 
+  const loadFolders = async () => {
+    if (!session?.user?.id) return;
+
+    const { data, error } = await supabase
+      .from("chat_folders")
+      .select(`
+        id,
+        name,
+        chat_session_folders (
+          chat_sessions (
+            id,
+            title
+          )
+        )
+      `)
+      .eq("user_id", session.user.id);
+
+    if (error) {
+      console.error("Failed to load folders", error);
+      return;
+    }
+
+    const formatted = data.map((f: any) => ({
+      id: f.id,
+      name: f.name,
+      items: f.chat_session_folders.map((link: any) => ({
+        id: link.chat_sessions.id,
+        title: link.chat_sessions.title,
+      })),
+    }));
+
+  setFolders(formatted);
+};
+
+
+  useEffect(() => {
+    loadFolders();
+  }, [session.user.id]);
+
+
+
   // --- Handlers ---
 
   const handleSelectSession = (sessionId: string) => {
@@ -88,6 +146,32 @@ export default function Dashboard({ session }: { session: Session }) {
     setMessages([]);
     setIsNewChat(true);
   };
+
+  const handleMoveChatToFolder = async (chatId: string, folderId: string) => {
+    const { error } = await supabase.from("chat_session_folders").upsert({
+      session_id: chatId,
+      folder_id: folderId,
+    });
+
+    if (error) {
+      console.error("Failed to move chat to folder", error);
+      return;
+    }
+
+    // 🔁 refresh folders after move
+    await loadFolders();
+
+    const { data: allSessions } = await supabase
+      .from("chat_sessions")
+      .select("id, title")
+      .eq("user_id", session.user.id)
+      .order("created_at", { ascending: false });
+
+    if (allSessions) setSessions(allSessions);
+  };
+
+
+  
 
 
   const handleSubmit = async (text: string) => {
@@ -169,10 +253,13 @@ export default function Dashboard({ session }: { session: Session }) {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           message: trimmed,
-          history: messages.map(m => ({
-            role: m.senderId === session.user.id ? "user" : "assistant",
-            content: m.content,
-          })),
+          history: [
+            ...messages.map(m => ({
+              role: m.senderId === session.user.id ? "user" : "assistant",
+              content: m.content,
+            })),
+            { role: "user", content: trimmed },
+          ],
           query_id: queryId,         
           session_id: currentSessionId,
           user_id: session.user.id,
@@ -219,14 +306,17 @@ export default function Dashboard({ session }: { session: Session }) {
       
       <NavRail activeTab={activeTab} onTabClick={handleTabClick} />
 
-      <Sidebar 
-        sessions={sessions} 
-        activeId={activeSessionId} 
-        onSelectSession={handleSelectSession} 
+      <Sidebar
+        sessions={standaloneSessions}
+        folders={folders}
+        activeId={activeSessionId}
+        onSelectSession={handleSelectSession}
         onNewChat={handleNewChat}
         onClose={() => setSidebarOpen(false)}
         isOpen={showSidebar}
+        onMoveChatToFolder={handleMoveChatToFolder}
       />
+
 
       <div style={{ 
         flex: 1, 

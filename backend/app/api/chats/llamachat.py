@@ -1,5 +1,6 @@
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
+import re
 from typing import List, Literal
 from fastapi.responses import StreamingResponse
 import os
@@ -168,7 +169,21 @@ async def generate_cloud(message: str, history: List[HistoryItem]) -> str:
             detail="Cloud Run response missing 'response' field",
         )
 
-    return answer.strip()
+    # Sanitize: strip role tags and cut any trailing script sections
+    def _clean(text: str) -> str:
+        # Trim at the next user/system cue if model continued the script
+        cut_markers = ["\n[USER]", "\nUSER:", "\n[SYSTEM]", "\nSYSTEM:"]
+        cut_positions = [text.find(m) for m in cut_markers if m in text]
+        if cut_positions:
+            cut_idx = min([p for p in cut_positions if p >= 0])
+            text = text[:cut_idx]
+        # Remove any remaining role tags
+        text = re.sub(r"\s*\[(?:USER|ASSISTANT|SYSTEM)\]\s*", " ", text)
+        text = re.sub(r"\b(?:USER|ASSISTANT|SYSTEM):\s*", " ", text)
+        # Normalize whitespace
+        return re.sub(r"\s+", " ", text).strip()
+
+    return _clean(answer)
 
 
 # --- LOGIC 2: LOCAL GENERATION ---
