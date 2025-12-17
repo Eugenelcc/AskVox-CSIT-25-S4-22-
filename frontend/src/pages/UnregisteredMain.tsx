@@ -34,6 +34,7 @@ const UnregisteredMain = ({ session }: { session: Session | null }) => {
   const voiceModeRef = useRef(false);
   const ttsActiveRef = useRef(false);
   const ttsSanitizeRef = useRef<((t: string) => string) | null>(null);
+  const voiceGuestSessionIdRef = useRef<string | null>(null);
 
   const postLog = (text: string, kind: string) => {
     try {
@@ -374,14 +375,54 @@ const UnregisteredMain = ({ session }: { session: Session | null }) => {
               exitVoiceMode();
               return;
             }
+            // Ensure a guest session exists for voice mode (one per run)
+            let currentSessionId = voiceGuestSessionIdRef.current ?? guestSessionId;
+            if (!currentSessionId) {
+              try {
+                currentSessionId = await ensureGuestSession(transcript);
+                voiceGuestSessionIdRef.current = currentSessionId;
+                setGuestSessionId(currentSessionId);
+              } catch {}
+            }
+
             const userMsgId = globalThis.crypto?.randomUUID?.() ?? `vuser-${Date.now()}-${Math.random()}`;
             setMessages(prev => [...prev, { id: userMsgId, senderId: USER_ID, content: transcript, createdAt: new Date().toISOString() }]);
+
+            // Persist user voice message (optional but keeps parity with registered)
+            if (currentSessionId) {
+              try {
+                await supabase.from('chat_messages').insert({
+                  session_id: currentSessionId,
+                  user_id: null,
+                  role: 'user',
+                  content: transcript,
+                  display_name: 'Guest',
+                });
+              } catch {}
+            }
+
+            // Insert a queries row for analytics/linking
+            const queryId = globalThis.crypto?.randomUUID?.() ?? `${Date.now()}-${Math.random()}`;
+            if (currentSessionId) {
+              try {
+                await supabase.from('queries').insert({
+                  id: queryId,
+                  session_id: currentSessionId,
+                  user_id: null,
+                  input_mode: 'voice',
+                  transcribed_text: transcript,
+                  detected_domain: 'general',
+                });
+              } catch {}
+            }
             const sealionRes = await fetch("http://localhost:8000/sealionchats/", {
               method: "POST",
               headers: { "Content-Type": "application/json" },
               body: JSON.stringify({
                 message: transcript,
                 history: messages.map(m => ({ role: m.senderId === USER_ID ? "user" : "assistant", content: m.content })),
+                query_id: typeof queryId !== 'undefined' ? queryId : null,
+                session_id: currentSessionId ?? null,
               }),
             });
             const sealionData = await sealionRes.json();
@@ -456,6 +497,7 @@ const UnregisteredMain = ({ session }: { session: Session | null }) => {
   const enterVoiceMode = () => {
     setIsVoiceMode(true);
     voiceModeRef.current = true;
+    voiceGuestSessionIdRef.current = null;
     // In voice mode, hide chat input, show BlackHole, start with TTS confirmation
     void speakWithGoogleTTS("AskVox is listening", true);
   };
@@ -463,6 +505,7 @@ const UnregisteredMain = ({ session }: { session: Session | null }) => {
   const exitVoiceMode = () => {
     voiceModeRef.current = false;
     setIsVoiceMode(false);
+    voiceGuestSessionIdRef.current = null;
     try { (window as any).speechSynthesis?.cancel?.(); } catch {}
     try {
       if (mediaRecorderRef.current && mediaRecorderRef.current.state !== "inactive") {

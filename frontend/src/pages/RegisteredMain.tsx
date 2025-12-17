@@ -13,7 +13,6 @@ import Sidebar from "../components/Sidebar/Chat_Sidebar";
 import NavRail from "../components/Sidebar/NavRail"; 
 import "./cssfiles/registerMain.css";
 import { useWakeWordBackend } from "../hooks/useWakeWordBackend";
-import "./cssfiles/registerMain.css";
 import SettingsSidebar from "../components/Sidebar/Settings_Sidebar";
 
 // Types
@@ -43,6 +42,7 @@ export default function Dashboard({ session }: { session: Session }) {
   const voiceModeRef = useRef(false);
   const ttsActiveRef = useRef(false);
   const ttsSanitizeRef = useRef<((t: string) => string) | null>(null);
+  const voiceSessionIdRef = useRef<string | null>(null);
   
   // Sidebar & Navigation State
   const [sessions, setSessions] = useState<{id: string, title: string}[]>([]); // all chats the user has created, shown in the sidebar
@@ -186,6 +186,7 @@ export default function Dashboard({ session }: { session: Session }) {
     voiceModeRef.current = false;
     setIsVoiceMode(false);
     ttsActiveRef.current = false;
+    voiceSessionIdRef.current = null;
     try {
       if (mediaRecorderRef.current && mediaRecorderRef.current.state !== "inactive") {
         mediaRecorderRef.current.stop();
@@ -230,6 +231,32 @@ export default function Dashboard({ session }: { session: Session }) {
       .order("created_at", { ascending: false });
 
     if (allSessions) setSessions(allSessions);
+  };
+
+  // Reload messages from Supabase for the given session
+  const refreshActiveSessionMessages = async (sessionId?: string | null) => {
+    try {
+      const sid = sessionId ?? activeSessionId;
+      if (!sid) return;
+      const { data } = await supabase
+        .from("chat_messages")
+        .select("*")
+        .eq("session_id", sid)
+        .order("created_at", { ascending: true });
+      if (data) {
+        setMessages(
+          data.map((msg: DatabaseMessage) => ({
+            id: msg.id,
+            senderId: msg.role === "user" ? session.user.id : LLAMA_ID,
+            content: msg.content,
+            createdAt: msg.created_at,
+            displayName: msg.display_name,
+          }))
+        );
+      }
+    } catch (e) {
+      console.warn("Failed to refresh chat messages after voice mode", e);
+    }
   };
 
 
@@ -532,7 +559,7 @@ export default function Dashboard({ session }: { session: Session }) {
             }
 
             // Ensure there is a chat session (create lazily on first voice turn)
-            let currentSessionId = activeSessionId;
+            let currentSessionId = voiceSessionIdRef.current ?? activeSessionId;
             if (!currentSessionId) {
               const { data: newSession, error: sessErr } = await supabase
                 .from('chat_sessions')
@@ -546,6 +573,7 @@ export default function Dashboard({ session }: { session: Session }) {
                 console.error('Failed to create chat session for voice mode', sessErr);
               } else {
                 currentSessionId = newSession.id;
+                voiceSessionIdRef.current = currentSessionId;
                 setActiveSessionId(currentSessionId);
                 setIsNewChat(false);
                 // Refresh sidebar sessions list
@@ -719,6 +747,7 @@ export default function Dashboard({ session }: { session: Session }) {
     // Hide chat UI; show BlackHole only
     setIsVoiceMode(true);
     voiceModeRef.current = true;
+    voiceSessionIdRef.current = null;
     // No chatbar, no messages list during voice mode
     setActiveSessionId(null);
     setIsNewChat(true);
@@ -732,6 +761,7 @@ export default function Dashboard({ session }: { session: Session }) {
     voiceModeRef.current = false;
     setIsVoiceMode(false);
     setIsNewChat(false);
+    voiceSessionIdRef.current = null;
     try { (window as any).speechSynthesis?.cancel?.(); } catch {}
     // Stop recorder and playback when exiting
     try {
@@ -751,6 +781,10 @@ export default function Dashboard({ session }: { session: Session }) {
     voiceAnalyserRef.current = null;
     voiceSourceRef.current = null;
     voiceAudioCtxRef.current = null;
+    // Ensure UI shows any final DB writes (e.g., first voice turn).
+    // Use the latest known session id to avoid race with state updates.
+    const sid = voiceSessionIdRef.current || activeSessionId;
+    window.setTimeout(() => { void refreshActiveSessionMessages(sid); }, 120);
   };
 
   // Wake detection: when wake triggers, enter voice mode
@@ -807,30 +841,46 @@ export default function Dashboard({ session }: { session: Session }) {
             <AccountDetails session={session} />
           ) : (
             <>
-              {/* CHAT MODE (unchanged) */}
-              {!activeSessionId && (
+              {/* Voice mode: show minimal listening UI */}
+              {isVoiceMode ? (
                 <section className="uv-hero">
                   <BlackHole />
-                  <h3 className="orb-caption">
-                    Hi {profile?.username ?? "User"}, say{" "}
-                    <span className="visual-askvox">"Hey AskVox"</span> to begin or type below.
-                  </h3>
+                  {(isRecording || isTranscribing) && (
+                    <h4
+                      className="orb-caption"
+                      style={{ fontSize: 22, opacity: 0.75, marginTop: 16 }}
+                    >
+                      Listening…
+                    </h4>
+                  )}
                 </section>
+              ) : (
+                !activeSessionId && (
+                  <section className="uv-hero">
+                    <BlackHole />
+                    <h3 className="orb-caption">
+                      Hi {profile?.username ?? "User"}, say{" "}
+                      <span className="visual-askvox">"Hey AskVox"</span> to begin or type below.
+                    </h3>
+                  </section>
+                )
               )}
 
-          {activeSessionId && !isNewChat && !isVoiceMode && (
+              {activeSessionId && !isNewChat && !isVoiceMode && (
             <div className="uv-chat-scroll-outer">
               <div className="uv-chat-area">
                 <ChatMessages messages={messages} isLoading={isSending} />
               </div>
             </div>
-          )}
+              )}
           
-           {!isVoiceMode && (
-             <div className="uv-input-container">
-               <ChatBar onSubmit={handleSubmit} disabled={isSending} />
-             </div>
-           )}
+              {!isVoiceMode && (
+                <div className="uv-input-container">
+                  <ChatBar onSubmit={handleSubmit} disabled={isSending} />
+                </div>
+              )}
+            </>
+          )}
         </main>
       </div>
     </div>
