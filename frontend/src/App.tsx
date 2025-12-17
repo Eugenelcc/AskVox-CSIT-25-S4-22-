@@ -6,6 +6,7 @@ import Login from './pages/auth/Login'
 import Register from './pages/auth/Register'
 import RegisterMain from './pages/RegisteredMain'
 import UnregisteredMain from './pages/UnregisteredMain'
+import Upgrade from './pages/subscription/subscription_detail'
 
 function App() {
   const [session, setSession] = useState<Session | null>(null)
@@ -42,8 +43,12 @@ function App() {
         
         {/* Protected Route */}
         <Route 
-          path="/dashboard" 
-          element={session ? <RegisterMain session={session} /> : <Navigate to="/" />} 
+          path="/reguserhome" 
+          element={session ? <RegisterMain session={session} /> : <Navigate to="/login" />} 
+        />
+        <Route 
+          path="/upgrade"
+          element={session ? <Upgrade /> : <Navigate to="/login" />}
         />
       </Routes>
     </BrowserRouter>
