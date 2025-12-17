@@ -87,3 +87,18 @@
     -webkit-text-fill-color: transparent;
     background-clip: text;
   }
+
+  .uv-input-container {
+    position: relative;
+    bottom: 0;
+  
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    flex-direction: column;
+    padding-bottom: 20px;
+  }
+  
+
+
+

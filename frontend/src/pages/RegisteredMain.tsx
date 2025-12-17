@@ -2,6 +2,7 @@ import { useState, useEffect, useMemo } from "react";
 import { supabase } from "../supabaseClient";
 import type { Session } from "@supabase/supabase-js";
 
+
 // Components
 import Background from "../components/background/background";
 import ChatBar from "../components/chat/ChatBar";
@@ -10,43 +11,55 @@ import RegisteredTopBar from "../components/TopBars/RegisteredTopBar";
 import ChatMessages from "../components/chat/ChatMessages"; 
 import Sidebar from "../components/Sidebar/Chat_Sidebar"; 
 import NavRail from "../components/Sidebar/NavRail"; 
-import "./cssfiles/registeredMain.css";
+import "./cssfiles/registerMain.css";
+import SettingsSidebar from "../components/Sidebar/Settings_Sidebar";
 
 // Types
 import type { ChatMessage, DatabaseMessage, UserProfile } from "../types/database"; 
+import AccountDetails from './settings/AccountDetails';
 
-// Constants
+
+// Constants 
 const LLAMA_ID = 212020; 
+type SettingsKey = "account" | "billing" | "delete" | "wakeword";
 
 export default function Dashboard({ session }: { session: Session }) {
-  const [messages, setMessages] = useState<ChatMessage[]>([]);
-  const [isSending, setIsSending] = useState(false);
-  const [profile, setProfile] = useState<UserProfile | null>(null);
+  const [messages, setMessages] = useState<ChatMessage[]>([]); // chat messages on the screen, starts empty first, add messages
+  const [isSending, setIsSending] = useState(false); // Disable input, when AI is loading message also used to show loading animation 
+  const [profile, setProfile] = useState<UserProfile | null>(null); // Stores the logged in user profile
   
   // Sidebar & Navigation State
-  const [sessions, setSessions] = useState<{id: string, title: string}[]>([]);
-  const [activeSessionId, setActiveSessionId] = useState<string | null>(null);
-  const [activeTab, setActiveTab] = useState('chats'); 
-  const [isSidebarOpen, setSidebarOpen] = useState(true); 
-  const [isNewChat, setIsNewChat] = useState(false);
+  const [sessions, setSessions] = useState<{id: string, title: string}[]>([]); // all chats the user has created, shown in the sidebar
+  const [activeSessionId, setActiveSessionId] = useState<string | null>(null); // currently selected chat session
+  const [activeTab, setActiveTab] = useState('chats'); // Tracks which tab is active in the NavRail
+  const [isSidebarOpen, setSidebarOpen] = useState(false); // Sidebar visibility
+  const [isNewChat, setIsNewChat] = useState(false); //When user starts a new chat
+  // Stores chat folders
   const [folders, setFolders] = useState<{
-    id: string;
+    id: string;   
     name: string;
     items: { id: string; title: string }[];
   }[]>([]);
+  
+  // Chat list in folders
   const sessionIdsInFolders = useMemo(
     () => new Set(folders.flatMap(f => f.items.map(i => i.id))),
     [folders]
   );
 
+  // Chats not in folders
   const standaloneSessions = useMemo(
     () => sessions.filter(s => !sessionIdsInFolders.has(s.id)),
     [sessions, sessionIdsInFolders]
   );
 
+  // Settings Sidebar
+  const showSettings = isSidebarOpen && activeTab === "settings";
+  const [activeSettingsKey, setActiveSettingsKey] = useState<SettingsKey | null>(null); // To track active settings section
 
-
-
+  const handleSettingsSelect = (key: SettingsKey) => {
+    setActiveSettingsKey(key);
+  };
 
   // --- Data Fetching ---
   useEffect(() => {
@@ -142,7 +155,8 @@ export default function Dashboard({ session }: { session: Session }) {
       return;
     }
     setActiveTab(tab);
-    setSidebarOpen(tab === 'chats');
+    if (tab === "settings") setActiveSettingsKey(null);
+    setSidebarOpen(tab === "chats" || tab === "settings");
   };
 
   const handleNewChat = () => {
@@ -175,9 +189,6 @@ export default function Dashboard({ session }: { session: Session }) {
 
     if (allSessions) setSessions(allSessions);
   };
-
-
-  
 
 
   const handleSubmit = async (text: string) => {
@@ -306,7 +317,7 @@ export default function Dashboard({ session }: { session: Session }) {
   };
 
   const showSidebar = isSidebarOpen && activeTab === 'chats';
-
+  
   return (
     <div className="uv-root" style={{ display: 'flex', overflowX: 'hidden' }}>
       <Background />
@@ -330,6 +341,13 @@ export default function Dashboard({ session }: { session: Session }) {
         onMoveChatToFolder={handleMoveChatToFolder}
       />
 
+      <SettingsSidebar
+        isOpen={showSettings}
+        activeKey={activeSettingsKey}
+        onSelect={handleSettingsSelect}
+        onClose={() => setSidebarOpen(false)}
+      />
+
 
       <div style={{ 
         flex: 1, 
@@ -343,26 +361,35 @@ export default function Dashboard({ session }: { session: Session }) {
         <RegisteredTopBar session={session} />
 
         <main className="uv-main">
-          {!activeSessionId && (
-            <section className="uv-hero">
-              <BlackHole />
-              <h3 className="orb-caption">
-                Hi {profile?.username ?? "User"}, say <span className="visual-askvox">"Hey AskVox"</span> to begin or type below.
-              </h3>
-            </section>
-          )}
+          {/* SETTINGS MODE */}
+          {activeTab === "settings" && activeSettingsKey === "account" ? (
+            <AccountDetails session={session} />
+          ) : (
+            <>
+              {/* CHAT MODE (unchanged) */}
+              {!activeSessionId && (
+                <section className="uv-hero">
+                  <BlackHole />
+                  <h3 className="orb-caption">
+                    Hi {profile?.username ?? "User"}, say{" "}
+                    <span className="visual-askvox">"Hey AskVox"</span> to begin or type below.
+                  </h3>
+                </section>
+              )}
 
-          {activeSessionId && !isNewChat && (
-            <div className="uv-chat-scroll-outer">
-              <div className="uv-chat-area">
-                <ChatMessages messages={messages} isLoading={isSending} />
+              {activeSessionId && !isNewChat && (
+                <div className="uv-chat-scroll-outer">
+                  <div className="uv-chat-area">
+                    <ChatMessages messages={messages} isLoading={isSending} />
+                  </div>
+                </div>
+              )}
+
+              <div className="uv-input-container">
+                <ChatBar onSubmit={handleSubmit} disabled={isSending} />
               </div>
-            </div>
+            </>
           )}
-          
-           <div className="uv-input-container">
-             <ChatBar onSubmit={handleSubmit} disabled={isSending} />
-           </div>
         </main>
       </div>
     </div>
