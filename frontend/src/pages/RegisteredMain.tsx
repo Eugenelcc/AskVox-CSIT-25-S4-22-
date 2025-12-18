@@ -18,6 +18,7 @@ import SettingsSidebar from "../components/Sidebar/Settings_Sidebar";
 // Types
 import type { ChatMessage, DatabaseMessage, UserProfile } from "../types/database"; 
 import AccountDetails from './settings/AccountDetails';
+import DeleteAccount from './settings/DeleteAccount';
 
 
 // Constants 
@@ -957,8 +958,14 @@ export default function Dashboard({ session }: { session: Session }) {
 
         <main className="uv-main">
           {/* SETTINGS MODE */}
-          {activeTab === "settings" && activeSettingsKey === "account" ? (
-            <AccountDetails session={session} />
+          {activeTab === "settings" ? (
+            activeSettingsKey === "account" ? (
+              <AccountDetails session={session} />
+            ) : activeSettingsKey === "delete" ? (
+              <DeleteAccount session={session} />
+            ) : (
+              <></>
+            )
           ) : (
             <>
               {/* Voice mode: show minimal listening UI */}

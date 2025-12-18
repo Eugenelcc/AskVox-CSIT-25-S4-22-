@@ -1,0 +1,26 @@
+.da-wrap{display:flex;justify-content:center;align-items:flex-start;width:100%;padding:40px 24px}
+.da-card{width:100%;max-width:1067px;background:#1E1E1E;border-radius:33px;padding:28px 32px;box-shadow:0 8px 24px rgba(0,0,0,.35)}
+.da-head{display:flex;align-items:center;gap:12px;margin-bottom:18px}
+.da-title{font-family:ABeeZee,system-ui,Segoe UI,Roboto,Arial,sans-serif;font-size:28px;letter-spacing:.02em;color:#fff}
+.da-icon{color:#fff;opacity:.9}
+.da-panel{background:#2C2C2C;border-radius:22px;padding:22px 24px}
+.da-panelTitle{font-size:20px;color:#f0f0f0;margin-bottom:12px;font-weight:600}
+.da-bullets{margin:0 0 16px 18px;color:#e5e5e5;line-height:1.45}
+.da-bullets li{margin:10px 0}
+.da-ack{display:flex;align-items:center;gap:10px;color:#f0f0f0;margin:12px 0}
+.da-ack input{width:18px;height:18px;accent-color:#F29D38}
+.da-dangerBtn{margin-top:12px;display:inline-flex;justify-content:center;align-items:center;height:40px;padding:0 18px;border-radius:16px;border:1px solid #754B1C;background:#434343;color:#F0F0F0;font-size:16px;letter-spacing:.02em}
+.da-dangerBtn:disabled{opacity:.6;cursor:not-allowed}
+.da-error{margin-top:8px;color:#ff7b7b}
+
+/* Confirm modal overlay */
+.da-confirmOverlay{position:fixed;inset:0;background:rgba(0,0,0,.55);display:flex;align-items:center;justify-content:center;z-index:1000}
+.da-confirmModal{position:relative;width:620px;max-width:92vw;background:#3a3a3a;border-radius:16px;padding:22px 24px;box-shadow:0 10px 24px rgba(0,0,0,.45)}
+.da-modalClose{position:absolute;top:10px;right:12px;background:transparent;border:none;color:#f0f0f0;cursor:pointer}
+.da-confirmTitle{color:#f0f0f0;font-size:18px;margin:8px 0}
+.da-confirmSub{color:#ddd;margin-bottom:14px}
+.da-inputWrap{display:flex;align-items:center;background:#2C2C2C;border:1px solid #754B1C;border-radius:22px;padding:4px 10px}
+.da-input{flex:1;height:36px;background:transparent;border:none;color:#f0f0f0;outline:none}
+.da-eyeBtn{background:transparent;border:none;color:#ddd;cursor:pointer}
+.da-confirmBtn{margin-top:14px;display:inline-flex;justify-content:center;align-items:center;height:40px;padding:0 18px;border-radius:16px;border:1px solid #754B1C;background:#434343;color:#F0F0F0;font-size:16px;letter-spacing:.02em}
+.da-confirmBtn:disabled{opacity:.6;cursor:not-allowed}
