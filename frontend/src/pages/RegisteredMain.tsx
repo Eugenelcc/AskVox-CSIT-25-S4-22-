@@ -873,6 +873,34 @@ export default function Dashboard({ session }: { session: Session }) {
   
     await loadFolders();
   };
+
+  const handleCreateFolderAndMoveChat = async (chatId: string) => {
+    const name = window.prompt("Folder name?");
+    if (!name?.trim()) return;
+
+    // 1) Create folder
+    const { data: folder, error: folderErr } = await supabase
+      .from("chat_folders")
+      .insert({ user_id: session.user.id, name: name.trim() })
+      .select()
+      .single();
+    if (folderErr || !folder) {
+      console.error("Failed to create folder", folderErr);
+      return;
+    }
+
+    // 2) Link chat to folder
+    const { error: linkErr } = await supabase
+      .from("chat_session_folders")
+      .insert({ session_id: chatId, folder_id: folder.id });
+    if (linkErr) {
+      console.error("Failed to link chat to folder", linkErr);
+      return;
+    }
+
+    // 3) Refresh UI
+    await loadFolders();
+  };
   
   
   
@@ -900,6 +928,7 @@ export default function Dashboard({ session }: { session: Session }) {
         isOpen={showSidebar}
         onMoveChatToFolder={handleMoveChatToFolder}
         onCreateFolder={handleCreateFolder}
+        onCreateFolderAndMoveChat={handleCreateFolderAndMoveChat}
         onRenameFolder={handleRenameFolder}
         onDeleteFolder={handleDeleteFolder}
         onMoveOutOfFolder={handleMoveOutOfFolder}

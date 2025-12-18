@@ -46,6 +46,9 @@ interface SidebarProps {
   onMoveOutOfFolder?: (folderId: string) => void;
   onCreateFolder?: () => void;
 
+  // create folder and immediately attach current chat
+  onCreateFolderAndMoveChat?: (chatId: string) => void;
+
   onRenameChat?: (chatId: string) => void;
   onMoveChatToFolder?: (chatId: string, folderId: string) => void;
 }
@@ -60,6 +63,7 @@ export default function Sidebar({
   folders = [],
 
   onCreateFolder,
+  onCreateFolderAndMoveChat,
 
   onRenameFolder,
   onDeleteFolder,
@@ -396,7 +400,7 @@ export default function Sidebar({
               className="av-menuItem"
               type="button"
               onClick={() => {
-                onCreateFolder?.();
+                onCreateFolderAndMoveChat?.(moveSubmenu.chatId);
                 setMoveSubmenu(null);
                 setChatMenu(null);
               }}
