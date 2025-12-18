@@ -5,9 +5,13 @@
   }
   
   .sr-panel{
-    position: relative;
-    width: 465px;
+    position: fixed;
+    top: -3px;
+    left: 110px;            /* next to your 100px NavRail */
+    width: 368px;
     height: 100vh;
+    z-index: 90;
+  
     border-radius: 19px;
     background: var(--sr-panel);
     box-shadow: var(--sr-shadow);
@@ -35,11 +39,12 @@
   .sr-refresh{
     width: 32px;
     height: 32px;
-    border-radius: 12px;
-    border: 1px solid rgba(255,255,255,0.12);
-    background: rgba(0,0,0,0.18);
-    color: rgba(255,255,255,0.85);
+    color:#fff;
     cursor:pointer;
+  }
+
+  .sr-refresh:hover {
+    color: var(--av-orange);
   }
   
   .sr-list{
@@ -49,11 +54,12 @@
     overflow-y: auto;
     height: calc(100% - 52px);
     padding-right: 4px;
+    padding-left: 16px;
   }
   
   .sr-card{
     position: relative;
-    width: 281px;
+    width: 300px;
     min-height: 136px;
     border-radius: 30px;
     background: #0f0f0f;
@@ -72,14 +78,14 @@
   .sr-copy{
     position: relative;
     z-index: 3;
-    padding: 18px 18px 16px;
+    padding: 5px 18px 16px;
   }
   
   .sr-line{
-    width: 205px;
+    width: 280px;
     font-family:'ABeeZee', system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif;
     font-weight:400;
-    font-size:14px;
+    font-size:16px;
     line-height:17px;
     letter-spacing:0.02em;
     color:#fff;
@@ -137,30 +143,18 @@
   .sr-glow[data-domain="Geography & Travel"]{ background: rgba(20,90,60,0.45); }
   .sr-glow[data-domain="Art/Music/Literature"]{ background: rgba(110,40,130,0.45); }
   
-  /* stars (CSS placeholders) */
-  .sr-stars{
-    position:absolute;
-    right: 18px;
-    top: 20px;
-    width: 70px;
-    height: 70px;
-    z-index: 2;
-  }
-  
-  .sr-star{
-    position:absolute;
-    background: rgba(255,255,255,0.95);
-    clip-path: polygon(50% 0%, 62% 35%, 98% 35%, 68% 57%, 79% 91%, 50% 70%, 21% 91%, 32% 57%, 2% 35%, 38% 35%);
-    opacity: 0.9;
-  }
-  .sr-star.s1{ width: 10px; height: 14px; right: 6px; top: 10px; opacity:0.75; }
-  .sr-star.s2{ width: 10px; height: 14px; right: 24px; top: 38px; opacity:0.65; }
-  .sr-star.s3{ width: 22px; height: 30px; right: 10px; top: 20px; opacity:0.9; }
-  
+
   .sr-empty{
     font-family:'ABeeZee', system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif;
     color: rgba(255,255,255,0.8);
-    font-size: 14px;
+    font-size: 18px;
     padding: 8px 6px;
   }
   
+
+  .av-divider {
+    height: 2px;
+    background: rgba(31, 31, 31, 0.72);
+    border-radius: 999px;
+    margin: 6px 0 12px;
+  }

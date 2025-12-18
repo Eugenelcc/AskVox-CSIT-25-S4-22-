@@ -364,7 +364,7 @@ async def click(req: ClickReq):
                 "content": (
                     "You are AskVox, a safe educational AI tutor. "
                     "Explain clearly, be factual, and respond in plain text suitable for TTS. "
-                    "Do NOT use Markdown, asterisks, emojis, code fences, tables, or bullets."
+                    "Do NOT use Markdown, asterisks, code fences, tables, or bullets."
                 ),
             },
             {"role": "user", "content": auto_q},

@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import "./cssfiles/SmartRec.css";
+import {RotateCw} from "lucide-react";
 
 type Rec = {
   id: string;
@@ -66,9 +67,10 @@ export default function SmartRecPanel({
       <div className="sr-top">
         <div className="sr-title">Suggested Topics</div>
         <button className="sr-refresh" type="button" onClick={generate} disabled={loading}>
-          {loading ? "…" : "↻"}
+          {loading ? "…" : < RotateCw size={22} />}
         </button>
       </div>
+      <div className="av-divider" />
 
       <div className="sr-list">
         {items.map((it) => (
@@ -80,11 +82,7 @@ export default function SmartRecPanel({
             disabled={loading}
           >
             <div className="sr-glow" data-domain={it.domain} />
-            <div className="sr-stars" aria-hidden="true">
-              <span className="sr-star s1" />
-              <span className="sr-star s2" />
-              <span className="sr-star s3" />
-            </div>
+
 
             <div className="sr-copy">
               <div className="sr-line">
