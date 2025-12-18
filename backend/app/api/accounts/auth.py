@@ -11,7 +11,9 @@ from app.models.users import User, UserRole
 from app.models.user_sessions import UserSession
 import secrets
 
-from app.api.deps import get_current_user
+from app.api.deps import get_current_user, bearer as auth_bearer
+from fastapi.security import HTTPAuthorizationCredentials
+import httpx
 from typing import Optional
 
 router = APIRouter(prefix="/auth", tags=["auth"])
@@ -214,6 +216,55 @@ async def delete_account(payload: DeleteAccountIn, current_user: User = Depends(
     db.add(user)
     await db.commit()
     return {"ok": True}
+
+
+@router.post("/delete-account-supabase", response_model=dict)
+async def delete_account_supabase(
+    creds: HTTPAuthorizationCredentials | None = Depends(auth_bearer),
+):
+    """Delete the Supabase Auth user associated with the provided Supabase access token.
+    Uses direct HTTP calls to GoTrue Admin API; requires Service Role Key in settings.
+    """
+    base = settings.supabase_url
+    service_key = settings.supabase_service_role_key
+    if not base or not service_key:
+        raise HTTPException(status_code=500, detail="Supabase admin not configured")
+
+    if not creds:
+        raise HTTPException(status_code=401, detail="Missing bearer token")
+
+    access_token = creds.credentials
+    try:
+        async with httpx.AsyncClient(timeout=10) as client:
+            # 1) Resolve user from the provided Supabase access token
+            uresp = await client.get(
+                f"{base}/auth/v1/user",
+                headers={
+                    "Authorization": f"Bearer {access_token}",
+                    "apikey": service_key,
+                },
+            )
+            if uresp.status_code != 200:
+                raise HTTPException(status_code=401, detail="Invalid Supabase token")
+            uid = uresp.json().get("id")
+            if not uid:
+                raise HTTPException(status_code=401, detail="Invalid Supabase token")
+
+            # 2) Delete the user via admin endpoint
+            dresp = await client.delete(
+                f"{base}/auth/v1/admin/users/{uid}",
+                headers={
+                    "Authorization": f"Bearer {service_key}",
+                    "apikey": service_key,
+                },
+            )
+            if dresp.status_code not in (200, 204):
+                raise HTTPException(status_code=500, detail="Delete failed")
+        return {"status": "deleted"}
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
 
 @router.post("/payments/add-card")
 def add_card(payload: CardIn, user=Depends(get_current_user)):

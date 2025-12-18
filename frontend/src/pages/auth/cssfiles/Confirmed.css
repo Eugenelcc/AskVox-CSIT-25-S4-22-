@@ -1,0 +1,12 @@
+.confirm-root{position:relative;min-height:100vh;width:100%;}
+.confirm-center{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;padding:24px;}
+.confirm-card{width:min(90vw, 820px);background:rgba(12,12,12,0.9);border-radius:48px;box-shadow:0 20px 60px rgba(0,0,0,0.5);padding:56px 32px;text-align:center;color:#fff;}
+.confirm-card{position:relative}
+.confirm-close{position:absolute;top:12px;right:16px;background:transparent;border:none;color:#fff;opacity:0.9;cursor:pointer}
+.confirm-close:hover{opacity:1}
+.confirm-iconWrap{display:flex;align-items:center;justify-content:center;margin-bottom:20px;}
+.confirm-icon{color:#ED8B1B;}
+.confirm-title{font-size:32px;line-height:38px;letter-spacing:0.02em;margin-bottom:8px;}
+.confirm-sub{opacity:0.9;margin-bottom:28px;font-size:18px;}
+.confirm-btn{display:inline-block;padding:16px 28px;background:#FF951C;border:1px solid #1C1C1C;border-radius:45px;color:#000;text-decoration:none;font-weight:600;}
+.confirm-btn:hover{filter:brightness(0.95);}

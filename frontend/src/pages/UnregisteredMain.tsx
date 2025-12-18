@@ -545,6 +545,11 @@ const UnregisteredMain = ({ session }: { session: Session | null }) => {
         {(!hasMessages || isVoiceMode) && (
           <section className="uv-hero">
             <BlackHole />
+            {!isVoiceMode && !hasMessages && (
+              <h3 className="orb-caption">
+                Say <span className="visual-askvox">"Hey AskVox"</span> to begin or type below.
+              </h3>
+            )}
             {isVoiceMode && (
               <h4 className="orb-caption" style={{ fontSize: 22, opacity: 0.75, marginTop: 16 }}>
                 {isRecording || isTranscribing ? "Listening…" : ""}

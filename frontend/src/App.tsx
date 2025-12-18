@@ -4,6 +4,8 @@ import { supabase } from './supabaseClient'
 import type { Session } from '@supabase/supabase-js'
 import Login from './pages/auth/Login'
 import Register from './pages/auth/Register'
+import ConfirmedPage from './pages/auth/Confirmed'
+import CheckEmailPage from './pages/auth/CheckEmail'
 import RegisterMain from './pages/RegisteredMain'
 import UnregisteredMain from './pages/UnregisteredMain'
 import Upgrade from './pages/subscription/subscription_detail'
@@ -45,6 +47,8 @@ function App() {
         {/* Auth Routes: Redirect to Dashboard if already logged in */}
         <Route path="/login" element={!session ? <Login /> : <Navigate to="/reguserhome" />} />
         <Route path="/register" element={!session ? <Register /> : <Navigate to="/reguserhome" />} />
+        <Route path="/auth/confirmed" element={<ConfirmedPage />} />
+        <Route path="/auth/check-email" element={<CheckEmailPage />} />
         
         {/* Protected Route */}
         <Route 

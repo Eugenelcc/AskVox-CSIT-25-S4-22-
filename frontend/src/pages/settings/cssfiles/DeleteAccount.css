@@ -24,3 +24,11 @@
 .da-eyeBtn{background:transparent;border:none;color:#ddd;cursor:pointer}
 .da-confirmBtn{margin-top:14px;display:inline-flex;justify-content:center;align-items:center;height:40px;padding:0 18px;border-radius:16px;border:1px solid #754B1C;background:#434343;color:#F0F0F0;font-size:16px;letter-spacing:.02em}
 .da-confirmBtn:disabled{opacity:.6;cursor:not-allowed}
+
+/* Success panel styles */
+.da-successBox{background:#0F0F0F;border-radius:49px;padding:36px 28px;display:flex;justify-content:center;align-items:center;margin:10px}
+.da-successInner{position:relative;width:840px;max-width:90vw;background:#2C2C2C;border-radius:22px;padding:32px 24px;text-align:center;color:#fff}
+.da-successIconWrap{display:flex;align-items:center;justify-content:center;margin-bottom:18px}
+.da-successIcon{color:#ED8B1B}
+.da-successTitle{font-size:22px;letter-spacing:.02em;margin-bottom:8px}
+.da-successSub{opacity:.95;margin-bottom:8px}

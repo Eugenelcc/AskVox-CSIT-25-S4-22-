@@ -14,5 +14,9 @@ class Settings(BaseSettings):
     access_token_expire_minutes: int = 15
     refresh_token_expire_days: int = 7
 
+    # Supabase Admin for account deletion via OTP verification
+    supabase_url: str | None = None
+    supabase_service_role_key: str | None = None
+
 
 settings = Settings()

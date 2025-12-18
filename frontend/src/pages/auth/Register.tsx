@@ -67,7 +67,7 @@ export default function Register() {
       email,
       password,
       options: {
-        emailRedirectTo: `${window.location.origin}/reguserhome`,
+        emailRedirectTo: `${window.location.origin}/auth/confirmed`,
         data: {
           full_name: username,
           username: username,
@@ -80,6 +80,7 @@ export default function Register() {
     });
 
     if (error) {
+      // Show inline error instead of browser alert
       alert(error.message);
       setLoading(false);
       return;
@@ -112,8 +113,8 @@ export default function Register() {
       // ignore avatar upload errors (registration still succeeded)
     }
 
-    alert("Registration successful! Please check your email.");
-    navigate("/login");
+    // Navigate to a styled "check your email" page instead of a browser alert
+    navigate("/auth/check-email");
     setLoading(false);
   };
 

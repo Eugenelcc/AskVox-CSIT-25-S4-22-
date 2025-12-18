@@ -1,7 +1,7 @@
 import { useState } from "react";
 import type { Session } from "@supabase/supabase-js";
 import { supabase } from "../../supabaseClient";
-import { Trash2, Eye, EyeOff, X } from "lucide-react";
+import { Trash2, X, MailCheck, CheckCircle2 } from "lucide-react";
 import "./cssfiles/DeleteAccount.css";
 
 export default function DeleteAccount({ session }: { session: Session }) {
@@ -9,38 +9,50 @@ export default function DeleteAccount({ session }: { session: Session }) {
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
   const [confirmOpen, setConfirmOpen] = useState(false);
-  const [password, setPassword] = useState("");
-  const [showPw, setShowPw] = useState(false);
+  const [otp, setOtp] = useState("");
   const [done, setDone] = useState(false);
+  const [sent, setSent] = useState(false);
 
-  const openConfirm = () => {
+  const openConfirm = async () => {
     if (!ack) return;
     setErr(null);
     setConfirmOpen(true);
+    // Send OTP to user's email
+    try {
+      const email = session.user.email || "";
+      const { error } = await supabase.auth.signInWithOtp({ email });
+      if (error) throw error;
+      setSent(true);
+    } catch (e: any) {
+      setErr(e?.message || "Failed to send OTP. Please try again.");
+    }
   };
 
-  const verifyPasswordThenDelete = async () => {
+  const verifyOtpAndDelete = async () => {
     if (busy) return;
     setBusy(true);
     setErr(null);
     try {
       const email = session.user.email || "";
       if (!email) throw new Error("No email on session.");
-      const { error: authErr } = await supabase.auth.signInWithPassword({ email, password });
-      if (authErr) throw new Error("Incorrect password. Please try again.");
+      // 1) Verify OTP
+      const { error: otpErr } = await supabase.auth.verifyOtp({ email, token: otp, type: "email" });
+      if (otpErr) throw new Error("Invalid or expired OTP");
 
-      // TODO: Replace with your backend irreversible deletion
-      // await fetch("http://localhost:8000/me/delete", { method: "POST", credentials: "include" })
-      await new Promise((r) => setTimeout(r, 600));
+      // 2) Call backend to delete via Service Role
+      const { data: sess } = await supabase.auth.getSession();
+      const access = sess.session?.access_token;
+      if (!access) throw new Error("Missing session token");
+      const res = await fetch("http://localhost:8000/auth/delete-account-supabase", {
+        method: "POST",
+        headers: { Authorization: `Bearer ${access}` },
+      });
+      if (!res.ok) throw new Error("Delete failed");
 
-      // Show success panel, then sign out and redirect to Unregistered
+      // Show success panel; redirect only when user clicks the close button
       setDone(true);
       setConfirmOpen(false);
-      setPassword("");
-      setTimeout(async () => {
-        await supabase.auth.signOut();
-        window.location.href = "/"; // Unregistered page
-      }, 1800);
+      setOtp("");
     } catch (e: any) {
       setErr(e?.message || "Verification failed. Please try again.");
     } finally {
@@ -59,10 +71,22 @@ export default function DeleteAccount({ session }: { session: Session }) {
         <div className="da-panel">
           {done ? (
             <div className="da-successBox">
-              <div className="da-successTick" />
-              <div className="da-successTitle">Account Deleted Successfully</div>
-              <div className="da-successSub">Your AskVox account has been removed.</div>
-              <div className="da-successSub">We’re sad to see you go, and we hope to have you back someday</div>
+              <div className="da-successInner">
+                <button
+                  className="da-modalClose"
+                  type="button"
+                  aria-label="Close"
+                  onClick={async () => { await supabase.auth.signOut(); window.location.href = "/"; }}
+                >
+                  <X size={20} />
+                </button>
+                <div className="da-successIconWrap">
+                  <CheckCircle2 className="da-successIcon" size={72} />
+                </div>
+                <div className="da-successTitle">Account Deleted Successfully</div>
+                <div className="da-successSub">Your AskVox account has been removed.</div>
+                <div className="da-successSub">We’re sad to see you go, and we hope to have you back someday</div>
+              </div>
             </div>
           ) : (
             <>
@@ -97,24 +121,32 @@ export default function DeleteAccount({ session }: { session: Session }) {
               <X size={20} />
             </button>
             <div className="da-confirmTitle">Before we delete your account, we need to verify it’s really you.</div>
-            <div className="da-confirmSub">Please enter your AskVox password to proceed.</div>
+            <div className="da-confirmSub">
+              {sent ? (
+                <>
+                  <MailCheck size={18} style={{ marginRight: 6 }} />
+                  We’ve sent a 6-digit OTP to your email. Enter it below.
+                </>
+              ) : (
+                "Sending code..."
+              )}
+            </div>
 
             <div className="da-inputWrap">
               <input
                 className="da-input"
-                type={showPw ? "text" : "password"}
-                value={password}
-                onChange={(e) => setPassword(e.target.value)}
-                placeholder="Enter your password"
+                inputMode="numeric"
+                pattern="[0-9]*"
+                maxLength={6}
+                value={otp}
+                onChange={(e) => setOtp(e.target.value.replace(/\D/g, ""))}
+                placeholder="Enter 6-digit OTP"
               />
-              <button className="da-eyeBtn" type="button" onClick={() => setShowPw((v) => !v)} aria-label="Toggle password visibility">
-                {showPw ? <EyeOff size={18} /> : <Eye size={18} />}
-              </button>
             </div>
 
             {err && <div className="da-error" style={{ marginTop: 8 }}>{err}</div>}
 
-            <button className="da-confirmBtn" type="button" disabled={busy || !password.trim()} onClick={verifyPasswordThenDelete}>
+            <button className="da-confirmBtn" type="button" disabled={busy || otp.trim().length !== 6} onClick={verifyOtpAndDelete}>
               {busy ? "Processing..." : "Yes, Delete My Account Permanently"}
             </button>
           </div>
