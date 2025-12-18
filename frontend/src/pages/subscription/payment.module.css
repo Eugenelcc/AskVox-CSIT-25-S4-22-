@@ -46,15 +46,14 @@
   background: rgba(255, 255, 255, 0.08);
 }
 
-/* Main center wrapper (matches 1728 canvas feel but responsive) */
+/* Main center wrapper */
 .panel {
   width: min(1280px, calc(100% - 140px));
   margin: 0 auto;
   padding-top: 72px;
 
   display: grid;
-  grid-template-columns: 420px 1fr;
-
+  grid-template-columns: 510px 787px;
   gap: 0;
   justify-content: center;
 }
@@ -66,8 +65,6 @@
   border-radius: 19px;
   overflow: hidden;
   opacity: 0.93;
-
-  /* subtle overlay glow like your mock */
   box-shadow: 0 25px 80px rgba(255, 149, 28, 0.12);
 }
 
@@ -86,7 +83,7 @@
   border-radius: 19px;
   background: #0c0c0c;
 
-  padding: 74px 94px 58px; /* matches your left/top feel */
+  padding: 74px 94px 58px;
   position: relative;
 }
 
@@ -129,7 +126,29 @@
   color: rgba(255, 255, 255, 0.45);
 }
 
-/* Row for expiry/cvv/toggle */
+/* ✅ wrap for card input + brand icon */
+.cardInputWrap {
+  position: relative;
+  width: 596px;
+}
+
+.brandIcon {
+  position: absolute;
+  right: 14px;
+  top: 50%;
+  transform: translateY(-50%);
+  display: grid;
+  place-items: center;
+  pointer-events: none;
+  opacity: 0.95;
+}
+
+/* make room for icon inside input */
+.cardInputWrap .input {
+  padding-right: 70px;
+}
+
+/* Row for expiry/cvv */
 .row {
   display: flex;
   align-items: flex-start;
@@ -158,40 +177,6 @@
 
 .inputSmall::placeholder {
   color: rgba(255, 255, 255, 0.45);
-}
-
-/* Mini toggle (right of expiry/cvv) */
-.colToggle {
-  padding-top: 46px; /* visually aligns with inputs */
-}
-
-.miniToggle {
-  width: 82px;
-  height: 34px;
-  border-radius: 999px;
-  background: #1c1c1c;
-  border: 1px solid #754b1c;
-  position: relative;
-}
-
-.miniDotLeft,
-.miniDotRight {
-  position: absolute;
-  top: 50%;
-  transform: translateY(-50%);
-  width: 18px;
-  height: 18px;
-  border-radius: 999px;
-}
-
-.miniDotLeft {
-  left: 10px;
-  background: #ff2e2e; /* red like your screenshot */
-}
-
-.miniDotRight {
-  right: 10px;
-  background: #ffa81c; /* orange */
 }
 
 /* Saved note */
@@ -252,6 +237,25 @@
   padding: 0;
 }
 
+/* error visuals */
+.errorText {
+  margin-top: 8px;
+  margin-bottom: 10px;
+  font-size: 13px;
+  color: rgba(255, 255, 255, 0.85);
+  opacity: 0.9;
+}
+
+.inputError {
+  border: 1px solid rgba(255, 80, 80, 0.85) !important;
+  box-shadow: 0 0 0 2px rgba(255, 80, 80, 0.12);
+}
+
+.payBtnDisabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+
 /* Responsive: stack cards */
 @media (max-width: 1400px) {
   .panel {
@@ -278,7 +282,8 @@
 
   .input,
   .totalRow,
-  .payBtn {
+  .payBtn,
+  .cardInputWrap {
     width: 100%;
   }
 
@@ -286,3 +291,63 @@
     flex-wrap: wrap;
   }
 }
+
+/* -------------------- ✅ SUCCESS MODAL -------------------- */
+.modalOverlay {
+  position: fixed;
+  inset: 0;
+  z-index: 9999;
+  background: rgba(0, 0, 0, 0.55);
+  backdrop-filter: blur(6px);
+  display: grid;
+  place-items: center;
+  padding: 20px;
+}
+
+.modal {
+  width: min(560px, 92vw);
+  border-radius: 18px;
+  background: #0c0c0c;
+  border: 1px solid rgba(255, 149, 28, 0.35);
+  box-shadow: 0 30px 90px rgba(0, 0, 0, 0.6);
+  padding: 26px 26px 22px;
+  color: #fff;
+}
+
+.modalTitle {
+  margin: 0 0 10px;
+  font-size: 26px;
+  font-weight: 400;
+  letter-spacing: 0.02em;
+}
+
+.modalText {
+  margin: 0 0 18px;
+  color: rgba(255, 255, 255, 0.78);
+  font-size: 16px;
+  line-height: 1.5;
+}
+
+.modalActions {
+  display: flex;
+  gap: 12px;
+  justify-content: flex-end;
+}
+
+.modalBtnPrimary {
+  height: 44px;
+  padding: 0 18px;
+  border-radius: 999px;
+  border: 1px solid #a25600;
+  background: #ff951c;
+  color: #000;
+  font-size: 16px;
+  cursor: pointer;
+}
+
+.modalBtnPrimary:hover {
+  filter: brightness(1.05);
+}
+
+
+
