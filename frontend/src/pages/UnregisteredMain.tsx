@@ -205,16 +205,6 @@ const UnregisteredMain = ({ session }: { session: Session | null }) => {
       );
       // --- NEW LOGIC END ---
 
-      // Mirror RegisteredMain: persist assistant chat message (optional)
-      try {
-        await supabase.from('chat_messages').insert({
-          session_id: currentSessionId,
-          user_id: null,
-          role: 'assistant',
-          content: replyText || '(No response received.)',
-          display_name: 'AskVox'
-        });
-      } catch {}
 
       if (!replyText) {
         setMessages((prev) =>

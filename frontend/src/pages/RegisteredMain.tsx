@@ -268,7 +268,10 @@ export default function Dashboard({ session }: { session: Session }) {
 
     // 1. Determine Session ID
     let currentSessionId = activeSessionId;
+    const createdSession = !currentSessionId;
     if (!currentSessionId) {
+      // Block initial fetch until we finish first-write
+      setIsNewChat(true);
       // ✅ Create ONE new chat session
       const { data: newSession, error } = await supabase
         .from('chat_sessions')
@@ -286,7 +289,6 @@ export default function Dashboard({ session }: { session: Session }) {
 
       currentSessionId = newSession.id;
       setActiveSessionId(currentSessionId);
-      setIsNewChat(false);
 
       // ✅ Refresh sidebar sessions from DB
       const { data: allSessions } = await supabase
@@ -325,14 +327,17 @@ export default function Dashboard({ session }: { session: Session }) {
     });
 
     
-    // 4. Save USER message to Supabase
-    supabase.from('chat_messages').insert({ 
+    // 4. Save USER message to Supabase (await to avoid race with initial fetch)
+    await supabase.from('chat_messages').insert({ 
       session_id: currentSessionId, 
       user_id: session.user.id, 
       role: 'user', 
       content: trimmed,
       display_name: userName // <--- CRITICAL: Sending the name here
-    }).then();
+    });
+
+    // If we just created the session, now mark new-chat as false so fetch will include this message
+    if (createdSession) setIsNewChat(false);
 
     try {
       // 5. Call AI API

@@ -121,25 +121,12 @@ const ChatBar: FC<ChatBarProps> = ({
           }
 
           if (transcript) {
-            const finalText = (() => {
-              // compute what the combined text would be
-              const current = textareaRef.current?.value ?? "";
-              return current ? `${current.trim()} ${transcript}` : transcript;
-            })();
-
-            // prevent duplicate auto-submit of identical text
-            const now = Date.now();
-            if (
-              !disabled &&
-              !(lastSubmittedRef.current && lastSubmittedRef.current.text === finalText.trim() && now - lastSubmittedRef.current.ts < 3000)
-            ) {
-              console.log("➡️  [ChatBar] submitting to llama2-cloud:", finalText.trim());
-              lastSubmittedRef.current = { text: finalText.trim(), ts: now };
-              onSubmit?.(finalText.trim());
-            }
-
-            // clear the local input because we've submitted
-            setValue("");
+            // Instead of auto-sending, place the transcript into the input
+            const current = textareaRef.current?.value ?? "";
+            const finalText = current ? `${current.trim()} ${transcript}` : transcript;
+            setValue(finalText);
+            // Focus textarea so user can review/edit then press Send
+            try { textareaRef.current?.focus(); } catch {}
           }
         } catch (err) {
           console.error("Error calling STT endpoint", err);
