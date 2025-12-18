@@ -11,6 +11,7 @@ import AccountDetails from './pages/settings/AccountDetails';
 import ForgotPassword from './pages/auth/ForgotPassword'
 import ResetPassword from './pages/auth/ResetPassword'
 
+import Payment from './pages/subscription/payment'
 
 function App() {
   const [session, setSession] = useState<Session | null>(null)
@@ -58,8 +59,10 @@ function App() {
         <Route path="/forgot-password" element={<ForgotPassword />} />
         <Route path="/reset-password" element={<ResetPassword />} />
 
-
-
+        <Route 
+          path="/payment"
+          element={session ? <Payment /> : <Navigate to="/login" />}
+        />
       </Routes>
     </BrowserRouter>
   )
