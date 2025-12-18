@@ -15,6 +15,7 @@ from app.services.google_stt import router as google_stt_router
 from app.services.google_tts import router as google_tts_router
 from app.services.wake_stt import router as wake_router
 from app.services.voice_logs import router as voice_logs_router
+from app.services.smartrec import router as smartrec_router
 
 app = FastAPI(title="AskVox API")
 
@@ -46,6 +47,7 @@ app.include_router(google_stt_router)
 app.include_router(google_tts_router)
 app.include_router(wake_router)
 app.include_router(voice_logs_router)
+app.include_router(smartrec_router)
 
 # --- HEALTH CHECKS ---
 

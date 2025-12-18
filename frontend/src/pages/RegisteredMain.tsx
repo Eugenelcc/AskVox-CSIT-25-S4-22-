@@ -14,6 +14,7 @@ import NavRail from "../components/Sidebar/NavRail";
 import "./cssfiles/registerMain.css";
 import { useWakeWordBackend } from "../hooks/useWakeWordBackend";
 import SettingsSidebar from "../components/Sidebar/Settings_Sidebar";
+import SmartRecPanel from "../components/Sidebar/SmartRec_sidebar";
 
 // Types
 import type { ChatMessage, DatabaseMessage, UserProfile } from "../types/database"; 
@@ -173,7 +174,7 @@ export default function Dashboard({ session }: { session: Session }) {
     }
     setActiveTab(tab);
     if (tab === "settings") setActiveSettingsKey(null);
-    setSidebarOpen(tab === "chats" || tab === "settings");
+    setSidebarOpen(tab === "chats" || tab === "settings" || tab === "smartrec");
   };
 
 
@@ -971,6 +972,19 @@ export default function Dashboard({ session }: { session: Session }) {
             ) : (
               <></>
             )
+          ) : activeTab === "smartrec" ? (
+            <div style={{ paddingTop: 18, paddingLeft: 24 }}>
+              <SmartRecPanel
+                userId={session.user.id}
+                onOpenSession={(sid) => {
+                  // open the newly created session
+                  setActiveTab("chats");
+                  setSidebarOpen(true);
+                  setActiveSessionId(sid);
+                  setIsNewChat(false);
+                }}
+              />
+            </div>
           ) : (
             <>
               {/* Voice mode: show minimal listening UI */}
@@ -999,13 +1013,13 @@ export default function Dashboard({ session }: { session: Session }) {
               )}
 
               {activeSessionId && !isNewChat && !isVoiceMode && (
-            <div className="uv-chat-scroll-outer">
-              <div className="uv-chat-area">
-                <ChatMessages messages={messages} isLoading={isSending} />
-              </div>
-            </div>
+                <div className="uv-chat-scroll-outer">
+                  <div className="uv-chat-area">
+                    <ChatMessages messages={messages} isLoading={isSending} />
+                  </div>
+                </div>
               )}
-          
+
               {!isVoiceMode && (
                 <div className="uv-input-container">
                   <ChatBar onSubmit={handleSubmit} disabled={isSending} />
