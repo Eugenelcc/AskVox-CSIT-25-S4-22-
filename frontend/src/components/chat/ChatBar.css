@@ -1,9 +1,12 @@
 .av-chatbar-wrapper {
   position: fixed;
-  left: 50%;
+  /* align with main content area that starts after the 80px rail */
+  left: 80px;
+  right: 0;
   bottom: 95px;
-  transform: translateX(-50%);
-  width: min(900px, calc(100% - 40px));
+  width: auto;
+  display: flex;
+  justify-content: center;
   z-index: 20;
   filter: drop-shadow(0px 4px 9.2px rgba(0, 0, 0, 0.6));
 }
@@ -11,7 +14,7 @@
 /* the main container */
 .av-chatbar {
   box-sizing: border-box;
-  width: 100%;
+  width: min(900px, calc(100% - 160px)); /* 80px rail + 80px breathing room */
   min-height: 56px;
   border-radius: 24px;
   border: 1px solid #ff951c;
