@@ -24,6 +24,7 @@ const UnregisteredMain = ({ session }: { session: Session | null }) => {
   const [isVoiceMode, setIsVoiceMode] = useState(false);
   const [isRecording, setIsRecording] = useState(false);
   const [isTranscribing, setIsTranscribing] = useState(false);
+  const [isTtsPlaying, setIsTtsPlaying] = useState(false);
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
   const audioChunksRef = useRef<BlobPart[]>([]);
   const audioPlayRef = useRef<HTMLAudioElement | null>(null);
@@ -258,12 +259,13 @@ const UnregisteredMain = ({ session }: { session: Session | null }) => {
       postLog(`TTS request: ${safeText}`, 'tts');
       // Mark TTS active BEFORE stopping recorder to avoid re-arm race in onstop
       ttsActiveRef.current = true;
+      setIsTtsPlaying(true);
       const res = await fetch("http://localhost:8000/tts/google", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ text: safeText, language_code: "en-US" }),
       });
-      if (!res.ok) { console.error("TTS request failed"); return; }
+      if (!res.ok) { console.error("TTS request failed"); setIsTtsPlaying(false); ttsActiveRef.current = false; return; }
       const blob = await res.blob();
       const url = URL.createObjectURL(blob);
       if (audioPlayRef.current) { try { audioPlayRef.current.pause(); } catch {} }
@@ -282,6 +284,7 @@ const UnregisteredMain = ({ session }: { session: Session | null }) => {
       } catch (e) {
         try { URL.revokeObjectURL(url); } catch {}
         ttsActiveRef.current = false;
+        setIsTtsPlaying(false);
         if (voiceModeRef.current && rearmAfterPlayback) {
           setTimeout(() => { if (voiceModeRef.current) void startVoiceRecording(); }, 150);
         }
@@ -290,6 +293,7 @@ const UnregisteredMain = ({ session }: { session: Session | null }) => {
       const restart = () => {
         try { URL.revokeObjectURL(url); } catch {}
         ttsActiveRef.current = false;
+        setIsTtsPlaying(false);
         if (voiceModeRef.current && rearmAfterPlayback) {
           setTimeout(() => { if (voiceModeRef.current) void startVoiceRecording(); }, 200);
         }
@@ -297,6 +301,7 @@ const UnregisteredMain = ({ session }: { session: Session | null }) => {
       const fail = () => {
         try { URL.revokeObjectURL(url); } catch {}
         ttsActiveRef.current = false;
+        setIsTtsPlaying(false);
         if (voiceModeRef.current && rearmAfterPlayback) {
           setTimeout(() => { if (voiceModeRef.current) void startVoiceRecording(); }, 300);
         }
@@ -313,6 +318,7 @@ const UnregisteredMain = ({ session }: { session: Session | null }) => {
       });
     } catch (e) {
       ttsActiveRef.current = false;
+      setIsTtsPlaying(false);
       if (voiceModeRef.current) { setTimeout(() => { if (voiceModeRef.current) void startVoiceRecording(); }, 200); }
     }
   };
@@ -496,6 +502,7 @@ const UnregisteredMain = ({ session }: { session: Session | null }) => {
     voiceModeRef.current = false;
     setIsVoiceMode(false);
     voiceGuestSessionIdRef.current = null;
+    setIsTtsPlaying(false);
     try { (window as any).speechSynthesis?.cancel?.(); } catch {}
     try {
       if (mediaRecorderRef.current && mediaRecorderRef.current.state !== "inactive") {
@@ -523,6 +530,7 @@ const UnregisteredMain = ({ session }: { session: Session | null }) => {
   });
 
   const hasMessages = messages.length > 0;
+  const isBlackHoleActive = isVoiceMode && (isRecording || isTranscribing || isTtsPlaying);
 
   return (
     <div className="uv-root">
@@ -534,7 +542,7 @@ const UnregisteredMain = ({ session }: { session: Session | null }) => {
       <main className="uv-main">
         {(!hasMessages || isVoiceMode) && (
           <section className="uv-hero">
-            <BlackHole />
+            <BlackHole isActivated={isBlackHoleActive} />
             {!isVoiceMode && !hasMessages && (
               <h3 className="orb-caption">
                 Say <span className="visual-askvox">"Hey AskVox"</span> to begin or type below.

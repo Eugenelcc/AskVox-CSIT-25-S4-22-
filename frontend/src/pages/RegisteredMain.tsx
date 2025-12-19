@@ -36,6 +36,7 @@ export default function Dashboard({ session, paid }: { session: Session; paid?: 
   // Voice capture (reuse ChatBar approach)
   const [isRecording, setIsRecording] = useState(false);
   const [isTranscribing, setIsTranscribing] = useState(false);
+  const [isTtsPlaying, setIsTtsPlaying] = useState(false);
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
   const audioChunksRef = useRef<BlobPart[]>([]);
   const audioPlayRef = useRef<HTMLAudioElement | null>(null);
@@ -196,6 +197,7 @@ export default function Dashboard({ session, paid }: { session: Session; paid?: 
     voiceModeRef.current = false;
     setIsVoiceMode(false);
     ttsActiveRef.current = false;
+    setIsTtsPlaying(false);
     voiceSessionIdRef.current = null;
     try {
       if (mediaRecorderRef.current && mediaRecorderRef.current.state !== "inactive") {
@@ -402,6 +404,7 @@ export default function Dashboard({ session, paid }: { session: Session; paid?: 
 
   const showSidebar = isSidebarOpen && activeTab === 'chats';
   const showSmartRec = isSidebarOpen && activeTab === "smartrec";
+  const isBlackHoleActive = isVoiceMode && (isRecording || isTranscribing || isTtsPlaying);
 
   // ---- Voice Mode (wake -> voice-only flow) ----
   const cleanTextForTTS = (text: string) => {
@@ -442,13 +445,14 @@ export default function Dashboard({ session, paid }: { session: Session; paid?: 
       console.log("🔊 [TTS] requesting playback for:", safeText);
       // Mark TTS active BEFORE stopping recorder to avoid re-arm race in onstop
       ttsActiveRef.current = true;
+      setIsTtsPlaying(true);
       // Request MP3 audio from backend
       const res = await fetch("http://localhost:8000/tts/google", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ text: safeText, language_code: "en-US" }),
       });
-      if (!res.ok) { console.error("TTS request failed"); return; }
+      if (!res.ok) { console.error("TTS request failed"); setIsTtsPlaying(false); ttsActiveRef.current = false; return; }
       const blob = await res.blob();
       const url = URL.createObjectURL(blob);
       // Stop any current playback
@@ -470,6 +474,7 @@ export default function Dashboard({ session, paid }: { session: Session; paid?: 
         console.warn("🔊 [TTS] playback blocked or failed, fallback to immediate listen", e);
         try { URL.revokeObjectURL(url); } catch {}
         ttsActiveRef.current = false;
+        setIsTtsPlaying(false);
         if (voiceModeRef.current && rearmAfterPlayback) {
           setTimeout(() => { if (voiceModeRef.current) void startVoiceRecording(); }, 150);
         }
@@ -479,6 +484,7 @@ export default function Dashboard({ session, paid }: { session: Session; paid?: 
         console.log("🔊 [TTS] playback ended, starting to listen");
         try { URL.revokeObjectURL(url); } catch {}
         ttsActiveRef.current = false;
+        setIsTtsPlaying(false);
         if (voiceModeRef.current && rearmAfterPlayback) {
           setTimeout(() => { if (voiceModeRef.current) void startVoiceRecording(); }, 200);
         }
@@ -487,6 +493,7 @@ export default function Dashboard({ session, paid }: { session: Session; paid?: 
         console.warn("🔊 [TTS] playback error or stalled, restarting listen", err);
         try { URL.revokeObjectURL(url); } catch {}
         ttsActiveRef.current = false;
+        setIsTtsPlaying(false);
         if (voiceModeRef.current && rearmAfterPlayback) {
           setTimeout(() => { if (voiceModeRef.current) void startVoiceRecording(); }, 300);
         }
@@ -508,6 +515,7 @@ export default function Dashboard({ session, paid }: { session: Session; paid?: 
     } catch (e) {
       console.error("Error playing TTS audio", e);
       ttsActiveRef.current = false;
+      setIsTtsPlaying(false);
       if (voiceModeRef.current) { setTimeout(() => { if (voiceModeRef.current) void startVoiceRecording(); }, 200); }
     }
   };
@@ -778,6 +786,7 @@ export default function Dashboard({ session, paid }: { session: Session; paid?: 
     setIsVoiceMode(false);
     setIsNewChat(false);
     voiceSessionIdRef.current = null;
+    setIsTtsPlaying(false);
     try { (window as any).speechSynthesis?.cancel?.(); } catch {}
     // Stop recorder and playback when exiting
     try {
@@ -1011,7 +1020,7 @@ export default function Dashboard({ session, paid }: { session: Session; paid?: 
               {/* Voice mode: show minimal listening UI */}
               {isVoiceMode ? (
                 <section className="uv-hero">
-                  <BlackHole />
+                  <BlackHole isActivated={isBlackHoleActive} />
                   {(isRecording || isTranscribing) && (
                     <h4
                       className="orb-caption"

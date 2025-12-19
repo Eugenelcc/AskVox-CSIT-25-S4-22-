@@ -195,7 +195,7 @@ def _safe_parse_json(text: str) -> dict:
 def _auto_query(domain: str, topic: str) -> str:
     return (
         f"Teach me about {topic} in the {domain} domain. "
-        f"Give a simple definition, key facts, and 2-3 examples."
+        f"Give a simple definition and key facts."
     )
 
 

@@ -21,7 +21,7 @@ async def google_tts(payload: dict):
     """
     text: str = (payload or {}).get("text") or ""
     language_code: str = (payload or {}).get("language_code") or "en-US"
-    voice_name: str | None = (payload or {}).get("voice_name")
+    voice_name: str = payload.get("voice_name") or "en-US-Neural2-F"
     speaking_rate = (payload or {}).get("speaking_rate")
 
     if not text:
