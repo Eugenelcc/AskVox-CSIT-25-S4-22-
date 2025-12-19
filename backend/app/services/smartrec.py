@@ -30,9 +30,12 @@ from supabase import create_client, Client
 router = APIRouter(prefix="/smartrec", tags=["smartrec"])
 load_dotenv()
 
-SEALION_BASE_URL = os.getenv("SEALION_BASE_URL", "https://api.sea-lion.ai/v1").rstrip("/")
-SEALION_API_KEY = os.getenv("SEALION_API_KEY")
-SEALION_MODEL = os.getenv("SEALION_MODEL", "aisingapore/Gemma-SEA-LION-v4-27B-IT")
+GEMINI_BASE_URL = os.getenv(
+    "GEMINI_BASE_URL",
+    "https://generativelanguage.googleapis.com/v1beta"
+).rstrip("/")
+GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
+GEMINI_MODEL = os.getenv("GEMINI_MODEL", "gemini-2.0-flash")
 
 SUPABASE_URL = os.getenv("SUPABASE_URL", "")
 SUPABASE_SERVICE_ROLE_KEY = os.getenv("SUPABASE_SERVICE_ROLE_KEY", "")
@@ -41,7 +44,7 @@ supabase: Client | None = None
 if SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY:
     supabase = create_client(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY)
 
-SEALION_CHAT_ENDPOINT = f"{SEALION_BASE_URL}/chat/completions"
+
 
 # --- DOMAIN NORMALIZATION (match your UI options exactly) ---
 DOMAIN_CANONICAL = {
@@ -89,8 +92,8 @@ class ClickReq(BaseModel):
 
 
 def _require_env():
-    if not SEALION_API_KEY:
-        raise HTTPException(status_code=500, detail="Missing SEALION_API_KEY in .env")
+    if not GEMINI_API_KEY:
+        raise HTTPException(status_code=500, detail="Missing GEMINI_API_KEY in .env")
     if not SUPABASE_URL or not SUPABASE_SERVICE_ROLE_KEY:
         raise HTTPException(status_code=500, detail="Missing SUPABASE_URL or SUPABASE_SERVICE_ROLE_KEY in .env")
     if supabase is None:
@@ -106,18 +109,69 @@ def _canon_domain(d: str | None) -> str:
     return DOMAIN_CANONICAL.get(raw, "general")
 
 
-async def _sealion_completion(messages: list[dict], temperature: float = 0.55, max_tokens: int = 450) -> str:
-    headers = {"Authorization": f"Bearer {SEALION_API_KEY}", "Content-Type": "application/json"}
-    payload = {"model": SEALION_MODEL, "messages": messages, "temperature": temperature, "max_tokens": max_tokens}
+async def _gemini_completion(messages: list[dict], temperature: float = 0.55, max_tokens: int = 450) -> str:
+    if not GEMINI_API_KEY:
+        raise HTTPException(status_code=500, detail="Missing GEMINI_API_KEY in .env")
+
+    # If GEMINI_BASE_URL is already the full generateContent endpoint, DO NOT append anything.
+    endpoint = f"{GEMINI_BASE_URL}/models/{GEMINI_MODEL}:generateContent"  # e.g. https://.../v1beta/models/gemini-2.0-flash:generateContent
+
+    # Gemini uses X-goog-api-key (or ?key=)
+    headers = {
+        "Content-Type": "application/json",
+        "X-goog-api-key": GEMINI_API_KEY,
+    }
+
+    # Convert OpenAI-like messages -> Gemini contents
+    # Gemini roles are typically "user" and "model".
+    contents = []
+    system_texts = []
+
+    for m in messages:
+        role = (m.get("role") or "user").lower()
+        text = (m.get("content") or "").strip()
+        if not text:
+            continue
+
+        if role == "system":
+            system_texts.append(text)
+        elif role == "assistant":
+            contents.append({"role": "model", "parts": [{"text": text}]})
+        else:
+            contents.append({"role": "user", "parts": [{"text": text}]})
+
+    payload = {
+        "contents": contents,
+        "generationConfig": {
+            "temperature": float(temperature),
+            "maxOutputTokens": int(max_tokens),
+        },
+    }
+
+    # If you used system messages, attach them as systemInstruction (supported in v1beta)
+    if system_texts:
+        payload["systemInstruction"] = {"parts": [{"text": "\n".join(system_texts)}]}
+
     try:
         async with httpx.AsyncClient(timeout=60) as client:
-            res = await client.post(SEALION_CHAT_ENDPOINT, headers=headers, json=payload)
+            res = await client.post(endpoint, headers=headers, json=payload)
             res.raise_for_status()
             data = res.json()
     except httpx.HTTPError as e:
-        raise HTTPException(status_code=502, detail=f"SeaLion request failed: {str(e)}")
+        # If Google returns useful JSON error, include it
+        detail = str(e)
+        try:
+            detail += f" | body={res.text}"
+        except Exception:
+            pass
+        raise HTTPException(status_code=502, detail=f"Gemini request failed: {detail}")
 
-    return data.get("choices", [{}])[0].get("message", {}).get("content", "").strip()
+    # Extract text from Gemini response
+    # Typical shape: candidates[0].content.parts[0].text
+    try:
+        return (data["candidates"][0]["content"]["parts"][0]["text"]).strip()
+    except Exception:
+        return ""
 
 
 def _safe_parse_json(text: str) -> dict:
@@ -380,7 +434,7 @@ Context (recent queries in this domain, newest first):
 {json.dumps(history[:12], ensure_ascii=False)}
 """.strip()
 
-    raw = await _sealion_completion(
+    raw = await _gemini_completion(
         [
             {"role": "system", "content": "Return JSON only."},
             {"role": "user", "content": prompt},
@@ -586,7 +640,7 @@ async def click(req: ClickReq):
         "display_name": "User",
     }).execute()
 
-    reply = await _sealion_completion(
+    reply = await _gemini_completion(
         [
             {
                 "role": "system",

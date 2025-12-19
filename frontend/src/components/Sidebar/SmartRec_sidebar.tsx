@@ -155,7 +155,7 @@ export default function SmartRecPanel({
 
         {!domains.length && !loading && !errorMsg && (
           <div className="sr-empty">
-            No active recommendations yet — click refresh to generate ✨
+            No active recommendations yet, click refresh to generate ✨
           </div>
         )}
       </div>
