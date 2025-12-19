@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import type { Session } from "@supabase/supabase-js";
 import { supabase } from "../../supabaseClient";
 import { Trash2, X, MailCheck, CheckCircle2 } from "lucide-react";
@@ -12,6 +12,15 @@ export default function DeleteAccount({ session }: { session: Session }) {
   const [otp, setOtp] = useState("");
   const [done, setDone] = useState(false);
   const [sent, setSent] = useState(false);
+  const [cooldown, setCooldown] = useState<number>(0); // seconds left until resend
+  const [sendingOtp, setSendingOtp] = useState(false); // resend-in-flight state
+
+  // Tick down the cooldown each second when active
+  useEffect(() => {
+    if (cooldown <= 0) return;
+    const t = setInterval(() => setCooldown((s) => (s > 0 ? s - 1 : 0)), 1000);
+    return () => clearInterval(t);
+  }, [cooldown]);
 
   const openConfirm = async () => {
     if (!ack) return;
@@ -20,14 +29,29 @@ export default function DeleteAccount({ session }: { session: Session }) {
     // Send OTP to user's email
     try {
       const email = session.user.email || "";
-      const { error } = await supabase.auth.signInWithOtp({
-        email,
-        options: { shouldCreateUser: false },
-      });
+      const { error } = await supabase.auth.signInWithOtp({ email });
       if (error) throw error;
       setSent(true);
+      setCooldown(60);
     } catch (e: any) {
       setErr(e?.message || "Failed to send OTP. Please try again.");
+    }
+  };
+
+  const resendOtp = async () => {
+    if (sendingOtp || cooldown > 0) return;
+    setErr(null);
+    try {
+      setSendingOtp(true);
+      const email = session.user.email || "";
+      const { error } = await supabase.auth.signInWithOtp({ email });
+      if (error) throw error;
+      setSent(true);
+      setCooldown(60);
+    } catch (e: any) {
+      setErr(e?.message || "Failed to resend OTP. Please try again.");
+    } finally {
+      setSendingOtp(false);
     }
   };
 
@@ -39,11 +63,7 @@ export default function DeleteAccount({ session }: { session: Session }) {
       const email = session.user.email || "";
       if (!email) throw new Error("No email on session.");
       // 1) Verify OTP
-      const { error: otpErr } = await supabase.auth.verifyOtp({
-        email,
-        token: otp,
-        type: "email",
-      });
+      const { error: otpErr } = await supabase.auth.verifyOtp({ email, token: otp, type: "email" });
       if (otpErr) throw new Error("Invalid or expired OTP");
 
       // 2) Call backend to delete via Service Role
@@ -77,7 +97,7 @@ export default function DeleteAccount({ session }: { session: Session }) {
 
         <div className="da-panel">
           {done ? (
-            <div className="da-successBox">
+            <div className="da-confirmOverlay" role="dialog" aria-modal="true" aria-label="Account deleted">
               <div className="da-successInner">
                 <button
                   className="da-modalClose"
@@ -153,9 +173,26 @@ export default function DeleteAccount({ session }: { session: Session }) {
 
             {err && <div className="da-error" style={{ marginTop: 8 }}>{err}</div>}
 
-            <button className="da-confirmBtn" type="button" disabled={busy || otp.trim().length !== 6} onClick={verifyOtpAndDelete}>
-              {busy ? "Processing..." : "Yes, Delete My Account Permanently"}
-            </button>
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginTop: 10, gap: 12 }}>
+              <button
+                className="da-confirmBtn"
+                type="button"
+                disabled={busy || otp.trim().length !== 6}
+                onClick={verifyOtpAndDelete}
+              >
+                {busy ? "Processing..." : "Yes, Delete My Account Permanently"}
+              </button>
+              <button
+                type="button"
+                className="da-confirmBtn"
+                onClick={resendOtp}
+                disabled={sendingOtp || cooldown > 0}
+                aria-disabled={sendingOtp || cooldown > 0}
+                title={cooldown > 0 ? `Resend available in ${cooldown}s` : "Resend code"}
+              >
+                {cooldown > 0 ? `Resend in ${cooldown}s` : (sendingOtp ? "Sending..." : "Resend code")}
+              </button>
+            </div>
           </div>
         </div>
       )}

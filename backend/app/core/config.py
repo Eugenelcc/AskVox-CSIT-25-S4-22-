@@ -16,6 +16,7 @@ class Settings(BaseSettings):
 
     # Supabase Admin for account deletion via OTP verification
     supabase_url: str | None = None
+    supabase_anon_key: str | None = None
     supabase_service_role_key: str | None = None
 
 

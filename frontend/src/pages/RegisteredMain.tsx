@@ -58,6 +58,12 @@ export default function Dashboard({ session }: { session: Session }) {
     name: string;
     items: { id: string; title: string }[];
   }[]>([]);
+  // Folder modal state
+  const [isFolderModalOpen, setFolderModalOpen] = useState(false);
+  const [folderModalName, setFolderModalName] = useState("");
+  const [folderModalBusy, setFolderModalBusy] = useState(false);
+  const [folderModalErr, setFolderModalErr] = useState<string | null>(null);
+  const [folderModalForChatId, setFolderModalForChatId] = useState<string | null>(null);
   
   // Chat list in folders
   const sessionIdsInFolders = useMemo(
@@ -801,21 +807,15 @@ export default function Dashboard({ session }: { session: Session }) {
     onWake: enterVoiceMode,
   });
 
+  const openCreateFolderModal = (chatId: string | null = null) => {
+    setFolderModalErr(null);
+    setFolderModalName("");
+    setFolderModalForChatId(chatId);
+    setFolderModalOpen(true);
+  };
+
   const handleCreateFolder = async () => {
-    const name = window.prompt("Folder name?");
-    if (!name?.trim()) return;
-  
-    const { error } = await supabase.from("chat_folders").insert({
-      user_id: session.user.id,
-      name: name.trim(),
-    });
-  
-    if (error) {
-      console.error("Failed to create folder", error);
-      return;
-    }
-  
-    await loadFolders();
+    openCreateFolderModal(null);
   };
 
   const handleRenameFolder = async (folderId: string) => {
@@ -883,31 +883,44 @@ export default function Dashboard({ session }: { session: Session }) {
   };
 
   const handleCreateFolderAndMoveChat = async (chatId: string) => {
-    const name = window.prompt("Folder name?");
-    if (!name?.trim()) return;
+    openCreateFolderModal(chatId);
+  };
 
-    // 1) Create folder
-    const { data: folder, error: folderErr } = await supabase
-      .from("chat_folders")
-      .insert({ user_id: session.user.id, name: name.trim() })
-      .select()
-      .single();
-    if (folderErr || !folder) {
-      console.error("Failed to create folder", folderErr);
+  const confirmCreateFolder = async () => {
+    const name = folderModalName.trim();
+    if (!name) {
+      setFolderModalErr("Please enter a folder name.");
       return;
     }
-
-    // 2) Link chat to folder
-    const { error: linkErr } = await supabase
-      .from("chat_session_folders")
-      .insert({ session_id: chatId, folder_id: folder.id });
-    if (linkErr) {
-      console.error("Failed to link chat to folder", linkErr);
-      return;
+    setFolderModalBusy(true);
+    setFolderModalErr(null);
+    try {
+      // Create folder
+      const { data: folder, error: folderErr } = await supabase
+        .from("chat_folders")
+        .insert({ user_id: session.user.id, name })
+        .select()
+        .single();
+      if (folderErr || !folder) {
+        throw folderErr || new Error("Failed to create folder");
+      }
+      // Optionally link a chat
+      if (folderModalForChatId) {
+        const { error: linkErr } = await supabase
+          .from("chat_session_folders")
+          .insert({ session_id: folderModalForChatId, folder_id: folder.id });
+        if (linkErr) throw linkErr;
+      }
+      await loadFolders();
+      setFolderModalOpen(false);
+      setFolderModalName("");
+      setFolderModalForChatId(null);
+    } catch (e: any) {
+      console.error("Failed to create folder", e);
+      setFolderModalErr(e?.message || "Failed to create folder");
+    } finally {
+      setFolderModalBusy(false);
     }
-
-    // 3) Refresh UI
-    await loadFolders();
   };
 
   
@@ -1032,6 +1045,35 @@ export default function Dashboard({ session }: { session: Session }) {
             </>
           )}
         </main>
+        {isFolderModalOpen && (
+          <div className="fm-overlay" role="dialog" aria-modal="true" aria-label="Create folder">
+            <div className="fm-modal">
+              <button className="fm-close" type="button" aria-label="Close" onClick={() => setFolderModalOpen(false)}>
+                ✕
+              </button>
+              <div className="fm-title">Create New Folder</div>
+              <div className="fm-sub">Choose a name for your folder.</div>
+              <div className="fm-inputWrap">
+                <input
+                  className="fm-input"
+                  value={folderModalName}
+                  onChange={(e) => setFolderModalName(e.target.value)}
+                  maxLength={64}
+                  placeholder="e.g., Math Homework"
+                />
+              </div>
+              {folderModalErr && <div className="fm-error">{folderModalErr}</div>}
+              <div className="fm-actions">
+                <button className="fm-btn fm-btnSecondary" type="button" onClick={() => setFolderModalOpen(false)} disabled={folderModalBusy}>
+                  Cancel
+                </button>
+                <button className="fm-btn fm-btnPrimary" type="button" onClick={confirmCreateFolder} disabled={folderModalBusy || !folderModalName.trim()}>
+                  {folderModalBusy ? "Creating..." : "Create"}
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
       </div>
     </div>
   );

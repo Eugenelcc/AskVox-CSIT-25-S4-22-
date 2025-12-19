@@ -227,8 +227,11 @@ async def delete_account_supabase(
     """
     base = settings.supabase_url
     service_key = settings.supabase_service_role_key
+    anon_key = settings.supabase_anon_key
     if not base or not service_key:
         raise HTTPException(status_code=500, detail="Supabase admin not configured")
+    if not anon_key:
+        raise HTTPException(status_code=500, detail="Supabase anon key not configured")
 
     if not creds:
         raise HTTPException(status_code=401, detail="Missing bearer token")
@@ -241,7 +244,7 @@ async def delete_account_supabase(
                 f"{base}/auth/v1/user",
                 headers={
                     "Authorization": f"Bearer {access_token}",
-                    "apikey": service_key,
+                    "apikey": anon_key,
                 },
             )
             if uresp.status_code != 200:
