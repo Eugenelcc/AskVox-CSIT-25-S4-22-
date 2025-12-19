@@ -393,6 +393,7 @@ export default function Dashboard({ session }: { session: Session }) {
   };
 
   const showSidebar = isSidebarOpen && activeTab === 'chats';
+  const showSmartRec = isSidebarOpen && activeTab === "smartrec";
 
   // ---- Voice Mode (wake -> voice-only flow) ----
   const cleanTextForTTS = (text: string) => {
@@ -908,6 +909,7 @@ export default function Dashboard({ session }: { session: Session }) {
     // 3) Refresh UI
     await loadFolders();
   };
+
   
   
   
@@ -920,7 +922,7 @@ export default function Dashboard({ session }: { session: Session }) {
       <NavRail
         activeTab={activeTab}
         onTabClick={handleTabClick}
-        onOpenSidebar={(tab) => setSidebarOpen(tab === "chats" || tab === "settings")}
+        onOpenSidebar={(tab) => setSidebarOpen(tab === "chats" || tab === "settings" || tab === "smartrec")}
         avatarPath={profile?.avatar_url ?? "defaults/default.png"}
       />
 
@@ -949,6 +951,20 @@ export default function Dashboard({ session }: { session: Session }) {
         onSelect={handleSettingsSelect}
         onClose={() => setSidebarOpen(false)}
       />
+      {/* ✅ SmartRec sidebar overlay */}
+      {showSmartRec && (
+        <div className="sr-overlay">
+          <SmartRecPanel
+            userId={session.user.id}
+            onOpenSession={(sid) => {
+              setActiveTab("chats");
+              setSidebarOpen(true);
+              setActiveSessionId(sid);
+              setIsNewChat(false);
+            }}
+          />
+        </div>
+      )}
 
 
       <div style={{ 
@@ -972,19 +988,7 @@ export default function Dashboard({ session }: { session: Session }) {
             ) : (
               <></>
             )
-          ) : activeTab === "smartrec" ? (
-            <div style={{ paddingTop: 18, paddingLeft: 24 }}>
-              <SmartRecPanel
-                userId={session.user.id}
-                onOpenSession={(sid) => {
-                  // open the newly created session
-                  setActiveTab("chats");
-                  setSidebarOpen(true);
-                  setActiveSessionId(sid);
-                  setIsNewChat(false);
-                }}
-              />
-            </div>
+
           ) : (
             <>
               {/* Voice mode: show minimal listening UI */}
