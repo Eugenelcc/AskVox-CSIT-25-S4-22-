@@ -1,6 +1,7 @@
-import { useMemo, useState } from "react";
+import { useMemo, useState, useEffect } from "react";
 import { useLocation, useNavigate } from "react-router-dom";
-import { X } from "lucide-react";
+import { X, CheckCircle2 } from "lucide-react";
+import { supabase } from "../../supabaseClient";
 
 import AskVoxLogo from "../../components/TopBars/AskVox.png";
 import AskVoxStarBackground from "../../components/background/background";
@@ -169,6 +170,8 @@ export default function Payment() {
 
   // ✅ success popup
   const [showSuccess, setShowSuccess] = useState(false);
+  const [saving, setSaving] = useState(false);
+  const [dbError, setDbError] = useState<string | null>(null);
 
   const goBack = () => navigate("/upgrade");
   const close = () => navigate("/reguserhome");
@@ -184,6 +187,38 @@ export default function Payment() {
     () => formatCardNumber(cardDigitsLimited, brand),
     [cardDigitsLimited, brand]
   );
+
+  // Prefill from saved card (if any)
+  useEffect(() => {
+    let mounted = true;
+    (async () => {
+      try {
+        const user = (await supabase.auth.getUser()).data.user;
+        if (!user) return;
+        const { data, error } = await supabase
+          .from("user_payment_cards")
+          .select("card_number, card_holder_name, expiry_date")
+          .eq("user_id", user.id)
+          .maybeSingle();
+        if (error || !data) return;
+
+        const digits = onlyDigits(data.card_number || "");
+        const b = detectBrand(digits);
+        const ml = b === "amex" ? 15 : 16;
+        const limited = digits.slice(0, ml);
+        if (!mounted) return;
+        setCardNumber(formatCardNumber(limited, b));
+        setHolderName((data.card_holder_name || "").toString());
+        setExpiry((data.expiry_date || "").toString());
+        // Intentionally do not set CVV
+      } catch {
+        // ignore prefill errors
+      }
+    })();
+    return () => {
+      mounted = false;
+    };
+  }, []);
 
   const cardError = useMemo(() => {
     if (!tCard) return "";
@@ -249,16 +284,50 @@ export default function Payment() {
     return true;
   }, [brand, cardDigitsLimited, holderName, expParsed, cvvDigits]);
 
-  const onPay = () => {
+  const onPay = async () => {
     setTCard(true);
     setTName(true);
     setTExp(true);
     setTCvv(true);
 
     if (!formValid) return;
+    setDbError(null);
+    setSaving(true);
 
-    // ✅ popup instead of navigating away
-    setShowSuccess(true);
+    try {
+      const sess = (await supabase.auth.getSession()).data.session;
+      const token = sess?.access_token as string | undefined;
+      if (!token) throw new Error("Not authenticated");
+
+      const resp = await fetch("http://localhost:8000/billing/checkout", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
+        body: JSON.stringify({
+          card_number: cardDigitsLimited,
+          card_holder_name: holderName.trim(),
+          expiry_date: expiry.trim(),
+          card_type: brand,
+          plan_type: cycle ?? "monthly",
+          amount,
+          cvv: cvvDigits,
+        }),
+      });
+      if (!resp.ok) throw new Error(await resp.text());
+      setShowSuccess(true);
+    } catch (e: any) {
+      setDbError(e?.message || "Payment failed. Please try again.");
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  // Redirect to paid home with a full refresh
+  const redirectToPaid = () => {
+    try {
+      window.location.assign("/paiduserhome");
+    } catch {
+      navigate("/paiduserhome");
+    }
   };
 
   return (
@@ -371,12 +440,14 @@ export default function Payment() {
             </div>
 
             <button
-              className={`${styles.payBtn} ${!formValid ? styles.payBtnDisabled : ""}`}
+              className={`${styles.payBtn} ${(!formValid || saving) ? styles.payBtnDisabled : ""}`}
               onClick={onPay}
-              disabled={!formValid}
+              disabled={!formValid || saving}
             >
-              Pay ${amount}
+              {saving ? "Processing..." : `Pay $${amount}`}
             </button>
+
+            {dbError && <div className={styles.errorText}>{dbError}</div>}
 
             <button className={styles.backLink} onClick={goBack} type="button">
               ← Back to plans
@@ -388,7 +459,7 @@ export default function Payment() {
         {showSuccess && (
           <div
             className={styles.modalOverlay}
-            onClick={() => setShowSuccess(false)}
+            onClick={redirectToPaid}
             role="presentation"
           >
             <div
@@ -398,7 +469,15 @@ export default function Payment() {
               aria-modal="true"
               aria-label="Payment success"
             >
-              <h2 className={styles.modalTitle}>Payment Successful </h2>
+              <button className={styles.modalClose} type="button" aria-label="Close" onClick={redirectToPaid}>
+                <X size={18} />
+              </button>
+
+              <div className={styles.modalIconWrap}>
+                <CheckCircle2 className={styles.modalIcon} size={64} />
+              </div>
+
+              <h2 className={styles.modalTitle}>Payment Successful</h2>
               <p className={styles.modalText}>
                 You’ve paid <b>${amount}</b> ({cycle === "yearly" ? "Yearly" : "Monthly"}).
               </p>
@@ -406,12 +485,9 @@ export default function Payment() {
               <div className={styles.modalActions}>
                 <button
                   className={styles.modalBtnPrimary}
-                  onClick={() => {
-                    setShowSuccess(false);
-                    navigate("/paiduserhome");
-                  }}
+                  onClick={redirectToPaid}
                 >
-                  Close
+                  Continue
                 </button>
               </div>
 

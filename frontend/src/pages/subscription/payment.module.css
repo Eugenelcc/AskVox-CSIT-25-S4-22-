@@ -314,11 +314,38 @@
   color: #fff;
 }
 
+.modalClose {
+  position: absolute;
+  top: 12px;
+  right: 12px;
+  width: 34px;
+  height: 34px;
+  border-radius: 999px;
+  border: 1px solid rgba(255, 255, 255, 0.22);
+  background: rgba(25, 25, 25, 0.35);
+  display: grid;
+  place-items: center;
+  color: #fff;
+  cursor: pointer;
+}
+
+.modalIconWrap {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  margin-bottom: 12px;
+}
+
+.modalIcon {
+  color: #ff951c;
+}
+
 .modalTitle {
   margin: 0 0 10px;
   font-size: 26px;
   font-weight: 400;
   letter-spacing: 0.02em;
+  text-align: center;
 }
 
 .modalText {
@@ -326,6 +353,7 @@
   color: rgba(255, 255, 255, 0.78);
   font-size: 16px;
   line-height: 1.5;
+  text-align: center;
 }
 
 .modalActions {

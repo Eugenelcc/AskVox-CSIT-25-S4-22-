@@ -8,6 +8,7 @@ import Background from "../components/background/background";
 import ChatBar from "../components/chat/ChatBar";
 import BlackHole from "../components/background/Blackhole";
 import RegisteredTopBar from "../components/TopBars/RegisteredTopBar"; 
+import PaidTopBar from "../components/TopBars/PaidTopBar";
 import ChatMessages from "../components/chat/ChatMessages"; 
 import Sidebar from "../components/Sidebar/Chat_Sidebar"; 
 import NavRail from "../components/Sidebar/NavRail"; 
@@ -20,13 +21,14 @@ import SmartRecPanel from "../components/Sidebar/SmartRec_sidebar";
 import type { ChatMessage, DatabaseMessage, UserProfile } from "../types/database"; 
 import AccountDetails from './settings/AccountDetails';
 import DeleteAccount from './settings/DeleteAccount';
+import PaymentBilling from './settings/PaymentBilling';
 
 
 // Constants 
 const LLAMA_ID = 212020; 
 type SettingsKey = "account" | "billing" | "delete" | "wakeword";
 
-export default function Dashboard({ session }: { session: Session }) {
+export default function Dashboard({ session, paid }: { session: Session; paid?: boolean }) {
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [isSending, setIsSending] = useState(false);
   const [profile, setProfile] = useState<UserProfile | null>(null);
@@ -989,7 +991,7 @@ export default function Dashboard({ session }: { session: Session }) {
         flexDirection: 'column'
       }}>
         
-        <RegisteredTopBar session={session} />
+        {paid ? <PaidTopBar session={session} /> : <RegisteredTopBar session={session} />}
 
         <main className="uv-main">
           {/* SETTINGS MODE */}
@@ -998,6 +1000,8 @@ export default function Dashboard({ session }: { session: Session }) {
               <AccountDetails session={session} />
             ) : activeSettingsKey === "delete" ? (
               <DeleteAccount session={session} />
+            ) : activeSettingsKey === "billing" ? (
+              <PaymentBilling session={session} />
             ) : (
               <></>
             )

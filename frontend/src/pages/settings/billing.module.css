@@ -1,0 +1,49 @@
+.wrap{color:#fff;padding:24px;max-width:980px;margin:0 auto}
+.headerRow{display:flex;align-items:center;gap:10px;margin-bottom:14px}
+.header{font-size:28px;letter-spacing:.02em;margin:0}
+.headerIcon{width:36px;height:36px;display:flex;align-items:center;justify-content:center;border-radius:8px;background:#2c2c2c;color:#ff951c}
+.skeleton{opacity:.8}
+.planCard{display:flex;justify-content:space-between;align-items:center;background:#2c2c2c;border:1px solid rgba(117,75,28,.7);border-radius:22px;padding:20px 24px;margin-top:8px;box-shadow:0 4px 18px rgba(0,0,0,.25)}
+.planLeft{display:flex;flex-direction:column;gap:6px}
+.planTitle{font-size:24px}
+.planRenew{color:#ff951c;font-size:14px}
+.planCardMeta{display:flex;align-items:center;gap:10px;color:#fff;font-size:14px}
+.cardBadge{background:#1e1e1e;border:1px solid #754B1C;border-radius:8px;padding:4px 8px;color:#fff}
+.cardBadgeIcon{display:inline-flex;align-items:center;justify-content:center;width:48px;height:28px;background:#1e1e1e;border:1px solid #754B1C;border-radius:8px;padding:2px}
+.cardMask{opacity:.9}
+.btnSecondary{border:1px solid #754B1C;background:linear-gradient(0deg,#434343,#434343),linear-gradient(0deg,rgba(0,0,0,0.53),rgba(0,0,0,0.53));color:#f0f0f0;border-radius:16px;padding:10px 16px;cursor:pointer}
+.methodCard{background:#2c2c2c;border-radius:22px;margin-top:18px;padding:20px 24px;border:1px solid rgba(117,75,28,.6);box-shadow:0 4px 18px rgba(0,0,0,.25)}
+.sectionTitle{font-size:18px;margin-bottom:10px}
+.methodRow{display:flex;align-items:center;justify-content:space-between;gap:12px}
+.methodLeft{display:flex;align-items:center;gap:12px}
+.methodIcon{color:#ff951c}
+.methodText{font-size:16px}
+.methodSub{font-size:14px;opacity:.9}
+.editBtn{display:inline-flex;align-items:center;justify-content:center;width:34px;height:34px;border-radius:10px;border:1px solid #754B1C;background:#1e1e1e;color:#fff}
+.historyList{list-style:none;margin:10px 0 0;padding:0;display:flex;flex-direction:column;gap:10px}
+.historyItem{display:grid;grid-template-columns:220px 120px 100px 1fr;align-items:center;gap:10px;padding:12px 10px;background:#1f1f1f;border-radius:12px}
+.hDate{opacity:.95}
+.hAmount{font-weight:600}
+.hStatus{color:#FF951C;border:1px solid #FF951C;border-radius:16px;padding:4px 10px;justify-self:start}
+.hDesc{opacity:.95}
+.empty{opacity:.8;font-style:italic}
+.error{color:#ff6a6a;margin-top:12px}
+
+/* Modal styles (Figma-like) */
+.modalOverlay{position:fixed;inset:0;background:rgba(15,15,15,0.92);display:flex;align-items:center;justify-content:center;z-index:50}
+.modal{position:relative;width:min(860px,92vw);max-height:90vh;overflow:auto;background:#2C2C2C;border-radius:22px;padding:22px 24px;border:1px solid rgba(0,0,0,0)}
+.modalClose{position:absolute;right:16px;top:12px;width:34px;height:34px;border-radius:10px;border:1px solid #754B1C;background:#1e1e1e;color:#ff951c;display:flex;align-items:center;justify-content:center}
+.modalHeaderRow{display:flex;align-items:center;gap:10px;margin-bottom:10px}
+.modalTitle{font-size:22px;letter-spacing:.02em}
+.modalSection{margin-top:8px}
+.sectionLabel{font-size:18px;margin:10px 0 8px}
+.currentCardBox{display:flex;align-items:center;gap:12px;background:#2C2C2C;border:1px solid #754B1C;border-radius:22px;padding:12px 14px}
+.fieldLabel{display:block;margin-top:14px;margin-bottom:6px}
+.input{width:100%;height:48px;border-radius:32px;border:1px solid #A25600;background:#1C1C1C;color:#fff;padding:0 16px}
+.inputRow{display:grid;grid-template-columns:1fr 1fr;gap:16px}
+.inputCol{display:flex;flex-direction:column}
+.modalActions{display:flex;justify-content:flex-end;margin-top:18px}
+.btnPrimary{border:1px solid #754B1C;background:linear-gradient(0deg,#434343,#434343),linear-gradient(0deg,rgba(0,0,0,.53),rgba(0,0,0,.53));color:#f0f0f0;border-radius:16px;padding:12px 16px;cursor:pointer}
+.successInline{display:flex;align-items:center;gap:10px;margin-top:10px}
+.successDot{width:14px;height:14px;background:#FF951C;border-radius:50%}
+.successText{color:#FF951C}
