@@ -139,28 +139,52 @@
     text-overflow: ellipsis;
   }
   
-  /* Ellipse glow */
-  .sr-glow{
-    position: absolute;
-    width: 262.93px;
-    height: 144px;
-    left: 137px;
-    top: -52px;
-    filter: blur(50px);
-    z-index: 1;
-    opacity: 0.95;
-    background: rgba(192,107,11,0.48); /* fallback */
-  }
-  
-  /* domain tints */
-  .sr-glow[data-domain="Astronomy & Space"]{ background: rgba(192,107,11,0.48); }
-  .sr-glow[data-domain="Cooking"]{ background: rgba(4,62,99,0.85); }
-  .sr-glow[data-domain="Sports"]{ background: rgba(44,2,58,0.85); }
-  .sr-glow[data-domain="Current Affairs"]{ background: rgba(70,2,50,0.85); }
-  .sr-glow[data-domain="Science"]{ background: rgba(255,149,28,0.35); }
-  .sr-glow[data-domain="History"]{ background: rgba(220, 85, 186, 0.45); }
-  .sr-glow[data-domain="Geography & Travel"]{ background: rgba(20,90,60,0.45); }
-  .sr-glow[data-domain="Art/Music/Literature"]{ background: rgba(110,40,130,0.45); }
+
+/* glow wrapper */
+.sr-glow {
+  position: absolute;
+  inset: -20px;                    /* extend beyond edges for softer bloom */
+  border-radius: 22px;
+  filter: blur(26px);
+  opacity: 0.75;
+  z-index: 0;
+  pointer-events: none;
+  mix-blend-mode: screen;          /* makes tints feel “lighty” on dark UI */
+}
+
+/* domain tints */
+.sr-glow[data-domain="Astronomy"] {
+  background: rgba(192, 107, 11, 0.48);
+}
+
+.sr-glow[data-domain="Cooking & Food"] {
+  background: rgba(4, 62, 99, 0.85);
+}
+
+.sr-glow[data-domain="Sports"] {
+  background: rgba(44, 2, 58, 0.85);
+}
+
+.sr-glow[data-domain="Current Affairs"] {
+  background: rgba(70, 2, 50, 0.85);
+}
+
+.sr-glow[data-domain="Science"] {
+  background: rgba(255, 149, 28, 0.35);
+}
+
+.sr-glow[data-domain="History and World Events"] {
+  background: rgba(220, 85, 186, 0.45);
+}
+
+.sr-glow[data-domain="Geography and Travel"] {
+  background: rgba(20, 90, 60, 0.45);
+}
+
+.sr-glow[data-domain="Art, Music and Literature"] {
+  background: rgba(110, 40, 130, 0.45);
+}
+
   
 
   .sr-empty{
@@ -177,3 +201,72 @@
     border-radius: 999px;
     margin: 6px 0 12px;
   }
+
+
+  .sr-domainList{
+    display:flex;
+    flex-direction:column;
+    gap:14px;
+  }
+  
+  .sr-domainCard{
+    position: relative;              /* so .sr-glow can anchor correctly */
+    overflow: hidden;                /* keeps glow inside the card */
+    background: rgba(20,20,20,0.55);
+    border: 1px solid rgba(255,255,255,0.08);
+    border-radius: 16px;
+    padding: 14px;
+    isolation: isolate;              /* prevents glow from blending outside */
+  }
+  
+  .sr-domainHeader{
+    display:flex;
+    align-items:baseline;
+    justify-content:space-between;
+    margin-bottom:10px;
+  }
+  
+  .sr-domainName{
+    font-size: 15px;
+    font-weight: 700;
+  }
+  
+  .sr-domainSub{
+    font-size: 12px;
+    opacity: 0.65;
+  }
+  
+  .sr-topicGrid{
+    display:grid;
+    grid-template-columns: 1fr;
+    gap:10px;
+  }
+  
+  .sr-topicBtn{
+    width:100%;
+    text-align:left;
+    padding: 12px 12px;
+    border-radius: 14px;
+    border: 1px solid rgba(255,255,255,0.10);
+    background: rgba(0,0,0,0.25);
+    color: rgba(255,255,255,0.92);
+    cursor: pointer;
+    transition: border-color 140ms ease, box-shadow 140ms ease, transform 120ms ease;
+  }
+  
+  .sr-topicBtn:hover{
+    border-color: rgba(255,149,28,0.95);
+    box-shadow: 0 0 0 3px rgba(255,149,28,0.18);
+  }
+  
+  .sr-topicBtn:active{
+    transform: scale(0.99);
+    border-color: rgba(255,149,28,1);
+    box-shadow: 0 0 0 4px rgba(255,149,28,0.22);
+  }
+  
+  .sr-topicBtn:disabled{
+    opacity: 0.6;
+    cursor: not-allowed;
+  }
+  

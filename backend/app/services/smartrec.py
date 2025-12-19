@@ -1,7 +1,26 @@
+"""
+AskVox SmartRec (rewritten)
+- Domain cards + topics are STRICTLY based on the user's latest query + detected domain
+- Topics are generated as "next things to learn" (query-anchored expansions)
+- Refresh generates genuinely new topics by avoiding:
+  1) clicked topics
+  2) currently active topics
+  3) recently served topics (even if not clicked) within a lookback window
+
+NOTE (recommended DB tweak):
+To avoid repeating topics across refresh, we should NOT hard-delete active recs.
+Instead, we "expire" them by setting dismissed_at.
+
+Run this once in Supabase SQL editor:
+  alter table public.recommendations
+  add column if not exists dismissed_at timestamptz null;
+
+If you don't add dismissed_at, the code will fallback to deleting active recs (less good).
+"""
+
 import json
 import os
-from datetime import datetime, timezone
-from collections import Counter
+from datetime import datetime, timezone, timedelta
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 import httpx
@@ -9,8 +28,6 @@ from dotenv import load_dotenv
 from supabase import create_client, Client
 
 router = APIRouter(prefix="/smartrec", tags=["smartrec"])
-
-# Load env
 load_dotenv()
 
 SEALION_BASE_URL = os.getenv("SEALION_BASE_URL", "https://api.sea-lion.ai/v1").rstrip("/")
@@ -20,37 +37,56 @@ SEALION_MODEL = os.getenv("SEALION_MODEL", "aisingapore/Gemma-SEA-LION-v4-27B-IT
 SUPABASE_URL = os.getenv("SUPABASE_URL", "")
 SUPABASE_SERVICE_ROLE_KEY = os.getenv("SUPABASE_SERVICE_ROLE_KEY", "")
 
-# ✅ Create Supabase client directly here (server-side only)
-# NOTE: service role bypasses RLS. Keep it on backend only.
 supabase: Client | None = None
 if SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY:
     supabase = create_client(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY)
 
 SEALION_CHAT_ENDPOINT = f"{SEALION_BASE_URL}/chat/completions"
 
-ALLOWED_DOMAINS = {
-    "Science",
-    "History",
-    "Sports",
-    "Cooking",
-    "Astronomy & Space",
-    "Geography & Travel",
-    "Art/Music/Literature",
-    "Current Affairs",
-    "general",
+# --- DOMAIN NORMALIZATION (match your UI options exactly) ---
+DOMAIN_CANONICAL = {
+    # exact UI domains
+    "Science": "Science",
+    "History and World Events": "History and World Events",
+    "Current Affairs": "Current Affairs",
+    "Sports": "Sports",
+    "Cooking & Food": "Cooking & Food",
+    "Astronomy": "Astronomy",
+    "Geography and Travel": "Geography and Travel",
+    "Art, Music and Literature": "Art, Music and Literature",
+    # legacy / variants
+    "History": "History and World Events",
+    "History & World Events": "History and World Events",
+    "Cooking": "Cooking & Food",
+    "Astronomy & Space": "Astronomy",
+    "Geography & Travel": "Geography and Travel",
+    "Art/Music/Literature": "Art, Music and Literature",
+    "Art, Music & Literature": "Art, Music and Literature",
+    "general": "general",
 }
+ALLOWED_DOMAINS = set(DOMAIN_CANONICAL.values())
 
-# ---------- request models ----------
+TOPICS_PER_DOMAIN = 1         # what you show per domain
+GEN_POOL_PER_DOMAIN = 14        # ask model for more, then filter
+RECENT_SERVE_LOOKBACK_DAYS = 14 # avoid repeating served topics across refresh
+
 
 class GenerateReq(BaseModel):
     user_id: str
-    limit: int = 30  # how many recent queries to analyze
+    # how many recent queries to use as context for the model (same-domain only)
+    history_limit: int = 30
+
+
+class GenerateProfileReq(BaseModel):
+    user_id: str
+    # generate for multiple domains user asked about recently (profile mode)
+    limit: int = 80
+
 
 class ClickReq(BaseModel):
     user_id: str
     recommendation_id: str
 
-# ---------- env / supabase helpers ----------
 
 def _require_env():
     if not SEALION_API_KEY:
@@ -60,50 +96,29 @@ def _require_env():
     if supabase is None:
         raise HTTPException(status_code=500, detail="Supabase client is not initialized")
 
-def _sb_ok(res, label: str):
-    """
-    Supabase-py returns objects that may contain `.error`.
-    This converts hidden Supabase failures into clear FastAPI 500 messages.
-    """
-    err = getattr(res, "error", None)
-    if err:
-        msg = getattr(err, "message", str(err))
-        raise HTTPException(status_code=500, detail=f"Supabase {label} failed: {msg}")
-    return res
 
 def _utc_now_iso() -> str:
     return datetime.now(timezone.utc).isoformat()
 
-# ---------- SeaLion helpers ----------
 
-async def _sealion_completion(messages: list[dict], temperature: float = 0.2, max_tokens: int = 700) -> str:
-    headers = {
-        "Authorization": f"Bearer {SEALION_API_KEY}",
-        "Content-Type": "application/json",
-    }
-    payload = {
-        "model": SEALION_MODEL,
-        "messages": messages,
-        "temperature": temperature,
-        "max_tokens": max_tokens,
-    }
+def _canon_domain(d: str | None) -> str:
+    raw = (d or "general").strip()
+    return DOMAIN_CANONICAL.get(raw, "general")
+
+
+async def _sealion_completion(messages: list[dict], temperature: float = 0.55, max_tokens: int = 450) -> str:
+    headers = {"Authorization": f"Bearer {SEALION_API_KEY}", "Content-Type": "application/json"}
+    payload = {"model": SEALION_MODEL, "messages": messages, "temperature": temperature, "max_tokens": max_tokens}
     try:
         async with httpx.AsyncClient(timeout=60) as client:
             res = await client.post(SEALION_CHAT_ENDPOINT, headers=headers, json=payload)
             res.raise_for_status()
             data = res.json()
     except httpx.HTTPError as e:
-        # Surface a useful message so you can debug quickly
         raise HTTPException(status_code=502, detail=f"SeaLion request failed: {str(e)}")
 
-    return (
-        data.get("choices", [{}])[0]
-        .get("message", {})
-        .get("content", "")
-        .strip()
-    )
+    return data.get("choices", [{}])[0].get("message", {}).get("content", "").strip()
 
-# ---------- parsing helpers ----------
 
 def _safe_parse_json(text: str) -> dict:
     t = (text or "").strip()
@@ -117,41 +132,11 @@ def _safe_parse_json(text: str) -> dict:
     b = t.rfind("}")
     if a >= 0 and b > a:
         try:
-            return json.loads(t[a:b+1])
+            return json.loads(t[a : b + 1])
         except Exception:
             return {}
     return {}
 
-def _normalize_recs(payload: dict) -> list[dict]:
-    recs = payload.get("recommendations") or []
-    out = []
-    if not isinstance(recs, list):
-        return out
-
-    for r in recs:
-        if not isinstance(r, dict):
-            continue
-        domain = (r.get("domain") or "").strip()
-        topic = (r.get("topic") or r.get("title") or "").strip()
-
-        if not domain or not topic:
-            continue
-        if domain not in ALLOWED_DOMAINS:
-            continue
-        if len(topic) > 80:
-            topic = topic[:80].rstrip()
-
-        out.append({"domain": domain, "topic": topic})
-
-    uniq = []
-    seen = set()
-    for r in out:
-        key = (r["domain"].lower(), r["topic"].lower())
-        if key in seen:
-            continue
-        seen.add(key)
-        uniq.append(r)
-    return uniq[:6]
 
 def _auto_query(domain: str, topic: str) -> str:
     return (
@@ -159,187 +144,433 @@ def _auto_query(domain: str, topic: str) -> str:
         f"Give a simple definition, key facts, and 2-3 examples."
     )
 
-def _fallback_recs(queries: list[dict]) -> list[dict]:
-    if not queries:
-        return []
 
-    domain_counts = Counter([q.get("domain") or "general" for q in queries])
-    top_domains = [d for d, _ in domain_counts.most_common()]
+def _group_domains(active_rows: list[dict]) -> list[dict]:
+    """
+    Return:
+    [{"domain":"Cooking & Food","topics":[{"id":"...","topic":"..."}, ...]}]
+    """
+    by_dom: dict[str, list[dict]] = {}
+    for r in active_rows:
+        dom = r.get("domain") or "general"
+        by_dom.setdefault(dom, []).append({"id": r.get("id"), "topic": r.get("topic")})
 
-    recs: list[dict] = []
-    seen = set()
-    for q in queries:
-        dom = q.get("domain") or "general"
-        if dom not in ALLOWED_DOMAINS:
-            dom = "general"
-        if dom not in top_domains:
-            continue
+    # Keep stable order (only 1 domain in query-mode, but still fine)
+    out = []
+    for d in sorted(by_dom.keys()):
+        out.append({"domain": d, "topics": by_dom[d][:TOPICS_PER_DOMAIN]})
+    return out
 
-        text = (q.get("text") or "").strip()
-        if not text:
-            continue
 
-        topic = text.split(".")[0][:80].rstrip()
-        if len(topic) < 8:
-            topic = f"Learn more about {dom}"
+# --------------------- SUPABASE HELPERS ---------------------
 
-        key = (dom.lower(), topic.lower())
-        if key in seen:
-            continue
-        seen.add(key)
-
-        recs.append({"domain": dom, "topic": topic})
-        if len(recs) >= 4:
-            break
-
-    return recs
-
-async def _sealion_generate_recs_from_queries(queries: list[dict]) -> list[dict]:
-    prompt = f"""
-You are AskVox SmartRec.
-Analyze the user's past queries and their detected domains, then output ONLY valid JSON.
-
-Return format:
-{{
-  "recommendations": [
-    {{"domain":"Astronomy & Space","topic":"Black Holes Explained Simply"}},
-    {{"domain":"Cooking","topic":"How to Bake Macarons"}}
-  ]
-}}
-
-Rules:
-- 4 to 6 recommendations
-- domain MUST be one of:
-  Science, History, Sports, Cooking, Astronomy & Space, Geography & Travel, Art/Music/Literature, Current Affairs, general
-- topic must be derived from user patterns (NO random topics)
-- topic length 3-8 words preferred
-- output JSON only, no markdown
-
-User history (most recent first):
-{json.dumps(queries, ensure_ascii=False)}
-""".strip()
-
-    messages = [
-        {"role": "system", "content": "You are AskVox SmartRec. Respond with JSON only."},
-        {"role": "user", "content": prompt},
-    ]
-
-    raw = await _sealion_completion(messages, temperature=0.25, max_tokens=700)
-    parsed = _safe_parse_json(raw)
-    return _normalize_recs(parsed)
-
-# ---------- routes ----------
-
-@router.post("/generate")
-async def generate(req: GenerateReq):
+def _get_latest_query(user_id: str) -> dict | None:
     qres = (
         supabase.table("queries")
         .select("transcribed_text, detected_domain, created_at")
-        .eq("user_id", req.user_id)
+        .eq("user_id", user_id)
         .order("created_at", desc=True)
-        .limit(req.limit)
+        .limit(1)
         .execute()
     )
-
     rows = qres.data or []
     if not rows:
-        return {"recommendations": []}
-
-    compact = []
-    for r in rows:
-        txt = (r.get("transcribed_text") or "").strip()
-        dom = (r.get("detected_domain") or "general").strip()
-        if not txt:
-            continue
-        compact.append({"text": txt, "domain": dom, "created_at": r.get("created_at")})
-
-    if not compact:
-        return {"recommendations": []}
-
-    try:
-        recs = await _sealion_generate_recs_from_queries(compact)
-    except Exception:
-        recs = []
-
-    if not recs:
-        recs = _fallback_recs(compact)
-
-    if not recs:
-        return {"recommendations": []}
-
-    # ✅ table name is plural
-    supabase.table("recommendations").delete().eq("user_id", req.user_id).execute()
-
-    # Insert all at once (simpler + faster)
-    payload = [
-        {
-            "user_id": req.user_id,
-            "domain": r["domain"],
-            "topic": r["topic"],
-            "clicked_at": None,
-        }
-        for r in recs
-    ]
-
-    ins = supabase.table("recommendations").insert(payload).execute()
-    inserted = ins.data or []
-
-    # Return just the fields frontend needs
-    cleaned = [
-        {"id": x.get("id"), "domain": x.get("domain"), "topic": x.get("topic"), "clicked_at": x.get("clicked_at")}
-        for x in inserted
-    ]
-    return {"recommendations": cleaned}
+        return None
+    r = rows[0]
+    txt = (r.get("transcribed_text") or "").strip()
+    dom = _canon_domain(r.get("detected_domain"))
+    if not txt:
+        return None
+    return {"text": txt, "domain": dom, "created_at": r.get("created_at")}
 
 
-@router.get("/list")
-def list_recommendations(user_id: str, limit: int = 10):
-    res = (
-        supabase.table("recommendations")
-        .select("id, domain, topic, clicked_at")
+def _get_user_domains_profile(user_id: str, limit: int) -> list[str]:
+    """
+    Profile mode: domains user asked about recently (unique)
+    """
+    qres = (
+        supabase.table("queries")
+        .select("detected_domain, created_at")
         .eq("user_id", user_id)
-        .order("clicked_at", desc=False, nullsfirst=True)
+        .order("created_at", desc=True)
         .limit(limit)
         .execute()
     )
-    return {"recommendations": res.data or []}
+    rows = qres.data or []
+    seen = set()
+    domains = []
+    for r in rows:
+        dom = _canon_domain(r.get("detected_domain"))
+        if dom not in ALLOWED_DOMAINS:
+            dom = "general"
+        if dom not in seen:
+            seen.add(dom)
+            domains.append(dom)
+    return domains
+
+
+def _get_clicked_topics(user_id: str, domain: str) -> set[str]:
+    res = (
+        supabase.table("recommendations")
+        .select("topic, clicked_at")
+        .eq("user_id", user_id)
+        .eq("domain", domain)
+        .not_.is_("clicked_at", "null")
+        .execute()
+    )
+    return {((r.get("topic") or "").strip().lower()) for r in (res.data or []) if (r.get("topic") or "").strip()}
+
+
+def _get_active_rows(user_id: str) -> list[dict]:
+    # Active = not clicked and not dismissed (if column exists, we filter below safely)
+    # We'll fetch a bit wider and filter in Python if needed.
+    res = (
+        supabase.table("recommendations")
+        .select("id, domain, topic, clicked_at, dismissed_at, created_at")
+        .eq("user_id", user_id)
+        .is_("clicked_at", "null")
+        .order("created_at", desc=True)
+        .execute()
+    )
+    rows = res.data or []
+    # keep only not dismissed
+    return [r for r in rows if r.get("dismissed_at") is None]
+
+
+def _get_active_topics_for_domain(user_id: str, domain: str) -> set[str]:
+    res = (
+        supabase.table("recommendations")
+        .select("topic, dismissed_at, clicked_at")
+        .eq("user_id", user_id)
+        .eq("domain", domain)
+        .is_("clicked_at", "null")
+        .execute()
+    )
+    rows = res.data or []
+    return {
+        ((r.get("topic") or "").strip().lower())
+        for r in rows
+        if (r.get("topic") or "").strip() and r.get("dismissed_at") is None
+    }
+
+
+def _get_recently_served_topics(user_id: str, domain: str, lookback_days: int = RECENT_SERVE_LOOKBACK_DAYS) -> set[str]:
+    """
+    Topics served recently (clicked OR not clicked), to avoid repeat across refresh.
+    Requires NOT deleting history rows. Works best with dismissed_at approach.
+    """
+    # fetch last N rows and filter by created_at cutoff
+    res = (
+        supabase.table("recommendations")
+        .select("topic, created_at")
+        .eq("user_id", user_id)
+        .eq("domain", domain)
+        .order("created_at", desc=True)
+        .limit(200)
+        .execute()
+    )
+    rows = res.data or []
+    cutoff = datetime.now(timezone.utc) - timedelta(days=lookback_days)
+
+    out = set()
+    for r in rows:
+        t = (r.get("topic") or "").strip()
+        if not t:
+            continue
+        ca = r.get("created_at")
+        try:
+            # supabase returns ISO; Python can parse via fromisoformat in most cases
+            dt = datetime.fromisoformat(ca.replace("Z", "+00:00")) if isinstance(ca, str) else None
+        except Exception:
+            dt = None
+
+        # If can't parse, still include to be safe (prevents repeats)
+        if dt is None or dt >= cutoff:
+            out.add(t.lower())
+    return out
+
+
+def _dismiss_active_for_user(user_id: str):
+    """
+    Refresh behavior:
+    - Best: set dismissed_at for all currently active rows (keeps history to prevent repeats)
+    - Fallback: delete active rows if dismissed_at column doesn't exist
+    """
+    try:
+        # If dismissed_at column exists, this update works.
+        supabase.table("recommendations").update({"dismissed_at": _utc_now_iso()})\
+            .eq("user_id", user_id).is_("clicked_at", "null").is_("dismissed_at", "null").execute()
+    except Exception:
+        # fallback: old behavior
+        supabase.table("recommendations").delete().eq("user_id", user_id).is_("clicked_at", "null").execute()
+
+
+def _insert_active_topics(user_id: str, domain: str, topics: list[str]):
+    if not topics:
+        return
+    payload = [{
+        "user_id": user_id,
+        "domain": domain,
+        "topic": t,
+        "clicked_at": None,
+        "dismissed_at": None,
+    } for t in topics]
+    supabase.table("recommendations").insert(payload).execute()
+
+
+def _get_domain_history_for_prompt(user_id: str, domain: str, limit: int) -> list[dict]:
+    qres = (
+        supabase.table("queries")
+        .select("transcribed_text, detected_domain, created_at")
+        .eq("user_id", user_id)
+        .order("created_at", desc=True)
+        .limit(max(10, limit))
+        .execute()
+    )
+    rows = qres.data or []
+    out = []
+    for r in rows:
+        dom = _canon_domain(r.get("detected_domain"))
+        if dom != domain:
+            continue
+        txt = (r.get("transcribed_text") or "").strip()
+        if txt:
+            out.append({"text": txt, "domain": dom, "created_at": r.get("created_at")})
+        if len(out) >= limit:
+            break
+    return out
+
+
+# --------------------- TOPIC GENERATION ---------------------
+
+async def _gen_topics_for_domain_query_anchored(user_id: str, domain: str, latest_query_text: str, history: list[dict], need: int) -> list[str]:
+    """
+    Generate topics strictly within domain, inspired by latest_query_text.
+    Filters out clicked, active, and recently served topics.
+    """
+    clicked = _get_clicked_topics(user_id, domain)
+    active = _get_active_topics_for_domain(user_id, domain)
+    recent = _get_recently_served_topics(user_id, domain)
+
+    prompt = f"""
+You are AskVox SmartRec.
+Return ONLY valid JSON.
+
+Detected domain: "{domain}"
+User's latest query in this domain:
+"{latest_query_text}"
+
+Task:
+Generate topic suggestions that feel like "next things to learn" after the query.
+They MUST be strongly related to the query AND remain STRICTLY within "{domain}".
+
+Return format:
+{{"topics":[...] }}
+
+Constraints:
+- Return exactly {GEN_POOL_PER_DOMAIN} topics
+- Each topic: 3–8 words
+- Make topics specific, not generic
+- Do NOT repeat the user's exact wording
+- No "Basics / Introduction / Overview" style topics
+- Avoid punctuation-heavy titles
+- Mix variety: techniques, comparisons, mistakes, troubleshooting, creative variations
+
+Context (recent queries in this domain, newest first):
+{json.dumps(history[:12], ensure_ascii=False)}
+""".strip()
+
+    raw = await _sealion_completion(
+        [
+            {"role": "system", "content": "Return JSON only."},
+            {"role": "user", "content": prompt},
+        ],
+        temperature=0.6,
+        max_tokens=450,
+    )
+
+    parsed = _safe_parse_json(raw)
+    topics = parsed.get("topics") or []
+
+    out: list[str] = []
+    seen = set()
+
+    for t in topics:
+        if not isinstance(t, str):
+            continue
+        tt = t.strip()
+        if not tt:
+            continue
+        key = tt.lower()
+
+        # Filter repeats
+        if key in seen or key in clicked or key in active or key in recent:
+            continue
+
+        # Prevent too-short / too-long titles
+        wcount = len(tt.split())
+        if wcount < 3 or wcount > 8:
+            continue
+
+        seen.add(key)
+        out.append(tt)
+        if len(out) >= need:
+            break
+
+    return out
+
+
+async def _ensure_topics_for_domain(user_id: str, domain: str, latest_query_text: str, history_limit: int):
+    """
+    Ensure TOPICS_PER_DOMAIN active topics exist for domain.
+    """
+    current = (
+        supabase.table("recommendations")
+        .select("id, topic, dismissed_at, clicked_at")
+        .eq("user_id", user_id)
+        .eq("domain", domain)
+        .is_("clicked_at", "null")
+        .execute()
+    ).data or []
+
+    # active = clicked_at is null AND dismissed_at is null
+    active_current = [r for r in current if r.get("dismissed_at") is None]
+    missing = TOPICS_PER_DOMAIN - len(active_current)
+    if missing <= 0:
+        return
+
+    history = _get_domain_history_for_prompt(user_id, domain, history_limit)
+
+    new_topics = await _gen_topics_for_domain_query_anchored(
+        user_id=user_id,
+        domain=domain,
+        latest_query_text=latest_query_text,
+        history=history,
+        need=missing,
+    )
+    _insert_active_topics(user_id, domain, new_topics)
+
+
+# --------------------- ROUTES ---------------------
+
+@router.post("/generate")
+async def generate(req: GenerateReq):
+    """
+    Query-mode (what you asked for):
+    - Domain shown MUST be based on the user's latest query detected domain
+    - Topics MUST be based on domain + latest query
+    - Refresh always generates a new list
+    """
+    _require_env()
+
+    latest = _get_latest_query(req.user_id)
+    if not latest:
+        return {"domains": []}
+
+    domain = latest["domain"]
+    latest_text = latest["text"]
+
+    # refresh behavior: dismiss active recs (keep history) so we can avoid repeats
+    _dismiss_active_for_user(req.user_id)
+
+    await _ensure_topics_for_domain(req.user_id, domain, latest_text, req.history_limit)
+
+    active_rows = _get_active_rows(req.user_id)
+    active_rows = [r for r in active_rows if (r.get("domain") or "general") == domain]
+    return {"domains": _group_domains(active_rows)}
+
+
+@router.get("/list")
+def list_recommendations(user_id: str):
+    """
+    List current active topics for the LATEST domain.
+    (Keeps frontend consistent with query-mode.)
+    """
+    _require_env()
+
+    latest = _get_latest_query(user_id)
+    if not latest:
+        return {"domains": []}
+
+    domain = latest["domain"]
+    active_rows = _get_active_rows(user_id)
+    active_rows = [r for r in active_rows if (r.get("domain") or "general") == domain]
+    return {"domains": _group_domains(active_rows)}
+
+
+@router.post("/generate_profile")
+async def generate_profile(req: GenerateProfileReq):
+    """
+    Optional: profile mode
+    - generate topics for multiple domains user asked about recently
+    - still query-anchored per domain (uses most recent query in that domain)
+    """
+    _require_env()
+
+    domains = _get_user_domains_profile(req.user_id, req.limit)
+    if not domains:
+        return {"domains": []}
+
+    _dismiss_active_for_user(req.user_id)
+
+    for dom in domains:
+        # need a latest query for this domain
+        # grab from recent queries
+        hist = _get_domain_history_for_prompt(req.user_id, dom, 20)
+        if not hist:
+            continue
+        latest_text = hist[0]["text"]
+        await _ensure_topics_for_domain(req.user_id, dom, latest_text, 25)
+
+    active_rows = _get_active_rows(req.user_id)
+    active_rows = [r for r in active_rows if (r.get("domain") or "general") in set(domains)]
+    return {"domains": _group_domains(active_rows)}
 
 
 @router.post("/click")
 async def click(req: ClickReq):
+    """
+    Click behavior:
+    - marks clicked_at permanently
+    - immediately refills 1 new topic in same domain (still query-anchored)
+    - creates a chat session and pushes the auto query into queries/chat_messages
+    """
+    _require_env()
+
     rec_res = (
         supabase.table("recommendations")
-        .select("id, domain, topic")
+        .select("id, domain, topic, clicked_at, dismissed_at")
         .eq("id", req.recommendation_id)
         .eq("user_id", req.user_id)
         .single()
         .execute()
     )
-
-    if not rec_res.data:
+    rec = rec_res.data
+    if not rec:
         raise HTTPException(status_code=404, detail="Recommendation not found")
 
-    domain = rec_res.data["domain"]
-    topic = rec_res.data["topic"]
+    domain = _canon_domain(rec.get("domain"))
+    topic = rec.get("topic") or ""
+
+    # mark clicked permanently
+    supabase.table("recommendations").update({"clicked_at": _utc_now_iso()}).eq("id", rec["id"]).execute()
+
+    # refill: anchor to latest query in this domain (if none, anchor to clicked topic text)
+    hist = _get_domain_history_for_prompt(req.user_id, domain, 25)
+    latest_text = hist[0]["text"] if hist else topic
+
+    await _ensure_topics_for_domain(req.user_id, domain, latest_text, 25)
+
+    # existing behavior: create chat session + messages
     auto_q = _auto_query(domain, topic)
 
-    # mark clicked
-    supabase.table("recommendations").update({"clicked_at": _utc_now_iso()}).eq("id", rec_res.data["id"]).execute()
-
-    # create chat session (NO .select() chaining)
-    sess_res = supabase.table("chat_sessions").insert({
-        "user_id": req.user_id,
-        "title": f"{topic[:30]}...",
-    }).execute()
-
+    sess_res = supabase.table("chat_sessions").insert({"user_id": req.user_id, "title": f"{topic[:30]}..."}).execute()
     session_row = (sess_res.data or [None])[0]
     if not session_row or not session_row.get("id"):
         raise HTTPException(status_code=500, detail="Failed to create chat session")
-
     session_id = session_row["id"]
 
-    # create query row
-    qrow_res = supabase.table("queries").insert({
+    supabase.table("queries").insert({
         "session_id": session_id,
         "user_id": req.user_id,
         "input_mode": "text",
@@ -347,7 +578,6 @@ async def click(req: ClickReq):
         "detected_domain": domain,
     }).execute()
 
-    # insert user message
     supabase.table("chat_messages").insert({
         "session_id": session_id,
         "user_id": req.user_id,
@@ -356,7 +586,6 @@ async def click(req: ClickReq):
         "display_name": "User",
     }).execute()
 
-    # call SeaLion for the answer
     reply = await _sealion_completion(
         [
             {
@@ -382,4 +611,12 @@ async def click(req: ClickReq):
             "display_name": "AskVox",
         }).execute()
 
-    return {"session_id": session_id, "domain": domain, "topic": topic}
+    # return updated active list for the latest domain
+    active_rows = _get_active_rows(req.user_id)
+    active_rows = [r for r in active_rows if (r.get("domain") or "general") == domain]
+    return {
+        "session_id": session_id,
+        "domain": domain,
+        "topic": topic,
+        "domains": _group_domains(active_rows),
+    }
