@@ -20,7 +20,10 @@ export default function DeleteAccount({ session }: { session: Session }) {
     // Send OTP to user's email
     try {
       const email = session.user.email || "";
-      const { error } = await supabase.auth.signInWithOtp({ email });
+      const { error } = await supabase.auth.signInWithOtp({
+        email,
+        options: { shouldCreateUser: false },
+      });
       if (error) throw error;
       setSent(true);
     } catch (e: any) {
@@ -36,7 +39,11 @@ export default function DeleteAccount({ session }: { session: Session }) {
       const email = session.user.email || "";
       if (!email) throw new Error("No email on session.");
       // 1) Verify OTP
-      const { error: otpErr } = await supabase.auth.verifyOtp({ email, token: otp, type: "email" });
+      const { error: otpErr } = await supabase.auth.verifyOtp({
+        email,
+        token: otp,
+        type: "email",
+      });
       if (otpErr) throw new Error("Invalid or expired OTP");
 
       // 2) Call backend to delete via Service Role
