@@ -658,7 +658,7 @@ export default function Dashboard({ session, paid }: { session: Session; paid?: 
 
             // Send to Sealion (server should route to SeaLion model), pass query linkage
             console.log("🌊 [VoiceMode] route=sealionchats payload=", transcript);
-            const sealionRes = await fetch("http://localhost:8000/sealionchats/", {
+            const sealionRes = await fetch("http://localhost:8000/geminichats/", {
               method: "POST",
               headers: { "Content-Type": "application/json" },
               body: JSON.stringify({

@@ -24,7 +24,7 @@ if not GEMINI_API_KEY:
 
 
 
-router = APIRouter(prefix="/sealionchats", tags=["sealionchat"])  # keep route stable for frontend
+router = APIRouter(prefix="/geminichats", tags=["geminichat"])  # keep route stable for frontend
 
 Role = Literal["user", "assistant"]
 
@@ -118,13 +118,54 @@ async def gemini_generate(message: str, history: List[HistoryItem]) -> str:
 
 @router.post("/", response_model=ChatResponse)
 async def chat(req: ChatRequest):
+    # Log prompt and attempt to ensure history is present. If client didn't send
+    # history but provided a session_id, reconstruct from Supabase chat_messages.
     try:
         print(f"🌟 [Gemini] prompt='{(req.message or '').strip()[:160]}'")
-        if req.history:
-            print(f"🌟 [Gemini] history turns={len(req.history)}")
     except Exception:
         pass
-    answer = await gemini_generate(req.message, req.history)
+
+    final_history: List[HistoryItem] = req.history or []
+
+    if (not final_history) and req.session_id and SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY:
+        try:
+            headers = {
+                "apikey": SUPABASE_SERVICE_ROLE_KEY,
+                "Authorization": f"Bearer {SUPABASE_SERVICE_ROLE_KEY}",
+            }
+            # Fetch last 40 messages for the session in chronological order
+            url = (
+                f"{SUPABASE_URL}/rest/v1/chat_messages"
+                f"?select=role,content,created_at"
+                f"&session_id=eq.{req.session_id}"
+                f"&order=created_at.asc"
+                f"&limit=40"
+            )
+            async with httpx.AsyncClient(timeout=20.0) as client:
+                resp = await client.get(url, headers=headers)
+            if resp.status_code == 200:
+                rows = resp.json() or []
+                # Map to HistoryItem-like dicts, keep only valid role/content
+                rebuilt: List[HistoryItem] = []
+                for r in rows:
+                    role = r.get("role")
+                    content = r.get("content")
+                    if role in ("user", "assistant") and isinstance(content, str) and content.strip():
+                        rebuilt.append(HistoryItem(role=role, content=content))
+                if rebuilt:
+                    final_history = rebuilt
+            else:
+                print("⚠️ Failed to load chat history from Supabase:", resp.status_code, resp.text[:300])
+        except Exception as e:
+            print("⚠️ Error reconstructing history from Supabase:", e)
+
+    try:
+        if final_history:
+            print(f"🌟 [Gemini] history turns={len(final_history)}")
+    except Exception:
+        pass
+
+    answer = await gemini_generate(req.message, final_history)
     # Persist response + assistant chat_message to Supabase if linkage provided
     if SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY:
         headers = {

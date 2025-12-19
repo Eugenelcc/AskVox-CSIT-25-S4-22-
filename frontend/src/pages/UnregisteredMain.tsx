@@ -411,7 +411,7 @@ const UnregisteredMain = ({ session }: { session: Session | null }) => {
                 });
               } catch {}
             }
-            const sealionRes = await fetch("http://localhost:8000/sealionchats/", {
+            const sealionRes = await fetch("http://localhost:8000/geminichats/", {
               method: "POST",
               headers: { "Content-Type": "application/json" },
               body: JSON.stringify({
