@@ -6,7 +6,7 @@ export default function LogoutSuccess() {
   const navigate = useNavigate();
 
   useEffect(() => {
-    const id = window.setTimeout(() => navigate("/", { replace: true }), 5000);
+    const id = window.setTimeout(() => navigate("/", { replace: true }), 2000);
     return () => window.clearTimeout(id);
   }, [navigate]);
 
