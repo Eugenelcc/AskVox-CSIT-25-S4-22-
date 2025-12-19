@@ -13,7 +13,7 @@ except Exception as e:
 
 
 USER_WAKE_PHRASE = os.getenv("USER_WAKE_PHRASE", "Hey AskVox")
-WAKE_THRESHOLD = int(os.getenv("WAKE_THRESHOLD", "75"))
+WAKE_THRESHOLD = int(os.getenv("WAKE_THRESHOLD", "70"))
 WHISPER_MODEL = os.getenv("WHISPER_MODEL", "base")
 WHISPER_LANGUAGE = os.getenv("WHISPER_LANGUAGE", "en")
 WHISPER_TEMPERATURE = float(os.getenv("WHISPER_TEMPERATURE", "0.0"))

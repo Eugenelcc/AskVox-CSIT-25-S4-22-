@@ -583,7 +583,8 @@ export default function Dashboard({ session, paid }: { session: Session; paid?: 
             }
 
             // Ensure there is a chat session (create lazily on first voice turn)
-            let currentSessionId = voiceSessionIdRef.current ?? activeSessionId;
+            // Force NEW session when user initiated 'New Chat' before wake.
+            let currentSessionId = voiceSessionIdRef.current ?? (isNewChat ? null : activeSessionId);
             if (!currentSessionId) {
               const { data: newSession, error: sessErr } = await supabase
                 .from('chat_sessions')
@@ -785,7 +786,6 @@ export default function Dashboard({ session, paid }: { session: Session; paid?: 
     voiceModeRef.current = false;
     setIsVoiceMode(false);
     setIsNewChat(false);
-    voiceSessionIdRef.current = null;
     setIsTtsPlaying(false);
     try { (window as any).speechSynthesis?.cancel?.(); } catch {}
     // Stop recorder and playback when exiting
@@ -809,7 +809,13 @@ export default function Dashboard({ session, paid }: { session: Session; paid?: 
     // Ensure UI shows any final DB writes (e.g., first voice turn).
     // Use the latest known session id to avoid race with state updates.
     const sid = voiceSessionIdRef.current || activeSessionId;
-    window.setTimeout(() => { void refreshActiveSessionMessages(sid); }, 120);
+    // Promote the session back to the UI.
+    if (sid) {
+      setActiveSessionId(sid);
+      window.setTimeout(() => { void refreshActiveSessionMessages(sid); }, 120);
+    }
+    // Clear the voice-mode session ref after we've captured sid.
+    voiceSessionIdRef.current = null;
   };
 
   // Wake detection: when wake triggers, enter voice mode

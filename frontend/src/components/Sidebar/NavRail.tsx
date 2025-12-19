@@ -47,6 +47,43 @@ export default function NavRail({ activeTab, onTabClick, onOpenSidebar, avatarPa
 
     const loadAvatar = async () => {
       if (!avatarPath) {
+        // Fallback: use OAuth-provided avatar from current auth user
+        try {
+          const { data } = await supabase.auth.getUser();
+          const meta: any = data?.user?.user_metadata || {};
+          const ident0: any = (data?.user as any)?.identities?.[0]?.identity_data || {};
+          const googleUrl =
+            meta.avatar_url ||
+            meta.picture ||
+            meta.photoURL ||
+            meta.photo_url ||
+            meta.image ||
+            ident0.avatar_url ||
+            ident0.picture ||
+            ident0.photoURL ||
+            ident0.photo_url ||
+            ident0.image ||
+            "";
+
+          if (googleUrl) {
+            if (/^https?:\/\//i.test(googleUrl)) {
+              setAvatarSrc(googleUrl);
+              return;
+            }
+            const { data: signed, error } = await supabase.storage
+              .from("avatars")
+              .createSignedUrl(googleUrl, 60 * 60 * 24 * 7);
+            if (!cancelled) {
+              if (error) {
+                console.error("Failed to sign metadata avatar URL:", error.message);
+                setAvatarSrc("");
+              } else {
+                setAvatarSrc(signed?.signedUrl ?? "");
+              }
+            }
+            return;
+          }
+        } catch {}
         setAvatarSrc("");
         return;
       }
@@ -115,7 +152,14 @@ export default function NavRail({ activeTab, onTabClick, onOpenSidebar, avatarPa
       >
         <span className="av-rail__profileRing">
           {avatarSrc ? (
-            <img className="av-rail__profileImg" src={avatarSrc} alt="Profile" />
+            <img
+              className="av-rail__profileImg"
+              src={avatarSrc}
+              alt="Profile"
+              referrerPolicy="no-referrer"
+              crossOrigin="anonymous"
+              onError={() => setAvatarSrc("")}
+            />
           ) : (
             <span className="av-rail__profileFallback" />
           )}

@@ -218,7 +218,14 @@ export default function AccountDetails({ session }: { session: Session }) {
           <div className="acc-avatarBlock">
             <div className="acc-avatarRing">
               {avatarSrc ? (
-                <img className="acc-avatarImg" src={avatarSrc} alt="Avatar" />
+                <img
+                  className="acc-avatarImg"
+                  src={avatarSrc}
+                  alt="Avatar"
+                  referrerPolicy="no-referrer"
+                  crossOrigin="anonymous"
+                  onError={() => setAvatarSrc("")}
+                />
               ) : (
                 <div className="acc-avatarFallback" />
               )}
