@@ -620,3 +620,20 @@ async def click(req: ClickReq):
         "topic": topic,
         "domains": _group_domains(active_rows),
     }
+
+@router.get("/list_profile")
+def list_profile(user_id: str, limit: int = 200):
+    """
+    Profile list mode (NO model call):
+    - shows active topics for ALL domains the user asked about recently
+    - does not generate anything
+    """
+    _require_env()
+
+    domains = _get_user_domains_profile(user_id, limit)
+    if not domains:
+        return {"domains": []}
+
+    active_rows = _get_active_rows(user_id)
+    active_rows = [r for r in active_rows if (r.get("domain") or "general") in set(domains)]
+    return {"domains": _group_domains(active_rows)}

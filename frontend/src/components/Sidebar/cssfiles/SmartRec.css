@@ -7,7 +7,7 @@
   .sr-panel{
     position: fixed;
     top: -3px;
-    left: 110px;            /* next to your 100px NavRail */
+    left: 110px;            
     width: 368px;
     height: 100vh;
     z-index: 90;
@@ -22,18 +22,33 @@
   }
   
   .sr-top{
-    display:flex;
-    align-items:center;
-    justify-content:space-between;
+    display: flex;
+    flex-direction: column;   /* stack rows vertically */
+    gap: 6px;
     padding: 2px 6px 10px;
   }
+  /* first row: title + refresh */
+.sr-topRow{
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+  
   
   .sr-title{
     font-family:'ABeeZee', system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif;
     font-weight:400;
-    font-size:20px;
+    font-size:12px;
     letter-spacing:0.02em;
     color: var(--av-orange);
+  }
+  .sr-header{
+    font-family:'ABeeZee', system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif;
+    font-weight:400;
+    font-size:12px;
+    letter-spacing:0.02em;
+    color: var(--av-orange);
+    opacity: 0.70;
   }
   
   .sr-refresh{
@@ -140,50 +155,50 @@
   }
   
 
-/* glow wrapper */
-.sr-glow {
-  position: absolute;
-  inset: -20px;                    /* extend beyond edges for softer bloom */
-  border-radius: 22px;
-  filter: blur(26px);
-  opacity: 0.75;
-  z-index: 0;
-  pointer-events: none;
-  mix-blend-mode: screen;          /* makes tints feel “lighty” on dark UI */
-}
+  /* glow wrapper */
+  .sr-glow {
+    position: absolute;
+    inset: -20px;                    
+    border-radius: 22px;
+    filter: blur(26px);
+    opacity: 0.75;
+    z-index: 0;
+    pointer-events: none;
+    mix-blend-mode: screen;          
+  }
 
-/* domain tints */
-.sr-glow[data-domain="Astronomy"] {
-  background: rgba(192, 107, 11, 0.48);
-}
+  /* domain tints */
+  .sr-glow[data-domain="Astronomy"] {
+    background: rgba(192, 107, 11, 0.48);
+  }
 
-.sr-glow[data-domain="Cooking & Food"] {
-  background: rgba(4, 62, 99, 0.85);
-}
+  .sr-glow[data-domain="Cooking & Food"] {
+    background: rgba(4, 62, 99, 0.85);
+  }
 
-.sr-glow[data-domain="Sports"] {
-  background: rgba(44, 2, 58, 0.85);
-}
+  .sr-glow[data-domain="Sports"] {
+    background: rgba(44, 2, 58, 0.85);
+  }
 
-.sr-glow[data-domain="Current Affairs"] {
-  background: rgba(70, 2, 50, 0.85);
-}
+  .sr-glow[data-domain="Current Affairs"] {
+    background: rgba(70, 2, 50, 0.85);
+  }
 
-.sr-glow[data-domain="Science"] {
-  background: rgba(255, 149, 28, 0.35);
-}
+  .sr-glow[data-domain="Science"] {
+    background: rgba(255, 149, 28, 0.35);
+  }
 
-.sr-glow[data-domain="History and World Events"] {
-  background: rgba(220, 85, 186, 0.45);
-}
+  .sr-glow[data-domain="History and World Events"] {
+    background: rgba(220, 85, 186, 0.45);
+  }
 
-.sr-glow[data-domain="Geography and Travel"] {
-  background: rgba(20, 90, 60, 0.45);
-}
+  .sr-glow[data-domain="Geography and Travel"] {
+    background: rgba(20, 90, 60, 0.45);
+  }
 
-.sr-glow[data-domain="Art, Music and Literature"] {
-  background: rgba(110, 40, 130, 0.45);
-}
+  .sr-glow[data-domain="Art, Music and Literature"] {
+    background: rgba(110, 40, 130, 0.45);
+  }
 
   
 

@@ -32,7 +32,25 @@ export default function SmartRecPanel({
     return data;
   };
 
-  const generateProfile = async () => {
+  // ✅ LIST only (no model call)
+  const loadActive = async () => {
+    if (!userId) return;
+    setErrorMsg(null);
+    try {
+      const data = await callJson(
+        `${API_BASE}/smartrec/list_profile?user_id=${encodeURIComponent(userId)}&limit=200`,
+        { method: "GET" }
+      );
+      setDomains(data.domains ?? []);
+    } catch (e: any) {
+      if (e?.name === "AbortError" || String(e?.message || "").toLowerCase().includes("aborted")) return;
+      setErrorMsg(e?.message || "Failed to load recommendations.");
+    }
+  };
+  
+
+  // ✅ GENERATE only when user clicks refresh (model call)
+  const generate = async () => {
     if (!userId) return;
     setLoading(true);
     setErrorMsg(null);
@@ -40,20 +58,18 @@ export default function SmartRecPanel({
       const data = await callJson(`${API_BASE}/smartrec/generate_profile`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ user_id: userId, limit: 80 }),
+        body: JSON.stringify({ user_id: userId, limit: 200 }),
       });
       setDomains(data.domains ?? []);
     } catch (e: any) {
-      // IMPORTANT: ignore abort errors (they are expected)
-      if (e?.name === "AbortError" || String(e?.message || "").toLowerCase().includes("aborted")) {
-        return;
-      }
+      if (e?.name === "AbortError" || String(e?.message || "").toLowerCase().includes("aborted")) return;
       setErrorMsg(e?.message || "Failed to generate recommendations.");
     } finally {
       setLoading(false);
     }
   };
 
+  // ✅ Click topic (your backend creates session + refills topic)
   const handleTopicClick = async (recId: string) => {
     if (!userId || loading) return;
     setLoading(true);
@@ -68,9 +84,7 @@ export default function SmartRecPanel({
       if (data.domains) setDomains(data.domains);
       if (data.session_id) onOpenSession(data.session_id);
     } catch (e: any) {
-      if (e?.name === "AbortError" || String(e?.message || "").toLowerCase().includes("aborted")) {
-        return;
-      }
+      if (e?.name === "AbortError" || String(e?.message || "").toLowerCase().includes("aborted")) return;
       setErrorMsg(e?.message || "Failed to open topic.");
     } finally {
       setLoading(false);
@@ -79,7 +93,8 @@ export default function SmartRecPanel({
 
   useEffect(() => {
     if (!userId) return;
-    generateProfile();
+    // ✅ DO NOT generate here
+    loadActive();
     return () => abortRef.current?.abort();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [userId]);
@@ -87,28 +102,33 @@ export default function SmartRecPanel({
   return (
     <aside className="sr-panel">
       <div className="sr-top">
-        <div className="sr-title">Suggested Topics</div>
+        <div className="sr-topRow">
+          <div className="sr-title">Suggested Topics</div>
 
-        <button className="sr-refresh" type="button" onClick={generateProfile} disabled={loading}>
-          {loading ? "…" : <RotateCw size={22} />}
-        </button>
+          <button
+            className="sr-refresh"
+            type="button"
+            onClick={generate}            // ✅ refresh triggers generation
+            disabled={loading || !userId}
+            title="Refresh"
+            aria-label="Refresh recommendations"
+          >
+            {loading ? "…" : <RotateCw size={22} />}
+          </button>
+        </div>
+
+        <div className="sr-header">
+          Explore new knowledge – SmartRec recommends topics that build on your curiosity.
+        </div>
       </div>
 
       <div className="av-divider" />
 
       <div className="sr-domainList">
-        {!!errorMsg && (
-          <div className="sr-empty">
-            {errorMsg}
-            <div style={{ marginTop: 8, opacity: 0.8 }}>
-              Try refreshing, or ask a new question first ✨
-            </div>
-          </div>
-        )}
+        {!!errorMsg && <div className="sr-empty">{errorMsg}</div>}
 
         {domains.map((d) => (
           <section key={d.domain} className="sr-domainCard">
-            {/* domain glow */}
             <div className="sr-glow" data-domain={d.domain} />
 
             <div className="sr-domainHeader">
@@ -133,9 +153,10 @@ export default function SmartRecPanel({
           </section>
         ))}
 
-
         {!domains.length && !loading && !errorMsg && (
-          <div className="sr-empty">No recommendations yet — ask a few questions first ✨</div>
+          <div className="sr-empty">
+            No active recommendations yet — click refresh to generate ✨
+          </div>
         )}
       </div>
     </aside>
