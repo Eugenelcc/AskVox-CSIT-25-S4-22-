@@ -1,0 +1,164 @@
+.av-chatbar-wrapper {
+  position: fixed;
+  /* align with main content area that starts after the 80px rail */
+  left: 80px;
+  right: 0;
+  bottom: 95px;
+  width: auto;
+  display: flex;
+  justify-content: center;
+  z-index: 20;
+  filter: drop-shadow(0px 4px 9.2px rgba(0, 0, 0, 0.6));
+}
+
+/* the main container */
+.av-chatbar {
+  box-sizing: border-box;
+  width: min(900px, calc(100% - 160px)); /* 80px rail + 80px breathing room */
+  min-height: 56px;
+  border-radius: 24px;
+  border: 1px solid #ff951c;
+  background: #1B1A1A;
+
+  display: flex;
+  align-items: flex-end;
+  padding: 8px 14px;
+  gap: 10px;
+  overflow: hidden;
+}
+
+.av-input {
+  flex: 1;
+  border: none;
+  outline: none;
+  background: transparent;
+  font-family: "ABeeZee", system-ui, -apple-system, BlinkMacSystemFont,
+    "Segoe UI", sans-serif;
+  font-size: 16px;
+  letter-spacing: 0.02em;
+  color: #f5f5f5;
+
+  padding: 0;
+  resize: none;
+  line-height: 1.4;
+  max-height: 160px;
+  overflow-y: hidden;
+  min-height: 32px;
+  height: auto;
+
+  white-space: pre-wrap;
+  word-wrap: break-word;
+}
+
+.av-input::placeholder {
+  color: #737272;
+}
+
+.av-toolbar-right {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+/* icon button  */
+.av-icon-button {
+  width: 32px;
+  height: 32px;
+  border-radius: 999px;
+  border: none;
+  background: transparent;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  flex-shrink: 0;
+}
+
+.av-icon-button:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+/* lucide icons */
+.av-icon {
+  width: 20px;
+  height: 20px;
+  stroke: #b9b9b9;
+  stroke-width: 1.8;
+}
+
+/* click to orange stroke  */
+.av-icon-button:active .av-icon,
+.av-send-button:active .av-icon {
+  stroke: #ff951c !important;
+}
+
+.av-icon-button:active,
+.av-send-button:active {
+  background: rgba(255, 149, 28, 0.12);
+}
+
+/*  nudge up  the mic button */
+.av-toolbar-right .av-icon-button:first-of-type {
+  transform: translateY(-1px);
+}
+
+/* Send button no grey circle by default */
+.av-send-button {
+  width: 40px;
+  height: 40px;
+  border-radius: 999px;
+  border: none;
+  background: transparent;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+}
+
+.av-send-button:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+
+/* when send is enabled, arrow orange*/
+.av-send-button:not(:disabled) .av-icon {
+  stroke: #ff951c;
+}
+
+
+.av-icon-button:first-of-type {
+  transform: translateY(-4px);
+}
+
+
+/* mic pulsing state */
+.av-mic-pulsing {
+  position: relative;
+}
+
+/*   ring behind mic icon */
+.av-mic-pulsing::before {
+  content: "";
+  position: absolute;
+  inset: -4px;
+  border-radius: 999px;
+  border: 7px solid rgba(255, 255, 255, 0.6);
+  animation: av-mic-pulse 1s infinite ease-out;
+}
+
+/*   mic icon is orange when active */
+.av-mic-pulsing .av-icon {
+  stroke: #ff951c;
+}
+
+@keyframes av-mic-pulse {
+  0% {
+    transform: scale(1);
+    opacity: 0.9;
+  }
+  100% {
+    transform: scale(1.3);
+    opacity: 0;
+  }
+}

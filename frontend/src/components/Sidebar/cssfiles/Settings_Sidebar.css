@@ -1,0 +1,115 @@
+.av-settings {
+    position: fixed;
+    left: 110px;              
+    top: 12px;
+    bottom: 12px;
+    width: 260px;
+    z-index: 95;
+  
+    background: rgba(0, 0, 0, 0.25);
+    box-shadow: 6px 0 24px rgba(255, 255, 255, 0.12);
+    border-radius: 19px;
+  
+    backdrop-filter: blur(10px);
+    -webkit-backdrop-filter: blur(10px);
+  }
+  
+  /* Title */
+  .av-settings__title {
+    position: absolute;
+    left: 18px;
+    top: 18px;
+  
+    font-family: "ABeeZee", system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif;
+    font-weight: 400;
+    font-size: 20px;
+    letter-spacing: 0.02em;
+    color: #ff951c;
+  }
+  
+  /* Divider line */
+  .av-settings__divider {
+    position: absolute;
+    left: 18px;
+    top: 52px;
+    width: 225px;
+    height: 0;
+    border-top: 2px solid rgba(31, 31, 31, 0.72);
+  }
+  
+  /* Pin & Hide icons (top-right) */
+  .av-settings__pinBtn,
+  .av-settings__hideBtn {
+    position: absolute;
+    top: 16px;
+    width: 28px;
+    height: 28px;
+    border: 0;
+    padding: 0;
+    background: transparent;
+    cursor: pointer;
+  }
+  
+  .av-settings__pinBtn { right: 44px; }
+  .av-settings__hideBtn { right: 14px; }
+  
+  .av-settings__pinBtn img,
+  .av-settings__hideBtn img {
+    width: 100%;
+    height: 100%;
+    object-fit: contain;
+  }
+  
+
+  /* Menu */
+  .av-settings__menu {
+    position: absolute;
+    left: 18px;
+    top: 60px;
+    width: 225px;
+  
+    display: flex;
+    flex-direction: column;
+    gap: 17px;
+  }
+  
+  .av-settings__item {
+    width: 225px;
+    height: 33px;
+    border: 0;
+    background: transparent;         /* no grey by default */
+    border-radius: 11px;
+    padding: 0 12px;
+    cursor: pointer;
+  
+    font-family: "ABeeZee", system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif;
+    font-size: 18px;
+    letter-spacing: 0.02em;
+    color: #fff;
+  
+    display: flex;
+    align-items: center;
+  }
+  
+  .av-settings__item.is-active {
+    background: #1c1c1c;             /* ✅ grey box only when clicked */
+    border: 1px solid rgba(255, 255, 255, 0.06);
+  }
+  
+  .av-settings__item--lower {
+    margin-top: 60px; /* pushes "Customize Wake Word" down like your spec */
+  }
+  
+  .av-settings__item:hover {
+    color: rgba(255, 255, 255, 0.92);
+  }
+  
+  /* focus */
+  .av-settings__item:focus-visible,
+  .av-settings__pinBtn:focus-visible,
+  .av-settings__hideBtn:focus-visible {
+    outline: none;
+    box-shadow: 0 0 0 2px rgba(255, 255, 255, 0.22), 0 0 14px rgba(220, 220, 220, 0.45);
+    border-radius: 12px;
+  }
+  

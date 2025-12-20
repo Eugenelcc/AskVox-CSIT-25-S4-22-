@@ -1,0 +1,287 @@
+:root{
+    --av-orange:#ff951c;
+    --sr-panel: linear-gradient(180deg, rgba(0,0,0,0.07) 0%, rgba(102,102,102,0.07) 100%);
+    --sr-shadow: 0px 4px 32.2px 4px rgba(255,255,255,0.15);
+  }
+  
+  .sr-panel{
+    position: fixed;
+    top: -3px;
+    left: 110px;            
+    width: 368px;
+    height: 100vh;
+    z-index: 90;
+  
+    border-radius: 19px;
+    background: var(--sr-panel);
+    box-shadow: var(--sr-shadow);
+    backdrop-filter: blur(14px);
+    -webkit-backdrop-filter: blur(14px);
+    padding: 18px 18px 20px;
+    overflow: hidden;
+  }
+  
+  .sr-top{
+    display: flex;
+    flex-direction: column;   /* stack rows vertically */
+    gap: 6px;
+    padding: 2px 6px 10px;
+  }
+  /* first row: title + refresh */
+.sr-topRow{
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+  
+  
+  .sr-title{
+    font-family:'ABeeZee', system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif;
+    font-weight:400;
+    font-size:12px;
+    letter-spacing:0.02em;
+    color: var(--av-orange);
+  }
+  .sr-header{
+    font-family:'ABeeZee', system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif;
+    font-weight:400;
+    font-size:12px;
+    letter-spacing:0.02em;
+    color: var(--av-orange);
+    opacity: 0.70;
+  }
+  
+  .sr-refresh{
+    width: 32px;
+    height: 32px;
+    color:#fff;
+    cursor:pointer;
+  }
+
+  .sr-refresh:hover {
+    color: var(--av-orange);
+  }
+  
+  .sr-list{
+    margin-top: 10px;
+    display: grid;
+    gap: 18px;
+    overflow-y: auto;
+    height: calc(100% - 52px);
+    padding-right: 4px;
+    padding-left: 16px;
+    padding-top: 16px;
+  }
+  
+  .sr-card{
+    position: relative;
+    width: 300px;
+    min-height: 125px;
+    border-radius: 30px;
+    background: #0f0f0f;
+    border: 0;
+    padding: 0;
+    overflow: hidden;
+    cursor: pointer;
+    text-align: left;
+  }
+  
+  .sr-card:disabled{
+    opacity: 0.78;
+    cursor: default;
+  }
+  
+  .sr-copy{
+    position: relative;
+    z-index: 3;
+    padding: 0 18px 16px;
+    padding-top: 2px;
+  }
+
+  /* Hover */
+.sr-card:hover:not(:disabled) {
+    border-color: #FF951C;
+    box-shadow: 0 0 14px #FF951C;
+    transform: translateY(-1px);
+  }
+  
+  /* Click (press) */
+  .sr-card:active:not(:disabled) {
+    border-color: #FF951C;
+    box-shadow: 0 0 18px #FF951C;
+    transform: scale(0.985);
+  }
+
+  
+  .sr-line{
+    width: 280px;
+    font-family:'ABeeZee', system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif;
+    font-weight:400;
+    font-size:16px;
+    line-height:25px;
+    letter-spacing:0.02em;
+    margin: 0 0 12px 0;
+    color:#fff;
+    margin-bottom: 12px;
+  }
+  
+  .sr-domain{
+    color:#fff;
+    opacity: 0.95;
+  }
+  
+  .sr-pill{
+    box-sizing: border-box;
+    width: 249px;
+    height: 40px;
+    border-radius: 30px;
+    background: #2a2929;
+    border: 1px solid #0f0f0f;
+    display:flex;
+    align-items:center;
+    padding: 12px 12px;
+  }
+  
+  
+  .sr-pillText{
+    font-family:'ABeeZee', system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif;
+    font-weight:400;
+    font-size:15px;
+    letter-spacing:0.02em;
+    color:#fff;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+  
+
+  /* glow wrapper */
+  .sr-glow {
+    position: absolute;
+    inset: -20px;                    
+    border-radius: 22px;
+    filter: blur(26px);
+    opacity: 0.75;
+    z-index: 0;
+    pointer-events: none;
+    mix-blend-mode: screen;          
+  }
+
+  /* domain tints */
+  .sr-glow[data-domain="Astronomy"] {
+    background: rgba(192, 107, 11, 0.48);
+  }
+
+  .sr-glow[data-domain="Cooking & Food"] {
+    background: rgba(4, 62, 99, 0.85);
+  }
+
+  .sr-glow[data-domain="Sports"] {
+    background: rgba(44, 2, 58, 0.85);
+  }
+
+  .sr-glow[data-domain="Current Affairs"] {
+    background: rgba(70, 2, 50, 0.85);
+  }
+
+  .sr-glow[data-domain="Science"] {
+    background: rgba(255, 149, 28, 0.35);
+  }
+
+  .sr-glow[data-domain="History and World Events"] {
+    background: rgba(220, 85, 186, 0.45);
+  }
+
+  .sr-glow[data-domain="Geography and Travel"] {
+    background: rgba(20, 90, 60, 0.45);
+  }
+
+  .sr-glow[data-domain="Art, Music and Literature"] {
+    background: rgba(110, 40, 130, 0.45);
+  }
+
+  
+
+  .sr-empty{
+    font-family:'ABeeZee', system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif;
+    color: rgba(255,255,255,0.8);
+    font-size: 18px;
+    padding: 8px 6px;
+  }
+  
+
+  .av-divider {
+    height: 2px;
+    background: rgba(31, 31, 31, 0.72);
+    border-radius: 999px;
+    margin: 6px 0 12px;
+  }
+
+
+  .sr-domainList{
+    display:flex;
+    flex-direction:column;
+    gap:14px;
+  }
+  
+  .sr-domainCard{
+    position: relative;              /* so .sr-glow can anchor correctly */
+    overflow: hidden;                /* keeps glow inside the card */
+    background: rgba(20,20,20,0.55);
+    border: 1px solid rgba(255,255,255,0.08);
+    border-radius: 16px;
+    padding: 14px;
+    isolation: isolate;              /* prevents glow from blending outside */
+  }
+  
+  .sr-domainHeader{
+    display:flex;
+    align-items:baseline;
+    justify-content:space-between;
+    margin-bottom:10px;
+  }
+  
+  .sr-domainName{
+    font-size: 15px;
+    font-weight: 700;
+  }
+  
+  .sr-domainSub{
+    font-size: 12px;
+    opacity: 0.65;
+  }
+  
+  .sr-topicGrid{
+    display:grid;
+    grid-template-columns: 1fr;
+    gap:10px;
+  }
+  
+  .sr-topicBtn{
+    width:100%;
+    text-align:left;
+    padding: 12px 12px;
+    border-radius: 14px;
+    border: 1px solid rgba(255,255,255,0.10);
+    background: rgba(0,0,0,0.25);
+    color: rgba(255,255,255,0.92);
+    cursor: pointer;
+    transition: border-color 140ms ease, box-shadow 140ms ease, transform 120ms ease;
+  }
+  
+  .sr-topicBtn:hover{
+    border-color: rgba(255,149,28,0.95);
+    box-shadow: 0 0 0 3px rgba(255,149,28,0.18);
+  }
+  
+  .sr-topicBtn:active{
+    transform: scale(0.99);
+    border-color: rgba(255,149,28,1);
+    box-shadow: 0 0 0 4px rgba(255,149,28,0.22);
+  }
+  
+  .sr-topicBtn:disabled{
+    opacity: 0.6;
+    cursor: not-allowed;
+  }
+  

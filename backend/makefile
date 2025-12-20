@@ -15,3 +15,17 @@ seed:
 
 start:
 	python -m uvicorn app.main:app --reload --port 8000
+
+
+migrate:
+	alembic upgrade head
+
+
+#Commit alembic changes
+#make dbcommit m='Random message'
+dbcommit:
+	alembic revision --autogenerate -m $(m)
+
+
+migrate-down:
+	alembic downgrade -1

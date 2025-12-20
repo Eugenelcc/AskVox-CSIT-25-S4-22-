@@ -1,0 +1,381 @@
+.page {
+  min-height: 100vh;
+  width: 100%;
+  position: relative;
+  z-index: 5;
+  font-family: "ABeeZee", system-ui, sans-serif;
+  color: #fff;
+}
+
+/* Logo top-left */
+.logoBtn {
+  position: absolute;
+  top: 18px;
+  left: 18px;
+  background: transparent;
+  border: 0;
+  padding: 0;
+  cursor: pointer;
+  z-index: 10;
+}
+
+.logo {
+  width: 70px;
+  height: auto;
+  display: block;
+}
+
+/* Close top-right */
+.closeBtn {
+  position: absolute;
+  top: 18px;
+  right: 18px;
+  width: 38px;
+  height: 38px;
+  border-radius: 999px;
+  border: 1px solid rgba(255, 255, 255, 0.22);
+  background: rgba(25, 25, 25, 0.35);
+  display: grid;
+  place-items: center;
+  color: #fff;
+  cursor: pointer;
+  z-index: 10;
+}
+
+.closeBtn:hover {
+  background: rgba(255, 255, 255, 0.08);
+}
+
+/* Main center wrapper */
+.panel {
+  width: min(1280px, calc(100% - 140px));
+  margin: 0 auto;
+  padding-top: 72px;
+
+  display: grid;
+  grid-template-columns: 510px 787px;
+  gap: 0;
+  justify-content: center;
+}
+
+/* Left image card */
+.leftCard {
+  width: 510px;
+  height: 742px;
+  border-radius: 19px;
+  overflow: hidden;
+  opacity: 0.93;
+  box-shadow: 0 25px 80px rgba(255, 149, 28, 0.12);
+}
+
+.leftImage {
+  width: 100%;
+  height: 100%;
+  background: #141414;
+  background-size: cover;
+  background-position: center;
+}
+
+/* Right form card */
+.rightCard {
+  width: 787px;
+  height: 742px;
+  border-radius: 19px;
+  background: #0c0c0c;
+
+  padding: 74px 94px 58px;
+  position: relative;
+}
+
+/* Title */
+.heading {
+  margin: 0 0 22px;
+  font-size: 30px;
+  font-weight: 400;
+  letter-spacing: 0.02em;
+}
+
+.sparkle {
+  margin-left: 8px;
+}
+
+/* Labels */
+.label {
+  display: block;
+  margin: 18px 0 10px;
+  font-size: 20px;
+  line-height: 26px;
+  letter-spacing: 0.02em;
+}
+
+/* Inputs (big) */
+.input {
+  width: 596px;
+  height: 55px;
+  border-radius: 32px;
+  background: #1c1c1c;
+  border: 1px solid #a25600;
+
+  padding: 0 22px;
+  color: #fff;
+  font-size: 18px;
+  outline: none;
+}
+
+.input::placeholder {
+  color: rgba(255, 255, 255, 0.45);
+}
+
+/* ✅ wrap for card input + brand icon */
+.cardInputWrap {
+  position: relative;
+  width: 596px;
+}
+
+.brandIcon {
+  position: absolute;
+  right: 14px;
+  top: 50%;
+  transform: translateY(-50%);
+  display: grid;
+  place-items: center;
+  pointer-events: none;
+  opacity: 0.95;
+}
+
+/* make room for icon inside input */
+.cardInputWrap .input {
+  padding-right: 70px;
+}
+
+/* Row for expiry/cvv */
+.row {
+  display: flex;
+  align-items: flex-start;
+  gap: 16px;
+  margin-top: 8px;
+}
+
+.col {
+  display: flex;
+  flex-direction: column;
+}
+
+/* small inputs */
+.inputSmall {
+  width: 177px;
+  height: 56px;
+  border-radius: 32px;
+  background: #1c1c1c;
+  border: 1px solid #754b1c;
+
+  padding: 0 18px;
+  color: #fff;
+  font-size: 18px;
+  outline: none;
+}
+
+.inputSmall::placeholder {
+  color: rgba(255, 255, 255, 0.45);
+}
+
+/* Saved note */
+.savedNote {
+  margin-top: 14px;
+  font-size: 20px;
+  letter-spacing: 0.02em;
+  color: rgba(255, 255, 255, 0.53);
+}
+
+/* Total row */
+.totalRow {
+  margin-top: 18px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  width: 596px;
+}
+
+.totalLabel {
+  font-size: 22px;
+  letter-spacing: 0.02em;
+}
+
+.totalValue {
+  font-size: 26px;
+  letter-spacing: 0.02em;
+}
+
+/* Pay button */
+.payBtn {
+  margin-top: 18px;
+  width: 596px;
+  height: 55px;
+  border-radius: 32px;
+
+  background: #ff951c;
+  border: 1px solid #a25600;
+  color: #000;
+
+  font-size: 28px;
+  font-weight: 400;
+  cursor: pointer;
+}
+
+.payBtn:hover {
+  filter: brightness(1.05);
+}
+
+/* Back link */
+.backLink {
+  margin-top: 14px;
+  background: transparent;
+  border: 0;
+  color: rgba(255, 255, 255, 0.7);
+  cursor: pointer;
+  font-size: 14px;
+  padding: 0;
+}
+
+/* error visuals */
+.errorText {
+  margin-top: 8px;
+  margin-bottom: 10px;
+  font-size: 13px;
+  color: rgba(255, 255, 255, 0.85);
+  opacity: 0.9;
+}
+
+.inputError {
+  border: 1px solid rgba(255, 80, 80, 0.85) !important;
+  box-shadow: 0 0 0 2px rgba(255, 80, 80, 0.12);
+}
+
+.payBtnDisabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+
+/* Responsive: stack cards */
+@media (max-width: 1400px) {
+  .panel {
+    grid-template-columns: 1fr;
+    width: min(820px, calc(100% - 80px));
+    padding-top: 100px;
+  }
+
+  .leftCard,
+  .rightCard {
+    width: 100%;
+  }
+
+  .leftCard {
+    height: 420px;
+    border-radius: 19px 19px 0 0;
+  }
+
+  .rightCard {
+    height: auto;
+    border-radius: 0 0 19px 19px;
+    padding: 44px 40px 40px;
+  }
+
+  .input,
+  .totalRow,
+  .payBtn,
+  .cardInputWrap {
+    width: 100%;
+  }
+
+  .row {
+    flex-wrap: wrap;
+  }
+}
+
+/* -------------------- ✅ SUCCESS MODAL -------------------- */
+.modalOverlay {
+  position: fixed;
+  inset: 0;
+  z-index: 9999;
+  background: rgba(0, 0, 0, 0.55);
+  backdrop-filter: blur(6px);
+  display: grid;
+  place-items: center;
+  padding: 20px;
+}
+
+.modal {
+  width: min(560px, 92vw);
+  border-radius: 18px;
+  background: #0c0c0c;
+  border: 1px solid rgba(255, 149, 28, 0.35);
+  box-shadow: 0 30px 90px rgba(0, 0, 0, 0.6);
+  padding: 26px 26px 22px;
+  color: #fff;
+}
+
+.modalClose {
+  position: absolute;
+  top: 12px;
+  right: 12px;
+  width: 34px;
+  height: 34px;
+  border-radius: 999px;
+  border: 1px solid rgba(255, 255, 255, 0.22);
+  background: rgba(25, 25, 25, 0.35);
+  display: grid;
+  place-items: center;
+  color: #fff;
+  cursor: pointer;
+}
+
+.modalIconWrap {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  margin-bottom: 12px;
+}
+
+.modalIcon {
+  color: #ff951c;
+}
+
+.modalTitle {
+  margin: 0 0 10px;
+  font-size: 26px;
+  font-weight: 400;
+  letter-spacing: 0.02em;
+  text-align: center;
+}
+
+.modalText {
+  margin: 0 0 18px;
+  color: rgba(255, 255, 255, 0.78);
+  font-size: 16px;
+  line-height: 1.5;
+  text-align: center;
+}
+
+.modalActions {
+  display: flex;
+  gap: 12px;
+  justify-content: flex-end;
+}
+
+.modalBtnPrimary {
+  height: 44px;
+  padding: 0 18px;
+  border-radius: 999px;
+  border: 1px solid #a25600;
+  background: #ff951c;
+  color: #000;
+  font-size: 16px;
+  cursor: pointer;
+}
+
+.modalBtnPrimary:hover {
+  filter: brightness(1.05);
+}
+
+
+

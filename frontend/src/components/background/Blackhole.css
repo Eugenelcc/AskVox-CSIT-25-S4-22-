@@ -1,0 +1,231 @@
+* {
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
+}
+
+
+
+/* === MAIN SCENE WRAPPER === */
+.scene {
+  position: relative;
+  width: 420px;
+  height: 420px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+/* Starfield in background */
+.scene::before {
+  content: "";
+  position: absolute;
+  inset: -40px;
+  pointer-events: none;
+  background-image:
+    radial-gradient(2px 2px at 20px 30px, rgba(255,255,255,0.9), transparent),
+    radial-gradient(1px 1px at 80px 120px, rgba(255,255,255,0.6), transparent),
+    radial-gradient(1.5px 1.5px at 200px 60px, rgba(255,255,255,0.8), transparent),
+    radial-gradient(2px 2px at 320px 200px, rgba(255,255,255,0.7), transparent),
+    radial-gradient(1px 1px at 380px 340px, rgba(255,255,255,0.5), transparent),
+    radial-gradient(1px 1px at 120px 340px, rgba(255,255,255,0.7), transparent);
+  opacity: 0.7;
+  animation: bgTwinkle 9s ease-in-out infinite;
+  z-index: 0;
+}
+
+/* Soft ambient orange glow behind everything */
+.ambient-glow {
+  position: absolute;
+  width: 520px;
+  height: 520px;
+  border-radius: 50%;
+  background: radial-gradient(circle, rgba(255,150,60,0.3) 0%, transparent 65%);
+  filter: blur(22px);
+  opacity: 0.9;
+  z-index: 0;
+  pointer-events: none;
+}
+
+/* WRAPPER FOR ORB + WOBBLY BORDER  */
+.orb-wrapper {
+  position: relative;
+  width: 240px;
+  height: 240px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 1;
+  transform: scale(1.2);
+  margin-top: 120px;
+}
+
+/* wobbly thin outline around the orb */
+.orb-border {
+  position: absolute;
+  inset: -6px;
+  border-radius: 52% 48% 51% 49% / 49% 53% 47% 51%;
+  pointer-events: none;
+  z-index: 3;
+}
+
+.orb-border::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  border: 1px solid rgba(255, 210, 150, 0.95);
+  box-shadow:
+    0 0 6px rgba(255, 210, 150, 0.7),
+    0 0 18px rgba(255, 150, 80, 0.5);
+  animation:
+    borderMorph 7.5s ease-in-out infinite,
+    borderSpin 18s linear infinite;
+}
+
+/*  PURE GLOW CORE  */
+.voice-core {
+  --glow-color: #ff9f3f;
+  --glow-size: 40px;
+
+  width: 240px;
+  height: 240px;
+  border-radius: 50%;
+  border: none;
+  cursor: pointer;
+
+  /* no solid disc */
+  background: transparent;
+
+  position: relative;
+  z-index: 2;
+
+  /* keep particles in a circle in the centre */
+  overflow: hidden;
+
+  box-shadow: 0 0 var(--glow-size) rgba(255, 160, 60, 0.35);
+  transition: transform 200ms ease, box-shadow 200ms ease;
+  transform-origin: center;
+}
+
+/* orange glow that reacts to voice level */
+.orb-glow {
+  position: absolute;
+  inset: -30px;
+  border-radius: 50%;
+  background: radial-gradient(circle, rgba(255, 180, 90, 0.7) 0%, transparent 70%);
+  filter: blur(26px);
+  opacity: 0.35;
+  z-index: 0;
+  pointer-events: none;
+  transition: opacity 200ms ease;
+}
+
+/* inner stars container */
+.stars {
+  position: absolute;
+  inset: 0;
+  border-radius: 50%;
+  overflow: hidden;
+  z-index: 1;
+}
+
+.star {
+  position: absolute;
+  width: 2px;
+  height: 2px;
+  border-radius: 50%;
+  background: #ffe8c4;
+  opacity: 0.7;
+  animation-name: starTwinkle;
+  animation-timing-function: ease-in-out;
+  animation-iteration-count: infinite;
+}
+
+/* idle when not listening */
+.voice-core.idle {
+  animation: orbIdle 6s ease-in-out infinite;
+}
+
+.voice-core:focus {
+  outline: 0px solid rgba(255, 255, 255, 0.08);
+  outline-offset: 2px;
+}
+
+/*  ANIMATIONS  */
+@keyframes bgTwinkle {
+  0%, 100% { opacity: 0.7; }
+  50%      { opacity: 0.5; }
+}
+
+/* Looser wobble */
+@keyframes borderMorph {
+  0% {
+    border-radius: 52% 48% 51% 49% / 49% 53% 47% 51%;
+  }
+  25% {
+    border-radius: 62% 38% 55% 45% / 52% 60% 40% 48%;
+  }
+  50% {
+    border-radius: 46% 54% 58% 42% / 45% 50% 55% 50%;
+  }
+  75% {
+    border-radius: 58% 42% 45% 55% / 55% 47% 53% 45%;
+  }
+  100% {
+    border-radius: 52% 48% 51% 49% / 49% 53% 47% 51%;
+  }
+}
+
+@keyframes borderSpin {
+  from { transform: rotate(0deg); }
+  to   { transform: rotate(360deg); }
+}
+
+@keyframes orbIdle {
+  0%, 100% { transform: scale(1); }
+  50%      { transform: scale(1.02); }
+}
+
+@keyframes starTwinkle {
+  0%, 100% {
+    opacity: var(--base-opacity, 0.7);
+    transform: translate3d(0, 0, 0) scale(var(--base-scale, 1));
+  }
+  50% {
+    opacity: 0.3;
+    transform: translate3d(0, -2px, 0) scale(calc(var(--base-scale, 1) * 1.25));
+  }
+}
+
+
+.orb-section {
+  position: relative;
+  width: 100%;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 100px;
+  /* sit nicely in the middle of the page */
+}
+
+
+/*  text below the orb */
+.orb-caption {
+  font-family: "ABeeZee", system-ui, -apple-system, BlinkMacSystemFont,
+    "Segoe UI", sans-serif;
+  font-size: 40px;
+  line-height: 1.4;
+  letter-spacing: 0.02em;
+  color: #f0f0f0;
+  text-align: center;
+}
+
+
+/* Gradient "Hey AskVox"  */
+.orb-caption-askvox {
+  background: linear-gradient(91.06deg, #ffa81c 2.26%, #ff4d00 100%);
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  background-clip: text;
+}
