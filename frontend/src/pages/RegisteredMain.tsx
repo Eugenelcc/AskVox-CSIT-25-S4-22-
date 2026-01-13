@@ -16,6 +16,8 @@ import "./cssfiles/registerMain.css";
 import { useWakeWordBackend } from "../hooks/useWakeWordBackend";
 import SettingsSidebar from "../components/Sidebar/Settings_Sidebar";
 import SmartRecPanel from "../components/Sidebar/SmartRec_sidebar";
+import Quiz from "../components/quiz/Quiz";
+
 
 // Types
 import type { ChatMessage, DatabaseMessage, UserProfile } from "../types/database"; 
@@ -29,6 +31,11 @@ const LLAMA_ID = 212020;
 type SettingsKey = "account" | "billing" | "delete" | "wakeword";
 
 export default function Dashboard({ session, paid }: { session: Session; paid?: boolean }) {
+
+  //---Quiz---//
+  const [isQuizOpen, setIsQuizOpen] = useState(false);
+
+
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [isSending, setIsSending] = useState(false);
   const [profile, setProfile] = useState<UserProfile | null>(null);
@@ -1057,10 +1064,23 @@ export default function Dashboard({ session, paid }: { session: Session; paid?: 
               )}
 
               {!isVoiceMode && (
-                <div className="uv-input-container">
-                  <ChatBar onSubmit={handleSubmit} disabled={isSending} />
-                </div>
-              )}
+  <div className="uv-input-container">
+    <ChatBar
+      onSubmit={handleSubmit}
+      disabled={isSending}
+      onQuizClick={() => setIsQuizOpen(true)}
+    />
+
+   <Quiz
+    open={isQuizOpen}
+    onClose={() => setIsQuizOpen(false)}
+    messages={messages}
+    userId={session.user.id}
+  />
+
+  </div>
+)}
+
             </>
           )}
         </main>
