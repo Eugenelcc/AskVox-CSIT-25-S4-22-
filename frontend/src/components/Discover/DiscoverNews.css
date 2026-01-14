@@ -13,10 +13,13 @@
   gap: 16px;
   margin-bottom: 16px;
   
-  /* NUCLEAR FIX: High Z-Index to sit above all background/sidebar layers */
+  /* 🟢 FIX 1: High Z-Index ensures dropdowns float ABOVE articles */
   position: relative; 
   z-index: 9999 !important; 
-  pointer-events: none; /* Let clicks pass through empty header space... */
+  
+  /* 🟢 FIX 2: REMOVED 'pointer-events: none'. 
+     This was the bug! It made clicks pass through the dropdown to the article behind. */
+  pointer-events: auto; 
 }
 
 .discover-header__left {
@@ -50,12 +53,11 @@
   gap: 6px;
   font-size: 16px;
 
-  /* CLICK FIXES */
+  /* Click interactions */
   cursor: pointer; 
   user-select: none;
   position: relative;
-  z-index: 10000 !important; /* Higher than header */
-  pointer-events: auto !important; /* Force clickable */
+  z-index: 10000; /* Ensure button stays above header background */
 }
 
 /* Ensure the icon doesn't block the click */
@@ -66,7 +68,7 @@
 .pill:hover {
   background-color: #333;
   transform: translateY(-1px);
-  border-color: #ffffff; /* Visual confirmation on hover */
+  border-color: #ffffff; 
 }
 
 .pill:active {
@@ -86,7 +88,7 @@
   border-radius: 16px;
   background: #1E1E1E;
   color: #F0F0F0;
-  cursor: pointer; /* Ensure outline buttons are also clickable */
+  cursor: pointer; 
 }
 
 .discover-layout {
@@ -95,15 +97,11 @@
   gap: 24px;
 }
 
-/* Distinct containers for feed and right widgets */
-.discover-feed { /* left column: cards */ }
-.discover-right-panel { /* right column: widgets */ }
-
 /* Stack multiple feed sections with spacing */
 .discover-left {
   display: flex;
   flex-direction: column;
-  gap: 40px; /* space between multiple discover-feed blocks */
+  gap: 40px; 
 }
 
 .news-grid {

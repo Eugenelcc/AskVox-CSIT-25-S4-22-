@@ -4,7 +4,8 @@ import { supabase } from '../supabaseClient';
 export type UiCategory = 
   | 'Trending' 
   | 'Technology' 
-  | 'Science' 
+  | 'Science'
+  | 'Gaming' // 🟢 NEW 
   | 'History & World Events' 
   | 'Sports' 
   | 'Cooking & Food' 
@@ -28,10 +29,13 @@ const CATEGORY_MAP: Record<string, string> = {
   'Trending': 'top',
   'Technology': 'technology',
   'Science': 'science',
+  'Gaming': 'gaming', // 🟢 NEW (Will be trapped by backend)
   'History & World Events': 'world',
   'Sports': 'sports',
   'Cooking & Food': 'food',
   'Geography & Travel': 'tourism',
+  'Entertainment': 'entertainment',
+  'Education': 'education',
   'Breaking': 'top',
   'Domains': 'top' 
 };
@@ -39,17 +43,25 @@ const CATEGORY_MAP: Record<string, string> = {
 // Ensure this matches your FastAPI URL (check trailing slash if needed)
 const API_BASE_URL = import.meta.env.VITE_API_URL || 'http://localhost:8000';
 
-export async function fetchNews(uiCategory: string = 'Trending'): Promise<NewsArticle[]> {
+// 🟢 UPDATE: Added 'country' parameter (defaults to empty string for Global)
+export async function fetchNews(uiCategory: string = 'Trending', country: string = ''): Promise<NewsArticle[]> {
   const apiCategory = CATEGORY_MAP[uiCategory] || 'top';
   
-  console.log(`📡 FRONTEND: Asking Backend for '${apiCategory}'...`);
+  console.log(`📡 FRONTEND: Asking Backend for '${apiCategory}' (Country: ${country || 'Global'})...`);
 
   try {
     // --- SIMPLE ARCHITECTURE ---
     // We do NOT check Supabase here. We ask the Backend.
     // The Backend will check the DB, check the 60-min timer, 
     // and return either Cached Data or Fresh Data.
-    const response = await fetch(`${API_BASE_URL}/news/refresh?category=${apiCategory}`, {
+    
+    // 🟢 UPDATE: Construct URL with optional country parameter
+    let url = `${API_BASE_URL}/news/refresh?category=${apiCategory}`;
+    if (country) {
+        url += `&country=${country}`;
+    }
+
+    const response = await fetch(url, {
       method: 'POST'
     });
 
@@ -69,10 +81,15 @@ export async function fetchNews(uiCategory: string = 'Trending'): Promise<NewsAr
     // --- FALLBACK (Optional) ---
     // If Backend is completely dead, TRY to read old cache from Supabase manually
     console.log("⚠️ Backend dead? Trying to read offline cache from Supabase...");
+    
+    // 🟢 UPDATE: Construct the correct cache key for fallback logic
+    // If country is present, key is 'technology_us', otherwise just 'technology'
+    const cacheKey = country ? `${apiCategory}_${country}` : apiCategory;
+
     const { data: cache } = await supabase
       .from('news_cache')
       .select('data')
-      .eq('category', apiCategory)
+      .eq('category', cacheKey)
       .maybeSingle();
 
     return (cache?.data as NewsArticle[]) || [];

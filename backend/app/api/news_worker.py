@@ -1,6 +1,6 @@
 import os
 import httpx
-import traceback # <--- NEW: For detailed error logs
+import traceback 
 from datetime import datetime, timedelta, timezone 
 from dateutil import parser 
 from fastapi import APIRouter, Depends, HTTPException
@@ -31,6 +31,13 @@ print("------------------------------------------------")
 CACHE_MINUTES = 60
 SGT = timezone(timedelta(hours=8))
 
+# --- STANDARD CATEGORIES (NewsData.io) ---
+# If a requested category is NOT in this list, we treat it as a keyword search ('q')
+STANDARD_CATEGORIES = {
+    "business", "entertainment", "environment", "food", "health", 
+    "politics", "science", "sports", "technology", "top", "tourism", "world"
+}
+
 # --- REQUEST MODEL FOR READER ---
 class NewsReadRequest(BaseModel):
     url: str
@@ -39,12 +46,20 @@ class NewsReadRequest(BaseModel):
 # ENDPOINT 1: REFRESH NEWS FEED (List View)
 # ==========================================
 @router.post("/news/refresh")
-async def refresh_news(category: str = "technology", db: AsyncSession = Depends(get_db)):
+async def refresh_news(category: str = "technology", country: str = None, db: AsyncSession = Depends(get_db)):
     if not NEWSDATA_KEY:
         raise HTTPException(status_code=500, detail="API Key missing")
 
+    # 🟢 DYNAMIC LOGIC: Determine how to fetch this category
+    # If it's a standard category, use 'category='. If custom (e.g. "gaming"), use 'q='.
+    is_standard = category.lower() in STANDARD_CATEGORIES
+    
+    # Create a unique cache key based on strategy
+    # e.g. "technology_us" (standard) or "gaming_us" (keyword)
+    cache_key = f"{category}_{country}" if country else category
+
     # --- STEP 1: CHECK DATABASE ---
-    result = await db.execute(select(NewsCache).where(NewsCache.category == category))
+    result = await db.execute(select(NewsCache).where(NewsCache.category == cache_key))
     existing_row = result.scalar_one_or_none()
     
     if existing_row:
@@ -63,32 +78,47 @@ async def refresh_news(category: str = "technology", db: AsyncSession = Depends(
             wait_time = CACHE_MINUTES - minutes_ago
             time_str = last_updated_utc.astimezone(SGT).strftime('%H:%M:%S')
             
-            print(f"📦 CACHE HIT for '{category}':")
+            print(f"📦 CACHE HIT for '{cache_key}':")
             print(f"   - Last Update: {time_str} (SGT) -> {minutes_ago} mins ago.")
             print(f"   - 🛑 SAVING CREDIT. (Wait {wait_time} mins for next refresh)")
             return existing_row.data
         else:
-            print(f"⏰ TIMER EXPIRED. {minutes_ago} >= {CACHE_MINUTES} mins. Refreshing '{category}'...")
+            print(f"⏰ TIMER EXPIRED. {minutes_ago} >= {CACHE_MINUTES} mins. Refreshing '{cache_key}'...")
 
     else:
-        print(f"🆕 FIRST RUN: No data found for '{category}'. Fetching fresh...")
+        print(f"🆕 FIRST RUN: No data found for '{cache_key}'. Fetching fresh...")
 
     # --- STEP 2: FETCH FRESH DATA ---
-    print(f"🔄 CONTACTING API: Fetching fresh news for: {category}...")
+    print(f"🔄 CONTACTING API: Fetching fresh news for: {category} (Country: {country})...")
     
     old_articles = existing_row.data if existing_row else []
+
+    # 🟢 DYNAMIC PARAMETER CONSTRUCTION
+    api_params = {
+        "apikey": NEWSDATA_KEY,
+        "language": "en", 
+        "image": 1,
+        "size": 10 
+    }
+
+    if is_standard:
+        # It's a supported category (e.g. 'technology')
+        api_params["category"] = category
+    else:
+        # It's a custom keyword (e.g. 'gaming', 'crypto', 'ai')
+        print(f"   👉 '{category}' is not a standard category. Using keyword search (q).")
+        api_params["q"] = category
+        # Optional: restrict search to relevant standard categories to reduce noise
+        # api_params["category"] = "technology,entertainment" 
+
+    if country:
+        api_params["country"] = country
 
     async with httpx.AsyncClient() as client:
         try:
             response = await client.get(
                 BASE_URL,
-                params={
-                    "apikey": NEWSDATA_KEY,
-                    "category": category,
-                    "language": "en", 
-                    "image": 1,
-                    "size": 10 
-                },
+                params=api_params,
                 timeout=30.0 
             )
             response.raise_for_status()
@@ -131,7 +161,7 @@ async def refresh_news(category: str = "technology", db: AsyncSession = Depends(
                     "description": item.get('description'),
                     "imageUrl": img,
                     "publishedAt": pub,
-                    "category": category,
+                    "category": category, # Keeping requested category for UI consistency
                     "source": src,
                     "url": url
                 })
@@ -150,7 +180,7 @@ async def refresh_news(category: str = "technology", db: AsyncSession = Depends(
         return []
 
     # --- PRINT LIST ---
-    print(f"\n📝 --- FINAL UNIQUE LIST FOR '{category}' ({len(final_list)} items) ---")
+    print(f"\n📝 --- FINAL UNIQUE LIST FOR '{cache_key}' ({len(final_list)} items) ---")
     
     for i, article in enumerate(final_list):
         src_label = article.get('source', 'Unknown')
@@ -169,10 +199,10 @@ async def refresh_news(category: str = "technology", db: AsyncSession = Depends(
 
     # --- STEP 4: SAVE ---
     try:
-        await db.execute(delete(NewsCache).where(NewsCache.category == category))
+        await db.execute(delete(NewsCache).where(NewsCache.category == cache_key))
         
         new_entry = NewsCache(
-            category=category,
+            category=cache_key, 
             data=final_list,
             updated_at=datetime.now(timezone.utc)
         )
@@ -181,7 +211,7 @@ async def refresh_news(category: str = "technology", db: AsyncSession = Depends(
         
         time_str = datetime.now(SGT).strftime('%H:%M:%S')
         print(f"✅ FRESH UPDATE COMPLETE at {time_str} (SGT).")
-        print(f"   (Saved {len(final_list)} articles. Credits Used: 1)")
+        print(f"   (Saved {len(final_list)} articles for '{cache_key}'. Credits Used: 1)")
     except Exception as e:
         print(f"❌ DB SAVE ERROR: {e}")
         await db.rollback()

@@ -8,9 +8,12 @@ type DiscoverKey =
   | "Trending"
   | "Technology"
   | "Science"
+  | "Gaming"
   | "History & World Events"
   | "Sports"
   | "Cooking & Food"
+  | "Entertainment"
+  | "Education"
   | "Geography & Travel";
 
 interface DiscoverSidebarProps {
@@ -106,6 +109,31 @@ export default function DiscoverSidebar({
           onClick={() => pick("Geography & Travel")}
         >
           Geography & Travel
+        </button>
+
+         <button
+          type="button"
+          className={`av-settings__item ${activeKey === "Gaming" ? "is-active" : ""}`}
+          onClick={() => pick("Gaming")}
+        >
+          Gaming
+        </button>
+
+        <button
+          type="button"
+          className={`av-settings__item ${activeKey === "Entertainment" ? "is-active" : ""}`}
+          onClick={() => pick("Entertainment")}
+        >
+          Entertainment
+        </button>
+
+
+        <button
+          type="button"
+          className={`av-settings__item ${activeKey === "Education" ? "is-active" : ""}`}
+          onClick={() => pick("Education")}
+        >
+          Education
         </button>
 
       </nav>
