@@ -18,6 +18,7 @@ import LogoutSuccess from './pages/auth/LogoutSuccess'
 import Payment from './pages/subscription/payment'
 import PlatformAdminDashboard from './pages/PlatformAdmin/dashboard'
 import FlaggedResponsePage from './pages/PlatformAdmin/FlaggedResponse' // ✅ 추가
+import NewsContent from './components/Discover/NewsContent/NewsContent'
 
 function App() {
   const [session, setSession] = useState<Session | null>(null)
@@ -110,6 +111,15 @@ function App() {
         <Route
           path="/discover"
           element={session ? <RegisterMain session={session} paid={isPaid} initialTab="discover" /> : <Navigate to="/login" />}
+        />
+        {/* Discover → Detailed News Content */}
+        <Route
+          path="/discover/news/:id"
+          element={session ? <NewsContent /> : <Navigate to="/login" />}
+        />
+        <Route
+          path="/discover/news"
+          element={session ? <NewsContent /> : <Navigate to="/login" />}
         />
         
         <Route 

@@ -1,0 +1,354 @@
+/* --- PAGE LAYOUT --- */
+.nc-page {
+    /* layout variables so sidebar + chat stay in sync */
+    --nc-sidebar-width: 320px;
+    --nc-side-gap: 24px;
+
+    display: flex;
+    column-gap: var(--nc-side-gap);
+    min-height: 100vh;
+    background-color: #000000;
+    color: #ffffff;
+    font-family: 'ABeeZee', system-ui, sans-serif;
+    overflow-x: hidden;
+    padding-left: 8px; /* small breathing space at far left */
+}
+
+/* --- SIDEBAR --- */
+.nc-sidebar {
+    width: var(--nc-sidebar-width);
+    padding: 20px 22px;
+    display: flex;
+    flex-direction: column;
+    /* Keep the rail visible while scrolling */
+    position: sticky;
+    top: 16px;
+    align-self: flex-start;
+    min-height: calc(100vh - 32px);
+
+    /* Match the Figma glassy rail */
+    background: linear-gradient(180deg, rgba(255,255,255,0.07) 0%, rgba(102,102,102,0.07) 100%);
+    box-shadow: 0px 4px 32px 4px rgba(255,255,255,0.15);
+    border-radius: 19px;
+    border: 1px solid rgba(255,255,255,0.06);
+}
+
+.nc-sidebar__header {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    margin-bottom: 20px;
+}
+
+.nc-sidebar__title {
+    font-size: 24px;
+    color: #fff;
+}
+
+.nc-sidebar__nav {
+    display: flex;
+    flex-direction: column;
+    gap: 16px;
+    padding-top: 6px;
+}
+
+.nc-nav-item {
+    font-size: 16px;
+    color: #FF951C;
+    cursor: pointer;
+    transition: color 0.2s;
+}
+
+.nc-nav-item:hover, .nc-nav-item.active { color: #ffffff; }
+
+/* --- MAIN CONTENT --- */
+.nc-main {
+    flex: 1;
+    position: relative;
+    padding: 32px 60px 140px; /* Bottom padding for chat bar */
+    width: 100%;
+    max-width: none;
+    margin: 0; /* we center the inner container instead */
+}
+
+/* TOP RIGHT ACTIONS */
+.nc-top-actions {
+    position: absolute;
+    top: 32px;
+    right: 40px;
+    display: flex;
+    gap: 16px;
+}
+
+.nc-pill {
+    background: transparent;
+    border: 1px solid rgba(255, 255, 255, 0.3);
+    color: #fff;
+    padding: 8px 24px;
+    border-radius: 99px;
+    cursor: pointer;
+    font-size: 14px;
+    transition: all 0.2s;
+}
+
+.nc-pill:hover {
+    border-color: #FF951C;
+    color: #FF951C;
+}
+
+/* BACK BUTTON */
+.nc-back-btn {
+    background: transparent;
+    border: none;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    color: #FF951C;
+    cursor: pointer;
+    margin-bottom: 32px;
+    font-size: 14px;
+}
+
+/* --- HEADER & HEADLINE --- */
+.nc-headline {
+    font-size: 42px;
+    line-height: 1.2;
+    margin-bottom: 16px;
+    
+    /* THE ORANGE GRADIENT TEXT */
+    background: linear-gradient(90deg, #FF951C 0%, #E06C00 100%);
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+    background-clip: text;
+}
+
+.nc-meta-row {
+    display: flex;
+    align-items: center;
+    gap: 16px;
+    margin-bottom: 32px;
+}
+
+.nc-time {
+    color: rgba(255, 255, 255, 0.4);
+    font-size: 14px;
+}
+
+/* SOURCES PILL */
+.nc-sources-pill {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    background: rgba(255, 255, 255, 0.05);
+    border: 1px solid rgba(255, 255, 255, 0.1);
+    padding: 6px 12px;
+    border-radius: 99px;
+    font-size: 13px;
+    color: rgba(255, 255, 255, 0.8);
+    cursor: pointer;
+}
+
+.nc-avatars {
+    display: flex;
+    padding-left: 5px;
+}
+
+.nc-avatars img {
+    width: 20px;
+    height: 20px;
+    border-radius: 50%;
+    border: 1px solid #000;
+    margin-left: -8px;
+}
+
+.nc-actions {
+    display: flex;
+    gap: 8px;
+    margin-left: auto; /* Push to right */
+}
+
+.nc-icon-btn {
+    background: transparent;
+    border: none;
+    color: #FF951C;
+    cursor: pointer;
+    opacity: 0.8;
+}
+.nc-icon-btn:hover { opacity: 1; }
+
+/* --- BODY TEXT --- */
+.nc-summary {
+    font-size: 18px;
+    line-height: 1.6;
+    color: rgba(255, 255, 255, 0.9);
+    margin-bottom: 32px;
+}
+
+.nc-extended-content h3 {
+    font-size: 20px;
+    color: #fff;
+    margin: 32px 0 12px;
+}
+
+.nc-extended-content p {
+    font-size: 18px;
+    line-height: 1.6;
+    color: rgba(255, 255, 255, 0.7);
+    margin-bottom: 16px;
+}
+
+.nc-extended-content ul {
+    margin-left: 24px;
+    color: rgba(255, 255, 255, 0.7);
+    font-size: 18px;
+    line-height: 1.6;
+}
+
+.nc-extended-content li {
+    margin-bottom: 8px;
+}
+
+.nc-hero-image-wrapper {
+    margin-top: 40px;
+    border-radius: 16px;
+    overflow: hidden;
+}
+
+.nc-hero-image {
+    width: 100%;
+    height: auto;
+    display: block;
+}
+
+/* Center the article content within the available space */
+.nc-article-container {
+    max-width: 980px; /* content column width */
+    margin: 0 auto;  /* center horizontally */
+}
+
+/* Ensure no unintended card/background around the text column */
+.nc-article-container,
+.nc-body,
+.nc-extended-content {
+    background: transparent !important;
+    border: 0 !important;
+    box-shadow: none !important;
+    border-radius: 0 !important;
+}
+
+/* --- CHAT BAR (Fixed Bottom) --- */
+.nc-chat-wrapper {
+    position: fixed;
+    bottom: 32px;
+    /* Center it relative to the main content area roughly */
+    left: calc(var(--nc-sidebar-width) + var(--nc-side-gap) + 8px);
+    right: 40px;
+    display: flex;
+    justify-content: center;
+    z-index: 50;
+    pointer-events: none; /* Let clicks pass through empty space */
+}
+
+.nc-chat-bar {
+    pointer-events: auto;
+    width: 100%;
+    max-width: 900px;
+    background: #1B1A1A;
+    border: 1px solid #FF951C;
+    border-radius: 100px; /* Full rounded pill */
+    padding: 8px 12px 8px 24px;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    box-shadow: 0 10px 40px rgba(0,0,0,0.5);
+}
+
+.nc-chat-input-group {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    flex: 1;
+}
+
+.nc-paperclip-icon {
+    color: rgba(255, 255, 255, 0.3);
+    font-size: 20px;
+    cursor: pointer;
+}
+
+.nc-chat-input {
+    background: transparent;
+    border: none;
+    color: #fff;
+    font-size: 16px;
+    width: 100%;
+    outline: none;
+}
+.nc-chat-input::placeholder {
+    color: rgba(255, 255, 255, 0.3);
+}
+
+.nc-chat-actions {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+}
+
+.nc-chat-icon {
+    background: transparent;
+    border: none;
+    color: rgba(255, 255, 255, 0.6);
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+}
+.nc-chat-icon:hover { color: #fff; }
+
+.nc-send-btn {
+    background: rgba(255, 255, 255, 0.1);
+    border: none;
+    width: 40px;
+    height: 40px;
+    border-radius: 50%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    color: #FF951C;
+    cursor: pointer;
+    transition: background 0.2s;
+}
+.nc-send-btn:hover {
+    background: rgba(255, 149, 28, 0.2);
+}
+
+/* --- SKELETON LOADING ANIMATION --- */
+@keyframes shimmer {
+  0% { background-position: -200% 0; }
+  100% { background-position: 200% 0; }
+}
+
+.nc-skeleton-line {
+  height: 18px;
+  margin-bottom: 15px;
+  background: linear-gradient(90deg, #1a1a1a 25%, #2a2a2a 50%, #1a1a1a 75%);
+  background-size: 200% 100%;
+  animation: shimmer 1.5s infinite;
+  border-radius: 4px;
+}
+
+/* --- READ MORE FADE EFFECT --- */
+.nc-fade-overlay {
+    position: relative;
+}
+
+.nc-fade-overlay::after {
+    content: "";
+    position: absolute;
+    bottom: 0;
+    left: 0;
+    width: 100%;
+    height: 150px; /* How tall the fade is */
+    /* Fades from Transparent to Black (Matches your background) */
+    background: linear-gradient(to bottom, rgba(0,0,0,0) 0%, #000000 100%); 
+    pointer-events: none;
+}

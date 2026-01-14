@@ -1,23 +1,43 @@
 import os
 import httpx
+import traceback # <--- NEW: For detailed error logs
 from datetime import datetime, timedelta, timezone 
 from dateutil import parser 
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.ext.asyncio import AsyncSession 
 from sqlalchemy import select, delete
 from sqlalchemy.dialects.postgresql import insert
+from pydantic import BaseModel 
+
 from app.db.session import get_db 
 from app.models import NewsCache
 
 router = APIRouter()
 
+# --- API KEYS ---
 NEWSDATA_KEY = os.getenv("NEWSDATA_API_KEY")
+JINA_KEY = os.getenv("JINA_API_KEY")
+
 BASE_URL = "https://newsdata.io/api/1/news"
+
+# 🔍 DEBUG BLOCK
+print("------------------------------------------------")
+print(f"🔑 DEBUG CHECK:")
+print(f"   - NEWSDATA KEY: {'✅ Loaded' if NEWSDATA_KEY else '❌ Missing'}")
+print(f"   - JINA KEY:     {'✅ Loaded' if JINA_KEY else '❌ Missing'}")
+print("------------------------------------------------")
 
 # --- CONFIGURATION ---
 CACHE_MINUTES = 60
 SGT = timezone(timedelta(hours=8))
 
+# --- REQUEST MODEL FOR READER ---
+class NewsReadRequest(BaseModel):
+    url: str
+
+# ==========================================
+# ENDPOINT 1: REFRESH NEWS FEED (List View)
+# ==========================================
 @router.post("/news/refresh")
 async def refresh_news(category: str = "technology", db: AsyncSession = Depends(get_db)):
     if not NEWSDATA_KEY:
@@ -68,7 +88,8 @@ async def refresh_news(category: str = "technology", db: AsyncSession = Depends(
                     "language": "en", 
                     "image": 1,
                     "size": 10 
-                }
+                },
+                timeout=30.0 
             )
             response.raise_for_status()
             data = response.json()
@@ -128,20 +149,16 @@ async def refresh_news(category: str = "technology", db: AsyncSession = Depends(
     if not final_list: 
         return []
 
-    # --- PRINT LIST (NOW WITH SGT CONVERSION) ---
+    # --- PRINT LIST ---
     print(f"\n📝 --- FINAL UNIQUE LIST FOR '{category}' ({len(final_list)} items) ---")
     
     for i, article in enumerate(final_list):
         src_label = article.get('source', 'Unknown')
         raw_date = article.get('publishedAt')
-        
-        # Convert to SGT for display
         try:
             dt = parser.parse(raw_date)
-            # If naive, assume UTC
             if dt.tzinfo is None:
                 dt = dt.replace(tzinfo=timezone.utc)
-            # Shift to SG Time
             sgt_date = dt.astimezone(SGT).strftime('%Y-%m-%d %H:%M:%S')
         except:
             sgt_date = "Unknown Date"
@@ -170,3 +187,57 @@ async def refresh_news(category: str = "technology", db: AsyncSession = Depends(
         await db.rollback()
 
     return final_list
+
+
+# ==========================================
+# ENDPOINT 2: READ ARTICLE (Detail View)
+# ==========================================
+@router.post("/news/read")
+async def read_news_content(request: NewsReadRequest):
+    """
+    Uses Jina Reader API to fetch clean article content.
+    """
+    print(f"🕵️‍♂️ JINA READING: {request.url}")
+
+    # Jina Reader URL format
+    jina_url = f"https://r.jina.ai/{request.url}"
+
+    # We ask Jina for JSON so we get clean content
+    headers = {
+        "Accept": "application/json"
+    }
+    
+    # Add API Key if it exists in .env
+    if JINA_KEY:
+        headers["Authorization"] = f"Bearer {JINA_KEY}"
+
+    # 🔴 UPDATED CLIENT: Follow redirects & 60s Timeout
+    async with httpx.AsyncClient(follow_redirects=True) as client:
+        try:
+            # Call Jina
+            response = await client.get(jina_url, headers=headers, timeout=60.0)
+            
+            if response.status_code != 200:
+                print(f"❌ Jina Error: {response.status_code} - {response.text}")
+                return {"content": "Could not fetch content. Please read at source."}
+
+            data = response.json()
+            
+            # Jina returns data in: { "data": { "content": "..." } }
+            clean_text = data.get("data", {}).get("content", "")
+            
+            if not clean_text:
+                print("⚠️ Jina returned empty content.")
+                return {"content": "Content unavailable. Please click the link below to read at source."}
+
+            return {"content": clean_text}
+
+        except httpx.ReadTimeout:
+            print("❌ TIMEOUT: The website took too long to respond (>60s).")
+            return {"content": "The source website is too slow. Please read the original article."}
+            
+        except Exception as e:
+            print(f"❌ Backend Error Type: {type(e)}")
+            print(f"❌ Backend Error Message: {e}")
+            traceback.print_exc() 
+            return {"content": "Error loading article. Please try again."}

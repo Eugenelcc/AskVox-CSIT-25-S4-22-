@@ -1,4 +1,5 @@
 import React from 'react';
+import { useNavigate } from 'react-router-dom';
 import { Heart, Clock } from 'lucide-react'; // Changed Bookmark to Heart
 import './DiscoverNews.css';
 
@@ -102,12 +103,25 @@ const NewsCard: React.FC<NewsCardProps> = ({
     source,
     url 
 }) => {
+    const navigate = useNavigate();
+    const slug = title
+        .toLowerCase()
+        .replace(/[^a-z0-9]+/g, '-')
+        .replace(/(^-|-$)/g, '') || 'article';
+
+    const goDetail = () => {
+        navigate(`/discover/news/${slug}`, {
+            state: {
+                article: { title, description, imageUrl, releasedMinutes, source, url }
+            }
+        });
+    };
     
     const footerProps = { url, source, releasedMinutes, bookmarked };
 
     if (variant === 'hero') {
         return (
-            <div className="news-card news-card--hero">
+            <div className="news-card news-card--hero" onClick={goDetail} style={{ cursor: 'pointer' }}>
                 <img src={imageUrl} alt={title} className="news-card__image" />
                 <div className="news-card__body" style={{ display: 'flex', flexDirection: 'column', justifyContent: 'center' }}>
                     <h3 className="news-title news-title--lg news-title-gradient">{title}</h3>
@@ -122,7 +136,7 @@ const NewsCard: React.FC<NewsCardProps> = ({
 
     if (variant === 'wide') {
         return (
-            <div className="news-card news-card--wide">
+            <div className="news-card news-card--wide" onClick={goDetail} style={{ cursor: 'pointer' }}>
                 <img src={imageUrl} alt={title} className="news-card__image" />
                 <div className="news-card__body" style={{ display: 'flex', flexDirection: 'column', justifyContent: 'center' }}>
                     <h3 className="news-title news-title--lg">{title}</h3>
@@ -137,7 +151,7 @@ const NewsCard: React.FC<NewsCardProps> = ({
 
     // Standard Variant
     return (
-        <div className="news-card">
+        <div className="news-card" onClick={goDetail} style={{ cursor: 'pointer' }}>
             <img src={imageUrl} alt={title} className="news-card__image" style={{ height: 160 }} />
             <div className="news-card__body">
                 <h3 className="news-title" style={{ fontSize: 16, lineHeight: '1.4em', marginBottom: 12 }}>

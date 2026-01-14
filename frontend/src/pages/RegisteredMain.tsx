@@ -21,6 +21,8 @@ import SmartRecPanel from "../components/Sidebar/SmartRec_sidebar";
 import Quiz from "../components/quiz/Quiz";
 
 import { DiscoverView } from "../components/Discover/DiscoverView";
+import NewsContent from "../components/Discover/NewsContent/NewsContent";
+
 
 // Types
 import type { ChatMessage, DatabaseMessage, UserProfile } from "../types/database"; 
@@ -1052,8 +1054,9 @@ export default function Dashboard({
 
       {(() => {
         const navRailWidth = 80; // fixed rail
-        const discoverSidebarWidth = showDiscover ? 300 : 0; // sidebar when open
-        const discoverPadding = activeTab === 'discover' && !showDiscover ? 60 : 0; // extra spacing when page is discover but sidebar closed
+        const viewingArticle = location.pathname.startsWith("/discover/news");
+        const discoverSidebarWidth = (showDiscover || viewingArticle) ? 300 : 0; // sidebar when open or on article
+        const discoverPadding = (activeTab === 'discover' && !showDiscover && !viewingArticle) ? 60 : 0; // extra spacing only for feed
         const contentMarginLeft = `${navRailWidth + discoverSidebarWidth + discoverPadding}px`;
         return (
           <div style={{
@@ -1082,7 +1085,11 @@ export default function Dashboard({
             )
 
           ) : activeTab === "discover" ? (
-            <DiscoverView withNavOffset={false} category={discoverCategory} />
+            location.pathname.startsWith("/discover/news") ? (
+              <NewsContent />
+            ) : (
+              <DiscoverView withNavOffset={false} category={discoverCategory} />
+            )
           ) : (
             <>
               {/* Voice mode: show minimal listening UI */}
