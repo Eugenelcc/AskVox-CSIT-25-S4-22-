@@ -1,0 +1,114 @@
+import React from 'react';
+import "./cssfiles/Settings_Sidebar.css";
+import { PanelLeftClose } from "lucide-react";
+import type { UiCategory } from '../../services/newsApi'; // Optional: import shared type if you want strict safety
+
+// These keys must match the keys in CATEGORY_MAP in newsApi.ts
+type DiscoverKey =
+  | "Trending"
+  | "Technology"
+  | "Science"
+  | "History & World Events"
+  | "Sports"
+  | "Cooking & Food"
+  | "Geography & Travel";
+
+interface DiscoverSidebarProps {
+  isOpen: boolean;
+  activeKey?: string | null; // Changed to string to be more flexible
+  onSelect?: (key: string) => void;
+  onCategorySelect?: (key: string) => void;
+  onClose: () => void;
+}
+
+export default function DiscoverSidebar({
+  isOpen,
+  activeKey = null,
+  onSelect,
+  onCategorySelect,
+  onClose,
+}: DiscoverSidebarProps) {
+  if (!isOpen) return null;
+
+  const pick = (k: DiscoverKey) => {
+    onSelect?.(k);
+    onCategorySelect?.(k);
+  };
+
+  return (
+    <aside className="av-settings" aria-label="Discover Sidebar">
+      <button
+        className="av-settings__hideBtn"
+        type="button"
+        onClick={onClose}
+        aria-label="Collapse sidebar"
+        title="Collapse"
+      >
+        <PanelLeftClose size={22} />
+      </button>
+
+      <div className="av-settings__title">Discover</div>
+      <div className="av-settings__divider" />
+
+      <nav className="av-settings__menu" aria-label="Discover categories">
+        
+        <button
+          type="button"
+          className={`av-settings__item ${activeKey === "Trending" ? "is-active" : ""}`}
+          onClick={() => pick("Trending")}
+        >
+          Trending
+        </button>
+
+        <button
+          type="button"
+          className={`av-settings__item ${activeKey === "Technology" ? "is-active" : ""}`}
+          onClick={() => pick("Technology")}
+        >
+          Technology
+        </button>
+
+        <button
+          type="button"
+          className={`av-settings__item ${activeKey === "Science" ? "is-active" : ""}`}
+          onClick={() => pick("Science")}
+        >
+          Science
+        </button>
+
+        <button
+          type="button"
+          className={`av-settings__item ${activeKey === "History & World Events" ? "is-active" : ""}`}
+          onClick={() => pick("History & World Events")}
+        >
+          History & World Events
+        </button>
+
+        <button
+          type="button"
+          className={`av-settings__item ${activeKey === "Sports" ? "is-active" : ""}`}
+          onClick={() => pick("Sports")}
+        >
+          Sports
+        </button>
+
+        <button
+          type="button"
+          className={`av-settings__item ${activeKey === "Cooking & Food" ? "is-active" : ""}`}
+          onClick={() => pick("Cooking & Food")}
+        >
+          Cooking & Food
+        </button>
+
+        <button
+          type="button"
+          className={`av-settings__item ${activeKey === "Geography & Travel" ? "is-active" : ""}`}
+          onClick={() => pick("Geography & Travel")}
+        >
+          Geography & Travel
+        </button>
+
+      </nav>
+    </aside>
+  );
+}

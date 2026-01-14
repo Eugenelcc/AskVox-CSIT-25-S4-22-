@@ -17,7 +17,7 @@ import {
 } from "lucide-react";
 
 
-import newChatPng from "./newchat.png";
+import newChatPng from "./iconsFile/newchat.png";
 
 interface ChatSession {
   id: string;

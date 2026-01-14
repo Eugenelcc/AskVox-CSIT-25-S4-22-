@@ -16,7 +16,6 @@ import ForgotPassword from './pages/auth/ForgotPassword'
 import ResetPassword from './pages/auth/ResetPassword'
 import LogoutSuccess from './pages/auth/LogoutSuccess'
 import Payment from './pages/subscription/payment'
-
 import PlatformAdminDashboard from './pages/PlatformAdmin/dashboard'
 import FlaggedResponsePage from './pages/PlatformAdmin/FlaggedResponse' // ✅ 추가
 
@@ -109,6 +108,11 @@ function App() {
           element={session ? <PaidMain session={session} /> : <Navigate to="/login" />}
         />
         <Route
+          path="/discover"
+          element={session ? <RegisterMain session={session} paid={isPaid} initialTab="discover" /> : <Navigate to="/login" />}
+        />
+        
+        <Route 
           path="/upgrade"
           element={session ? <Upgrade /> : <Navigate to="/login" />}
         />

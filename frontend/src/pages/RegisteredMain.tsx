@@ -1,4 +1,5 @@
 import { useState, useEffect, useMemo, useRef } from "react";
+import { useLocation, useNavigate } from "react-router-dom";
 import { supabase } from "../supabaseClient";
 import type { Session } from "@supabase/supabase-js";
 
@@ -15,9 +16,11 @@ import NavRail from "../components/Sidebar/NavRail";
 import "./cssfiles/registerMain.css";
 import { useWakeWordBackend } from "../hooks/useWakeWordBackend";
 import SettingsSidebar from "../components/Sidebar/Settings_Sidebar";
+import DiscoverSidebar from "../components/Sidebar/Discover_Sidebar";
 import SmartRecPanel from "../components/Sidebar/SmartRec_sidebar";
 import Quiz from "../components/quiz/Quiz";
 
+import { DiscoverView } from "../components/Discover/DiscoverView";
 
 // Types
 import type { ChatMessage, DatabaseMessage, UserProfile } from "../types/database"; 
@@ -30,15 +33,25 @@ import PaymentBilling from './settings/PaymentBilling';
 const LLAMA_ID = 212020; 
 type SettingsKey = "account" | "billing" | "delete" | "wakeword";
 
-export default function Dashboard({ session, paid }: { session: Session; paid?: boolean }) {
 
-  //---Quiz---//
-  const [isQuizOpen, setIsQuizOpen] = useState(false);
+//---Quiz---//
 
+export default function Dashboard({
+  session,
+  paid,
+  initialTab,
+}: {
+  session: Session;
+  paid?: boolean;
+  initialTab?: string;
+}) {
+  const navigate = useNavigate();
+  const location = useLocation();
 
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [isSending, setIsSending] = useState(false);
   const [profile, setProfile] = useState<UserProfile | null>(null);
+  const [isQuizOpen, setIsQuizOpen] = useState(false);
   const [isVoiceMode, setIsVoiceMode] = useState(false);
   // Voice capture (reuse ChatBar approach)
   const [isRecording, setIsRecording] = useState(false);
@@ -59,7 +72,9 @@ export default function Dashboard({ session, paid }: { session: Session; paid?: 
   // Sidebar & Navigation State
   const [sessions, setSessions] = useState<{id: string, title: string}[]>([]); // all chats the user has created, shown in the sidebar
   const [activeSessionId, setActiveSessionId] = useState<string | null>(null); // currently selected chat session
-  const [activeTab, setActiveTab] = useState('chats'); // Tracks which tab is active in the NavRail
+  const [activeTab, setActiveTab] = useState<string>(
+    initialTab ?? (location.pathname === "/discover" ? "discover" : "chats")
+  ); // Tracks which tab is active in the NavRail
   const [isSidebarOpen, setSidebarOpen] = useState(false); // Sidebar visibility
   const [isNewChat, setIsNewChat] = useState(false); //When user starts a new chat
   // Stores chat folders
@@ -181,6 +196,26 @@ export default function Dashboard({ session, paid }: { session: Session; paid?: 
   };
 
   const handleTabClick = (tab: string) => {
+    // Keep URL in sync for Discover
+    if (tab === "discover") {
+      setActiveTab("discover");
+      setSidebarOpen(true);
+      if (location.pathname !== "/discover") navigate("/discover");
+      return;
+    }
+
+    // Leaving the discover route: return to the appropriate home route
+    if (location.pathname === "/discover") {
+      navigate(paid ? "/paiduserhome" : "/reguserhome");
+    }
+
+    // Logo click in NavRail passes "reguserhome" — treat it as home/chats
+    if (tab === "reguserhome") {
+      setActiveTab("chats");
+      setSidebarOpen(false);
+      return;
+    }
+
     if (tab === 'newchat') {
       // Enter new chat mode, close sidebar, highlight New Chat on the rail
       handleNewChat();
@@ -190,7 +225,7 @@ export default function Dashboard({ session, paid }: { session: Session; paid?: 
     }
     setActiveTab(tab);
     if (tab === "settings") setActiveSettingsKey(null);
-    setSidebarOpen(tab === "chats" || tab === "settings" || tab === "smartrec");
+    setSidebarOpen(tab === "chats" || tab === "settings" || tab === "smartrec"|| tab === "discover");
   };
 
 
@@ -411,6 +446,8 @@ export default function Dashboard({ session, paid }: { session: Session; paid?: 
 
   const showSidebar = isSidebarOpen && activeTab === 'chats';
   const showSmartRec = isSidebarOpen && activeTab === "smartrec";
+  const showDiscover = isSidebarOpen && activeTab === "discover";
+  const [discoverCategory, setDiscoverCategory] = useState<string | null>(null);
   const isBlackHoleActive = isVoiceMode && (isRecording || isTranscribing || isTtsPlaying);
 
   // ---- Voice Mode (wake -> voice-only flow) ----
@@ -959,7 +996,7 @@ export default function Dashboard({ session, paid }: { session: Session; paid?: 
       <NavRail
         activeTab={activeTab}
         onTabClick={handleTabClick}
-        onOpenSidebar={(tab) => setSidebarOpen(tab === "chats" || tab === "settings" || tab === "smartrec")}
+        onOpenSidebar={(tab) => setSidebarOpen(tab === "chats" || tab === "settings" || tab === "smartrec" || tab === "discover")}
         avatarPath={profile?.avatar_url ?? "defaults/default.png"}
       />
 
@@ -988,6 +1025,15 @@ export default function Dashboard({ session, paid }: { session: Session; paid?: 
         onSelect={handleSettingsSelect}
         onClose={() => setSidebarOpen(false)}
       />
+      <DiscoverSidebar
+        isOpen={showDiscover}
+        onClose={() => setSidebarOpen(false)}
+        onCategorySelect={(c) => {
+          setDiscoverCategory(c);
+          setActiveTab("discover");
+          setSidebarOpen(false);
+        }}
+      />
       {/* ✅ SmartRec sidebar overlay */}
       {showSmartRec && (
         <div className="sr-overlay">
@@ -1004,14 +1050,21 @@ export default function Dashboard({ session, paid }: { session: Session; paid?: 
       )}
 
 
-      <div style={{ 
-        flex: 1, 
-        marginLeft: '80px', 
-        position: 'relative',
-        width: '100%',
-        display: 'flex',
-        flexDirection: 'column'
-      }}>
+      {(() => {
+        const navRailWidth = 80; // fixed rail
+        const discoverSidebarWidth = showDiscover ? 300 : 0; // sidebar when open
+        const discoverPadding = activeTab === 'discover' && !showDiscover ? 60 : 0; // extra spacing when page is discover but sidebar closed
+        const contentMarginLeft = `${navRailWidth + discoverSidebarWidth + discoverPadding}px`;
+        return (
+          <div style={{
+            flex: 1,
+            marginLeft: contentMarginLeft,
+            transition: 'margin-left 250ms ease',
+            position: 'relative',
+            width: '100%',
+            display: 'flex',
+            flexDirection: 'column'
+          }}>
         
         {paid ? <PaidTopBar session={session} /> : <RegisteredTopBar session={session} />}
 
@@ -1028,6 +1081,8 @@ export default function Dashboard({ session, paid }: { session: Session; paid?: 
               <></>
             )
 
+          ) : activeTab === "discover" ? (
+            <DiscoverView withNavOffset={false} category={discoverCategory} />
           ) : (
             <>
               {/* Voice mode: show minimal listening UI */}
@@ -1114,6 +1169,8 @@ export default function Dashboard({ session, paid }: { session: Session; paid?: 
           </div>
         )}
       </div>
+        );
+      })()}
     </div>
   );
 };
