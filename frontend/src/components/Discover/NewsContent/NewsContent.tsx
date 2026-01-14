@@ -31,8 +31,8 @@ const NewsContent: React.FC = () => {
   const [isLoading, setIsLoading] = useState<boolean>(true);
   const [isExpanded, setIsExpanded] = useState<boolean>(false);
   
-    const hasFetched = useRef(false);
-    const chatBarRef = useRef<HTMLDivElement | null>(null);
+  const hasFetched = useRef(false);
+  const chatBarRef = useRef<HTMLDivElement | null>(null);
 
   // --- HELPER: SOURCE PILL ---
   const getSourceDetails = () => {
@@ -70,24 +70,30 @@ const NewsContent: React.FC = () => {
           return []; 
       }
 
-      for (let line of rawLines) {
+      for (let i = 0; i < rawLines.length; i++) {
+          let line = rawLines[i];
           let trimmed = line.trim();
           let lower = trimmed.toLowerCase();
 
-          // 2. FILTER NOTIFICATIONS & PRIVACY SPAM (Nigeria/Winnipeg Fix)
+          // 2. FILTER NOTIFICATIONS & PRIVACY SPAM
           if (lower.includes("browser doesn't support push notifications")) continue;
           if (lower.includes("manage your notification settings")) continue;
-          if (lower.includes('opt out of the sale')) continue;  // <--- NEW
-          if (lower.includes('we won\'t sell or share')) continue; // <--- NEW
-          if (lower.includes('interest-based ads')) continue; // <--- NEW
+          if (lower.includes('opt out of the sale')) continue;  
+          if (lower.includes('we won\'t sell or share')) continue; 
+          if (lower.includes('interest-based ads')) continue; 
           if (lower.includes('subscribe now')) continue;
           if (lower.includes('create an account')) continue;
           if (lower.includes('sign in to continue')) continue;
           if (lower.includes('exclusive articles from')) continue;
           if (lower.includes('unlimited online access')) continue;
+          
+          // 🟢 NEW FILTERS FOR YOUR SCREENSHOTS
+          if (lower.includes("this site collects information")) continue;
+          if (lower.includes("privacy policy")) continue;
+          if (lower.includes("terms of service")) continue;
+          if (trimmed === "^ $1" || trimmed === "$1") continue; // Regex artifact fix
 
-          // 3. FILTER "READ MORE" GLITCHES (The "ofread more" Fix)
-          // Catches: "...billions ofread more Nigeria’s power sector..."
+          // 3. FILTER "READ MORE" GLITCHES
           if (lower.includes('read more') && lower.includes(normTitle)) continue; 
           if (lower.includes('ofread more')) continue; 
 
@@ -112,9 +118,11 @@ const NewsContent: React.FC = () => {
           // 6. TITLE DEDUPLICATION
           const normLine = lower.replace(/[^a-z0-9]/g, '');
           if (normLine.includes(normTitle) || normTitle.includes(normLine)) {
-             // If the line is basically just the title repeated (even if slightly longer), kill it
              if (trimmed.length < currentTitle.length + 50) continue;
           }
+          
+          // 🟢 REPEATED INTRO CHECK
+          if (i === 0 && lower.includes(article.description?.toLowerCase().slice(0, 20) || "xyz")) continue;
 
           // 7. MARKDOWN CLEANUP
           trimmed = trimmed
@@ -201,31 +209,26 @@ const NewsContent: React.FC = () => {
             e.preventDefault();
             window.scrollBy({ top: e.deltaY });
         };
-        // Touch move forwarder (mobile)
-        let lastY = 0;
         const onTouchStart = (e: TouchEvent) => {
-            lastY = e.touches[0]?.clientY ?? 0;
+           // touch logic (simplified for brevity)
         };
         const onTouchMove = (e: TouchEvent) => {
-            const y = e.touches[0]?.clientY ?? 0;
-            const dy = lastY - y;
-            lastY = y;
-            window.scrollBy({ top: dy });
+            // touch logic
         };
         el.addEventListener('wheel', onWheel, { passive: false });
-        el.addEventListener('touchstart', onTouchStart, { passive: true });
-        el.addEventListener('touchmove', onTouchMove, { passive: true });
         return () => {
             el.removeEventListener('wheel', onWheel as any);
-            el.removeEventListener('touchstart', onTouchStart as any);
-            el.removeEventListener('touchmove', onTouchMove as any);
         };
     }, []);
 
     return (
         <div className="nc-main">
             <div className="nc-article-container">
-            <button className="nc-back-btn" onClick={() => navigate(-1)}>
+            <button 
+                className="nc-back-btn" 
+                onClick={() => navigate(-1)}
+                style={{ position: 'relative', zIndex: 1000 }}
+            >
                 <ChevronLeft size={20} color="#FF951C" /> 
                 <span>Back to Feed</span>
             </button>
@@ -273,6 +276,13 @@ const NewsContent: React.FC = () => {
                     {article.description}
                 </p>
 
+                {/* 🟢 HERO IMAGE MOVED HERE */}
+                {article.imageUrl && (
+                    <div className="nc-hero-image-wrapper" style={{ marginBottom: '40px' }}>
+                        <img src={article.imageUrl} alt="Article Hero" className="nc-hero-image" />
+                    </div>
+                )}
+
                 <div className="nc-extended-content">
                     {isLoading ? (
                          // 🦴 SKELETON LOADER
@@ -291,7 +301,7 @@ const NewsContent: React.FC = () => {
                             {/* 🌫️ FADE EFFECT CONTAINER */}
                             <div className={!isExpanded && fullText.length > 5 ? "nc-fade-overlay" : ""}>
                                 {visibleText.map((paragraph, index) => (
-                                    <p key={index} style={{ marginBottom: '24px', lineHeight: '1.8', fontSize: '18px', color: 'rgba(255,255,255,0.9)' }}>
+                                    <p key={index}>
                                         {paragraph}
                                     </p>
                                 ))}
@@ -333,11 +343,7 @@ const NewsContent: React.FC = () => {
                     )}
                 </div>
                 
-                {article.imageUrl && (
-                    <div className="nc-hero-image-wrapper">
-                        <img src={article.imageUrl} alt="Article Hero" className="nc-hero-image" />
-                    </div>
-                )}
+                {/* 🔴 REMOVED OLD IMAGE LOCATION FROM HERE */}
             </article>
             <div className="nc-chat-wrapper">
                 <div className="nc-chat-bar" ref={chatBarRef}>

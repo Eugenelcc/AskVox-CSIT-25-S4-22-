@@ -203,9 +203,12 @@
 
 .nc-extended-content p {
     font-size: 18px;
-    line-height: 1.6;
+    line-height: 1.8; /* Slightly looser line height for easier scanning */
     color: rgba(255, 255, 255, 0.7);
-    margin-bottom: 16px;
+    
+    /* 🟢 READABILITY FIX: */
+    max-width: 800px; /* Limits line length */
+    margin: 0 auto 24px auto; /* Centers the text block & adds bottom spacing */
 }
 
 .nc-extended-content ul {
