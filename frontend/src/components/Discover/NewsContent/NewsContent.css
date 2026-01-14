@@ -1,7 +1,7 @@
 /* --- PAGE LAYOUT --- */
 .nc-page {
-    /* layout variables so sidebar + chat stay in sync */
-    --nc-sidebar-width: 320px;
+    /* 🟢 Keep Sidebar width at 300px to match RegisteredMain.tsx */
+    --nc-sidebar-width: 300px;
     --nc-side-gap: 24px;
 
     display: flex;
@@ -11,22 +11,19 @@
     color: #ffffff;
     font-family: 'ABeeZee', system-ui, sans-serif;
     overflow-x: hidden;
-    padding-left: 8px; /* small breathing space at far left */
+    padding-left: 8px; 
 }
 
-/* --- SIDEBAR --- */
+/* --- SIDEBAR (Legacy styles if used separately) --- */
 .nc-sidebar {
     width: var(--nc-sidebar-width);
     padding: 20px 22px;
     display: flex;
     flex-direction: column;
-    /* Keep the rail visible while scrolling */
     position: sticky;
     top: 16px;
     align-self: flex-start;
     min-height: calc(100vh - 32px);
-
-    /* Match the Figma glassy rail */
     background: linear-gradient(180deg, rgba(255,255,255,0.07) 0%, rgba(102,102,102,0.07) 100%);
     box-shadow: 0px 4px 32px 4px rgba(255,255,255,0.15);
     border-radius: 19px;
@@ -65,10 +62,21 @@
 .nc-main {
     flex: 1;
     position: relative;
-    padding: 32px 60px 140px; /* Bottom padding for chat bar */
+    padding: 32px 60px 160px; /* Bottom padding protects text from Chat Bar */
     width: 100%;
     max-width: none;
-    margin: 0; /* we center the inner container instead */
+    margin: 0; 
+    
+    /* 🔴 CRITICAL SCROLL FIXES BELOW: */
+    
+    /* 1. Force container to be as tall as the screen */
+    height: 100vh; 
+    
+    /* 2. Enable internal scrolling (Restored from visible to auto) */
+    overflow-y: auto; 
+    
+    /* 3. Ensure padding doesn't add to width/height calculations */
+    box-sizing: border-box; 
 }
 
 /* TOP RIGHT ACTIONS */
@@ -107,6 +115,10 @@
     cursor: pointer;
     margin-bottom: 32px;
     font-size: 14px;
+
+    /* 🟢 ADD THESE LINES TO FIX CLICKING: */
+    position: relative; 
+    z-index: 1000; /* Forces button above transparent headers or overlays */
 }
 
 /* --- HEADER & HEADLINE --- */
@@ -115,7 +127,6 @@
     line-height: 1.2;
     margin-bottom: 16px;
     
-    /* THE ORANGE GRADIENT TEXT */
     background: linear-gradient(90deg, #FF951C 0%, #E06C00 100%);
     -webkit-background-clip: text;
     -webkit-text-fill-color: transparent;
@@ -222,8 +233,8 @@
 
 /* Center the article content within the available space */
 .nc-article-container {
-    max-width: 980px; /* content column width */
-    margin: 0 auto;  /* center horizontally */
+    max-width: 1120px; 
+    margin: 0 auto;  
 }
 
 /* Ensure no unintended card/background around the text column */
@@ -240,22 +251,31 @@
 .nc-chat-wrapper {
     position: fixed;
     bottom: 32px;
-    /* Center it relative to the main content area roughly */
-    left: calc(var(--nc-sidebar-width) + var(--nc-side-gap) + 8px);
-    right: 40px;
+    
+    /* 1. Alignment: Start after Sidebar (300px) + Rail (80px) */
+    left: 380px; 
+    right: 0;
+    
     display: flex;
     justify-content: center;
     z-index: 50;
-    pointer-events: none; /* Let clicks pass through empty space */
+    pointer-events: none;
+    
+    /* 🟢 2. FIX: Add 60px padding to match the article text's padding */
+    padding: 0 60px; 
+    box-sizing: border-box;
 }
 
 .nc-chat-bar {
     pointer-events: auto;
     width: 100%;
-    max-width: 900px;
+    
+    /* 🟢 3. FIX: Match the article's max-width so they stop growing at the same point */
+    max-width: 1120px; 
+    
     background: #1B1A1A;
     border: 1px solid #FF951C;
-    border-radius: 100px; /* Full rounded pill */
+    border-radius: 100px; 
     padding: 8px 12px 8px 24px;
     display: flex;
     align-items: center;
@@ -347,8 +367,8 @@
     bottom: 0;
     left: 0;
     width: 100%;
-    height: 150px; /* How tall the fade is */
-    /* Fades from Transparent to Black (Matches your background) */
+    height: 150px; 
+    /* Fades from Transparent to Black */
     background: linear-gradient(to bottom, rgba(0,0,0,0) 0%, #000000 100%); 
     pointer-events: none;
 }

@@ -202,7 +202,9 @@ export default function Dashboard({
     if (tab === "discover") {
       setActiveTab("discover");
       setSidebarOpen(true);
-      if (location.pathname !== "/discover") navigate("/discover");
+     if (!location.pathname.startsWith("/discover")) {
+         navigate("/discover");
+      }
       return;
     }
 
@@ -1034,6 +1036,7 @@ export default function Dashboard({
           setDiscoverCategory(c);
           setActiveTab("discover");
           setSidebarOpen(false);
+          if (location.pathname !== "/discover") navigate("/discover");
         }}
       />
       {/* ✅ SmartRec sidebar overlay */}

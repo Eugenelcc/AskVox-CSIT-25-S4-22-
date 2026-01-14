@@ -2,13 +2,6 @@ import React, { useEffect, useState, useRef } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
 import { Heart, Share2, Mic, Puzzle, Send, ChevronLeft, ChevronDown, ChevronUp } from 'lucide-react';
 import './NewsContent.css';
-import NavRail from '../../Sidebar/NavRail';
-import DiscoverSidebar from '../../Sidebar/Discover_Sidebar';
-
-interface NewsContentProps {
-    withNavOffset?: boolean; // Parent renders NavRail/sidebars; only offset content
-    offsetLeft?: number;     // Exact left offset (px) of content area when embedded
-}
 
 type ArticleViewModel = {
   title: string;
@@ -27,28 +20,19 @@ const fallbackArticle: ArticleViewModel = {
   source: 'AskVox News',
 };
 
-const NewsContent: React.FC<NewsContentProps> = ({ withNavOffset, offsetLeft }) => {
+const NewsContent: React.FC = () => {
   const navigate = useNavigate();
   const { state } = useLocation();
   const article: ArticleViewModel = (state?.article as ArticleViewModel) || fallbackArticle;
   const releasedLabel = typeof article.releasedMinutes === 'number' ? `Released ${article.releasedMinutes} minutes ago` : 'Just released';
-
-  // --- LAYOUT STATE ---
-  const [activeTab, setActiveTab] = React.useState<string>('discover');
-  const [isSidebarOpen, setSidebarOpen] = React.useState<boolean>(true);
 
   // --- CONTENT STATE ---
   const [fullText, setFullText] = useState<string[]>([]);
   const [isLoading, setIsLoading] = useState<boolean>(true);
   const [isExpanded, setIsExpanded] = useState<boolean>(false);
   
-  const hasFetched = useRef(false);
-
-    const NAV_RAIL_WIDTH = 80; 
-    const DISCOVER_WIDTH = isSidebarOpen ? 300 : 0; 
-    const INTERNAL_GAP = 24;
-    const internalLeft = NAV_RAIL_WIDTH + DISCOVER_WIDTH + INTERNAL_GAP;
-    const contentLeft = withNavOffset ? (offsetLeft ?? NAV_RAIL_WIDTH) : internalLeft;
+    const hasFetched = useRef(false);
+    const chatBarRef = useRef<HTMLDivElement | null>(null);
 
   // --- HELPER: SOURCE PILL ---
   const getSourceDetails = () => {
@@ -209,33 +193,38 @@ const NewsContent: React.FC<NewsContentProps> = ({ withNavOffset, offsetLeft }) 
 
   const visibleText = isExpanded ? fullText : fullText.slice(0, 5);
 
-  return (
-        <div className="nc-page">
-            {!withNavOffset && (
-                <>
-                    <NavRail
-                        activeTab={activeTab}
-                        onTabClick={(tab) => {
-                            setActiveTab(tab);
-                            if (tab === 'discover') setSidebarOpen(true);
-                            if (tab === 'chats') navigate('/reguserhome');
-                        }}
-                        onOpenSidebar={(tab) => setSidebarOpen(tab === 'discover')}
-                    />
+    // Allow scrolling while the cursor is over the fixed chat bar
+    useEffect(() => {
+        const el = chatBarRef.current;
+        if (!el) return;
+        const onWheel = (e: WheelEvent) => {
+            e.preventDefault();
+            window.scrollBy({ top: e.deltaY });
+        };
+        // Touch move forwarder (mobile)
+        let lastY = 0;
+        const onTouchStart = (e: TouchEvent) => {
+            lastY = e.touches[0]?.clientY ?? 0;
+        };
+        const onTouchMove = (e: TouchEvent) => {
+            const y = e.touches[0]?.clientY ?? 0;
+            const dy = lastY - y;
+            lastY = y;
+            window.scrollBy({ top: dy });
+        };
+        el.addEventListener('wheel', onWheel, { passive: false });
+        el.addEventListener('touchstart', onTouchStart, { passive: true });
+        el.addEventListener('touchmove', onTouchMove, { passive: true });
+        return () => {
+            el.removeEventListener('wheel', onWheel as any);
+            el.removeEventListener('touchstart', onTouchStart as any);
+            el.removeEventListener('touchmove', onTouchMove as any);
+        };
+    }, []);
 
-                    <DiscoverSidebar
-                        isOpen={isSidebarOpen && activeTab === 'discover'}
-                        onClose={() => setSidebarOpen(false)}
-                        onCategorySelect={() => navigate('/discover')}
-                    />
-                </>
-            )}
-
-    <main className="nc-main" style={{ paddingLeft: contentLeft }}>
-        
-         
-
-        <div className="nc-article-container">
+    return (
+        <div className="nc-main">
+            <div className="nc-article-container">
             <button className="nc-back-btn" onClick={() => navigate(-1)}>
                 <ChevronLeft size={20} color="#FF951C" /> 
                 <span>Back to Feed</span>
@@ -350,9 +339,8 @@ const NewsContent: React.FC<NewsContentProps> = ({ withNavOffset, offsetLeft }) 
                     </div>
                 )}
             </article>
-
-            <div className="nc-chat-wrapper" style={{ left: `${contentLeft}px` }}>
-                <div className="nc-chat-bar">
+            <div className="nc-chat-wrapper">
+                <div className="nc-chat-bar" ref={chatBarRef}>
                     <div className="nc-chat-input-group">
                         <span className="nc-paperclip-icon">📎</span>
                         <input 
@@ -368,9 +356,7 @@ const NewsContent: React.FC<NewsContentProps> = ({ withNavOffset, offsetLeft }) 
                     </div>
                 </div>
             </div>
-
-        </div>
-      </main>
+      </div>
     </div>
   );
 };
