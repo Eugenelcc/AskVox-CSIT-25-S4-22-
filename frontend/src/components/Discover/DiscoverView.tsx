@@ -1,6 +1,6 @@
 import React, { useEffect, useMemo, useState, useCallback } from 'react';
 import './DiscoverNews.css';
-import { Globe, TrendingUp, ChevronDown, RefreshCw } from 'lucide-react'; // <--- 1. IMPORT REFRESH ICON
+import { Globe, TrendingUp, ChevronDown, RefreshCw } from 'lucide-react';
 import NewsCard from './NewsCard';
 import RightWidgetPanel from './RightWidgetPanel';
 import type { WeatherSummary, Standing, MatchItem } from './RightWidgetPanel';
@@ -66,21 +66,21 @@ const DiscoverView: React.FC<DiscoverViewProps> = ({ withNavOffset, category, fe
 
     // --- 2. SHARED FETCH FUNCTION (WITH DEBUG LOGS) ---
     const loadData = useCallback(() => {
-        console.log("🚀 FRONTEND: loadData() triggered!"); // <--- DEBUG
+        console.log("🚀 FRONTEND: loadData() triggered!");
         setIsLoading(true);
         const targetCategory = category || 'Trending';
 
-        console.log(`🚀 FRONTEND: Calling fetchNews('${targetCategory}')...`); // <--- DEBUG
+        console.log(`🚀 FRONTEND: Calling fetchNews('${targetCategory}')...`);
 
         fetchNews(targetCategory)
             .then((data) => {
-                console.log("✅ FRONTEND: Data received!", data); // <--- DEBUG
+                console.log("✅ FRONTEND: Data received!", data);
                 const articles = Array.isArray(data) ? data : [];
                 setRawArticles(articles);
                 setDisplayedArticles(sortArticles(articles, trend)); 
             })
             .catch((err) => {
-                console.error("❌ FRONTEND ERROR:", err); // <--- DEBUG
+                console.error("❌ FRONTEND ERROR:", err);
                 setRawArticles([]);
                 setDisplayedArticles([]);
             })
@@ -96,7 +96,7 @@ const DiscoverView: React.FC<DiscoverViewProps> = ({ withNavOffset, category, fe
 
     // 4. Refresh Button Handler
     const onManualRefresh = () => {
-        console.log("🖱️ BUTTON CLICKED!"); // <--- DEBUG
+        console.log("🖱️ BUTTON CLICKED!");
         loadData();
     };
 
@@ -124,7 +124,8 @@ const DiscoverView: React.FC<DiscoverViewProps> = ({ withNavOffset, category, fe
     const feedSets = useMemo(() => {
         if (!displayedArticles || displayedArticles.length === 0) return [];
 
-        const sets: Array<{ hero: CardData; standards: CardData[]; wide: CardData }> = [];
+        // ✅ FIX 1: Make 'wide' optional with '?' so we don't force it
+        const sets: Array<{ hero: CardData; standards: CardData[]; wide?: CardData }> = [];
         
         for (let i = 0; i < displayedArticles.length; i += 5) {
             const chunk = displayedArticles.slice(i, i + 5);
@@ -132,13 +133,17 @@ const DiscoverView: React.FC<DiscoverViewProps> = ({ withNavOffset, category, fe
 
             const h = toCard(chunk[0], 'hero');
             const std = chunk.slice(1, 4).map((a) => toCard(a, 'standard'));
-            const wArticle = chunk[4] ?? (chunk.length > 4 ? chunk[4] : null);
+            
+            // Get the 5th item (index 4) if it exists
+            const wArticle = chunk[4]; 
             
             if (wArticle) {
                  const w = toCard(wArticle, 'wide');
                  sets.push({ hero: h, standards: std, wide: w });
             } else {
-                 sets.push({ hero: h, standards: std, wide: h }); 
+                 // ✅ FIX 2: If no 5th item, simply do NOT add a 'wide' property.
+                 // This prevents the code from duplicating 'h' (hero) into the 'wide' slot.
+                 sets.push({ hero: h, standards: std }); 
             }
         }
         return sets;
@@ -230,6 +235,7 @@ const DiscoverView: React.FC<DiscoverViewProps> = ({ withNavOffset, category, fe
                                 ))}
                             </div>
                             <div style={{ marginTop: 24 }}>
+                                {/* ✅ FIX 3: Only render if 'wide' exists */}
                                 {set.wide && <NewsCard {...set.wide} />}
                             </div>
                         </div>
