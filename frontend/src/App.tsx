@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react'
 import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom'
 import { supabase } from './supabaseClient'
 import type { Session } from '@supabase/supabase-js'
+
 import Login from './pages/auth/Login'
 import Register from './pages/auth/Register'
 import ConfirmedPage from './pages/auth/Confirmed'
@@ -10,12 +11,14 @@ import RegisterMain from './pages/RegisteredMain'
 import PaidMain from './pages/PaidMain'
 import UnregisteredMain from './pages/UnregisteredMain'
 import Upgrade from './pages/subscription/subscription_detail'
-import AccountDetails from './pages/settings/AccountDetails'; 
+import AccountDetails from './pages/settings/AccountDetails'
 import ForgotPassword from './pages/auth/ForgotPassword'
 import ResetPassword from './pages/auth/ResetPassword'
 import LogoutSuccess from './pages/auth/LogoutSuccess'
-
 import Payment from './pages/subscription/payment'
+
+import PlatformAdminDashboard from './pages/PlatformAdmin/dashboard'
+import FlaggedResponsePage from './pages/PlatformAdmin/FlaggedResponse' // ✅ 추가
 
 function App() {
   const [session, setSession] = useState<Session | null>(null)
@@ -59,7 +62,13 @@ function App() {
     return () => { cancelled = true; subscription.unsubscribe() }
   }, [])
 
-  if (loading) return <div style={{color: 'white', textAlign: 'center', marginTop: '50vh'}}>Loading AskVox...</div>
+  if (loading) {
+    return (
+      <div style={{ color: 'white', textAlign: 'center', marginTop: '50vh' }}>
+        Loading AskVox...
+      </div>
+    )
+  }
 
   return (
     <BrowserRouter>
@@ -73,35 +82,52 @@ function App() {
               : <UnregisteredMain session={session} />
           }
         />
-        
+
         {/* Auth Routes: Redirect to Dashboard if already logged in */}
-        <Route path="/login" element={!session ? <Login /> : <Navigate to={isPaid ? "/paiduserhome" : "/reguserhome"} />} />
-        <Route path="/register" element={!session ? <Register /> : <Navigate to={isPaid ? "/paiduserhome" : "/reguserhome"} />} />
+        <Route
+          path="/login"
+          element={!session ? <Login /> : <Navigate to={isPaid ? "/paiduserhome" : "/reguserhome"} />}
+        />
+        <Route
+          path="/register"
+          element={!session ? <Register /> : <Navigate to={isPaid ? "/paiduserhome" : "/reguserhome"} />}
+        />
         <Route path="/auth/confirmed" element={<ConfirmedPage />} />
         <Route path="/auth/check-email" element={<CheckEmailPage />} />
-        
+
         {/* Protected Route */}
-        <Route 
-          path="/reguserhome" 
-          element={session ? (isPaid ? <PaidMain session={session} /> : <RegisterMain session={session} />) : <UnregisteredMain session={session} />}
+        <Route
+          path="/reguserhome"
+          element={
+            session
+              ? (isPaid ? <PaidMain session={session} /> : <RegisterMain session={session} />)
+              : <UnregisteredMain session={session} />
+          }
         />
-        <Route 
-          path="/paiduserhome" 
+        <Route
+          path="/paiduserhome"
           element={session ? <PaidMain session={session} /> : <Navigate to="/login" />}
         />
-        <Route 
+        <Route
           path="/upgrade"
           element={session ? <Upgrade /> : <Navigate to="/login" />}
         />
-        <Route path="/settings/account" element={session ? <AccountDetails session={session} /> : <Navigate to="/login" />} />
+        <Route
+          path="/settings/account"
+          element={session ? <AccountDetails session={session} /> : <Navigate to="/login" />}
+        />
         <Route path="/forgot-password" element={<ForgotPassword />} />
         <Route path="/reset-password" element={<ResetPassword />} />
         <Route path="/logout-success" element={<LogoutSuccess />} />
 
-        <Route 
+        <Route
           path="/payment"
           element={session ? <Payment /> : <Navigate to="/login" />}
         />
+
+        {/* ✅ Platform Admin Routes */}
+        <Route path="/platformadmin/dashboard" element={<PlatformAdminDashboard />} />
+        <Route path="/platformadmin/flagged" element={<FlaggedResponsePage />} /> {/* ✅ 추가 */}
       </Routes>
     </BrowserRouter>
   )

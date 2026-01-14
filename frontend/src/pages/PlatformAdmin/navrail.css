@@ -1,0 +1,31 @@
+.av-rail__settingsBtn {
+    position: absolute;
+    left: 50%;
+    bottom: 28px; /* 하단 여백 */
+    transform: translateX(-50%);
+  
+    width: 44px;
+    height: 44px;
+  
+    background: transparent;
+    border: none;
+    padding: 0;
+    cursor: pointer;
+  
+    display: flex;
+    align-items: center;
+    justify-content: center;
+  }
+  
+  .av-rail__settingsIcon {
+    width: 40px;   /* dashboard 아이콘 크기랑 맞추고 싶으면 여기만 조절 */
+    height: 40px;
+    object-fit: contain;
+    display: block;
+  }
+  
+  /* 선택: active 상태 시 살짝 강조(원하지 않으면 삭제) */
+  .av-rail__settingsBtn.is-active {
+    filter: drop-shadow(0 0 8px rgba(255, 149, 28, 0.8));
+  }
+  
