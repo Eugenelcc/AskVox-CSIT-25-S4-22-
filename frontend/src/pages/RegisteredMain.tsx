@@ -1158,11 +1158,13 @@ export default function Dashboard({
     />
 
    <Quiz
-    open={isQuizOpen}
-    onClose={() => setIsQuizOpen(false)}
-    messages={messages}
-    userId={session.user.id}
-  />
+  open={isQuizOpen}
+  onClose={() => setIsQuizOpen(false)}
+  userId={session.user.id}
+  sessionId={activeSessionId}
+  messages={messages}
+/>
+
 
   </div>
 )}

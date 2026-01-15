@@ -1,5 +1,4 @@
-
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { X } from "lucide-react";
 import "./Quiz.css";
 import type { ChatMessage } from "../../types/database";
@@ -19,19 +18,28 @@ type QuizQuestion = {
   answerIndex: number; // index of correct option
 };
 
+type GenerateQuizRes = {
+  title: string;
+  questions: QuizQuestion[];
+};
+
+const API_BASE = "http://localhost:8000";
+
 export default function Quiz({
   open,
   onClose,
-  messages,
   userId,
-}: {
+  sessionId,
+  messages,
+}: 
+{
   open: boolean;
   onClose: () => void;
-  messages: ChatMessage[];
   userId: string;
-}) {
-
-
+  sessionId: string | null;
+  messages: ChatMessage[];
+}) 
+{
   // ---------- Choose screen state ----------
   const [mode, setMode] = useState<QuizMode>("A");
   const [topic, setTopic] = useState("");
@@ -54,16 +62,21 @@ export default function Quiz({
   // Track answers across all questions (so results can be computed later)
   const [userAnswers, setUserAnswers] = useState<Array<number | null>>([]);
 
+  // Loading/Error (for backend call)
+  const [isGenerating, setIsGenerating] = useState(false);
+  const [genError, setGenError] = useState<string | null>(null);
+
   // Current question (safe)
   const currentQ = questions[qIndex];
 
-  // Compute title (NO HOOKS — prevents white screen crash)
-  const computedTitle =
-    mode === "A"
-      ? "Quiz from Last Prompt"
-      : mode === "B"
-      ? `Quiz: ${topic.trim() || "Selected Topic"}`
-      : "Quiz from Current Discussion";
+  // Mode A: last user message (for UX check only)
+  const lastUserPrompt = useMemo(() => {
+    return (
+      [...(messages ?? [])]
+        .reverse()
+        .find((m) => m.senderId === userId)?.content?.trim() || ""
+    );
+  }, [messages, userId]);
 
   // Reset EVERYTHING each time modal opens
   useEffect(() => {
@@ -79,75 +92,106 @@ export default function Quiz({
     setIsSubmitted(false);
     setScore({ correct: 0, wrong: 0 });
     setUserAnswers([]);
+    setIsGenerating(false);
+    setGenError(null);
   }, [open]);
 
   // If not open, render nothing
   if (!open) return null;
 
+  const startQuizRun = (title: string, qs: QuizQuestion[]) => {
+    setQuizTitle(title);
+    setQuestions(qs);
+    setUserAnswers(new Array(qs.length).fill(null));
+    setQIndex(0);
+    setSelectedIndex(null);
+    setIsSubmitted(false);
+    setScore({ correct: 0, wrong: 0 });
+    setStage("run");
+  };
+
   /**
    * Generate quiz:
-   * For now: fake questions (later replace with backend)
+   * Mode A only (backend)
    */
-  // ✅ Mode A: get last user message from the chat
-const lastUserPrompt =
-  [...messages]
-    .reverse()
-    .find((m) => m.senderId === userId)?.content?.trim() || "";
+  const handleGenerate = async () => {
+  setGenError(null);
 
-const handleGenerate = () => {
-  // ✅ Only Mode A for now
-  if (mode !== "A") {
-    alert("For now we are only building Mode A 🙂");
+  // ✅ Mode B needs a topic
+  if (mode === "B" && !topic.trim()) {
+    alert("Please enter a topic for Mode B 🙂");
     return;
   }
 
-  if (!lastUserPrompt) {
-    alert("No prompt found yet. Ask something in chat first.");
+  // ✅ Mode C needs a sessionId (whole chat)
+  if (mode === "C" && !sessionId) {
+    alert("Mode C needs a chat session. Open/start a chat first 🙂");
     return;
   }
 
-  console.log("✅ Mode A last prompt:", lastUserPrompt);
+  // ✅ Optional UX guard:
+  // Mode A expects you to have at least one prompt in the chat
+  if (mode === "A" && !lastUserPrompt) {
+    alert("No prompt found yet. Ask something in chat first, then generate quiz.");
+    return;
+  }
 
-  setQuizTitle("Quiz from Last Prompt");
+  try {
+    setIsGenerating(true);
 
-  // TEMP: still fake questions, but now “linked” to prompt text
-  const fake: QuizQuestion[] = [
-    {
-      id: "q1",
-      q: `Based on your prompt: "${lastUserPrompt}", what is the main topic?`,
-      options: ["Topic A", "Topic B", "Topic C", "Topic D"],
-      answerIndex: 0,
-    },
-    {
-      id: "q2",
-      q: `Which of these would be a good follow-up question to: "${lastUserPrompt}"?`,
-      options: ["Follow-up 1", "Follow-up 2", "Follow-up 3", "Follow-up 4"],
-      answerIndex: 0,
-    },
-    {
-      id: "q3",
-      q: `What is one key keyword from your prompt?`,
-      options: ["Keyword 1", "Keyword 2", "Keyword 3", "Keyword 4"],
-      answerIndex: 0,
-    },
-  ];
+    const res = await fetch(`${API_BASE}/quiz/generate`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        mode, // ✅ A / B / C
+        user_id: userId,
+        session_id: sessionId, // ✅ used by A(optional) + C(required)
+        topic: mode === "B" ? topic.trim() : null, // ✅ used by B only
+        num_questions: 3,
+      }),
+    });
 
-  setQuestions(fake);
-  setUserAnswers(new Array(fake.length).fill(null));
-  setQIndex(0);
-  setSelectedIndex(null);
-  setIsSubmitted(false);
-  setScore({ correct: 0, wrong: 0 });
-  setStage("run");
+    const data = (await res.json().catch(() => ({}))) as Partial<GenerateQuizRes> & {
+      detail?: string;
+    };
+
+    if (!res.ok) {
+      throw new Error(data?.detail || `Quiz API failed (${res.status})`);
+    }
+
+    const title = String(data.title || "Quiz");
+    const qs = Array.isArray(data.questions) ? data.questions : [];
+
+    if (!qs.length) {
+      throw new Error("Quiz API returned no questions.");
+    }
+
+    // ✅ Basic validation/cleanup (prevents weird model outputs)
+    const cleaned: QuizQuestion[] = qs
+      .map((q, i) => ({
+        id: String(q.id || `q${i + 1}`),
+        q: String(q.q || "").trim(),
+        options: Array.isArray(q.options) ? q.options.map(String) : [],
+        answerIndex: typeof q.answerIndex === "number" ? q.answerIndex : 0,
+      }))
+      .filter((q) => q.q && q.options.length === 4 && q.answerIndex >= 0 && q.answerIndex <= 3);
+
+    if (!cleaned.length) {
+      throw new Error("Quiz API returned invalid question format.");
+    }
+
+    startQuizRun(title, cleaned);
+  } catch (e: any) {
+    console.error("❌ Quiz generate failed:", e);
+    setGenError(e?.message || "Failed to generate quiz.");
+  } finally {
+    setIsGenerating(false);
+  }
 };
-  
 
   /**
    * Submit current question:
-   * - lock the answer
-   * - update score
-   * - save the chosen option
-   */
+  */
   const handleSubmitAnswer = () => {
     if (!currentQ) return;
     if (selectedIndex === null) return;
@@ -172,9 +216,7 @@ const handleGenerate = () => {
 
   /**
    * Next:
-   * - move to next question
-   * - if finished -> results screen
-   */
+  */
   const handleNext = () => {
     const next = qIndex + 1;
     if (next >= questions.length) {
@@ -188,11 +230,7 @@ const handleGenerate = () => {
 
   /**
    * Option styling state:
-   * - Before submit: only selected = grey + outline
-   * - After submit:
-   *    - correct = green
-   *    - chosen wrong = red
-   */
+  */
   const getOptionState = (optIndex: number) => {
     if (!currentQ) return "default";
 
@@ -215,15 +253,15 @@ const handleGenerate = () => {
 
   const strengths =
     total > 0 && correctCount / total >= 0.7
-      ? ["Understanding of key conflict concepts", "Good factual recall"]
+      ? ["Good recall", "Strong understanding"]
       : ["Good effort — keep practicing"];
 
   const weakAreas =
     total > 0 && wrongCount / total >= 0.3
-      ? ["Review the missed questions", "Practice more topic-based quizzes"]
+      ? ["Review missed questions", "Try another quiz for reinforcement"]
       : ["Minor gaps — quick revision helps"];
 
-  const recommended = "Generate an additional quiz to reinforce weak topics.";
+  const recommended = "Generate another quiz to reinforce weak areas.";
 
   return (
     <div className="av-quizOverlay" onMouseDown={onClose}>
@@ -232,12 +270,7 @@ const handleGenerate = () => {
         <div className="av-quizHeader">
           <div className="av-quizHeaderTitle">Quiz</div>
 
-          <button
-            className="av-quizClose"
-            onClick={onClose}
-            type="button"
-            aria-label="Close"
-          >
+          <button className="av-quizClose" onClick={onClose} type="button" aria-label="Close">
             <X size={18} />
           </button>
         </div>
@@ -288,13 +321,21 @@ const handleGenerate = () => {
                 </div>
               )}
 
+              {/* small status box */}
+              {genError && (
+                <div style={{ marginTop: 10, opacity: 0.85, fontSize: 13 }}>
+                  ❌ {genError}
+                </div>
+              )}
+
               <div className="av-chooseActions">
                 <button
                   className="av-generateBtn"
                   type="button"
                   onClick={handleGenerate}
+                  disabled={isGenerating}
                 >
-                  Generate Quiz
+                  {isGenerating ? "Generating..." : "Generate Quiz"}
                 </button>
               </div>
             </div>
@@ -340,9 +381,7 @@ const handleGenerate = () => {
                           setSelectedIndex(idx);
                         }}
                       >
-                        <span className="av-optLetter">
-                          {String.fromCharCode(65 + idx)}
-                        </span>
+                        <span className="av-optLetter">{String.fromCharCode(65 + idx)}</span>
                         <span className="av-optText">{opt}</span>
                       </button>
                     );
@@ -352,11 +391,7 @@ const handleGenerate = () => {
 
               {/* Bottom buttons */}
               <div className="av-runActions">
-                <button
-                  type="button"
-                  className="av-backBtn"
-                  onClick={() => setStage("choose")}
-                >
+                <button type="button" className="av-backBtn" onClick={() => setStage("choose")}>
                   New Quiz
                 </button>
 
@@ -370,11 +405,7 @@ const handleGenerate = () => {
                     Submit
                   </button>
                 ) : (
-                  <button
-                    type="button"
-                    className="av-nextBtn"
-                    onClick={handleNext}
-                  >
+                  <button type="button" className="av-nextBtn" onClick={handleNext}>
                     Next
                   </button>
                 )}
@@ -432,19 +463,11 @@ const handleGenerate = () => {
                     Retry
                   </button>
 
-                  <button
-                    type="button"
-                    className="av-secondaryBtn"
-                    onClick={() => setStage("choose")}
-                  >
+                  <button type="button" className="av-secondaryBtn" onClick={() => setStage("choose")}>
                     New Quiz
                   </button>
 
-                  <button
-                    type="button"
-                    className="av-secondaryBtn"
-                    onClick={onClose}
-                  >
+                  <button type="button" className="av-secondaryBtn" onClick={onClose}>
                     End Quiz
                   </button>
                 </div>
@@ -456,3 +479,4 @@ const handleGenerate = () => {
     </div>
   );
 }
+
