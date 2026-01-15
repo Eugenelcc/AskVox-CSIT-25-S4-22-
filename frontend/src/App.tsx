@@ -142,14 +142,14 @@ function App() {
           path="/discover"
           element={session ? <RegisterMain session={session} paid={isPaid} initialTab="discover" /> : <Navigate to="/login" />}
         />
-        {/* Discover → Detailed News Content */}
+        {/* Discover → Detailed News Content (render within RegisteredMain to avoid layout flash) */}
         <Route
           path="/discover/news/:id"
-          element={session ? <NewsContent /> : <Navigate to="/login" />}
+          element={session ? <RegisterMain session={session} paid={isPaid} initialTab="discover" /> : <Navigate to="/login" />}
         />
         <Route
           path="/discover/news"
-          element={session ? <NewsContent /> : <Navigate to="/login" />}
+          element={session ? <RegisterMain session={session} paid={isPaid} initialTab="discover" /> : <Navigate to="/login" />}
         />
         
         <Route 

@@ -2,13 +2,6 @@ import React, { useEffect, useState, useRef } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
 import { Heart, Share2, Mic, Puzzle, Send, ChevronLeft, ChevronDown, ChevronUp } from 'lucide-react';
 import './NewsContent.css';
-import NavRail from '../../Sidebar/NavRail';
-import DiscoverSidebar from '../../Sidebar/Discover_Sidebar';
-
-interface NewsContentProps {
-    withNavOffset?: boolean; // Parent renders NavRail/sidebars; only offset content
-    offsetLeft?: number;     // Exact left offset (px) of content area when embedded
-}
 
 type ArticleViewModel = {
   title: string;
@@ -27,15 +20,11 @@ const fallbackArticle: ArticleViewModel = {
   source: 'AskVox News',
 };
 
-const NewsContent: React.FC<NewsContentProps> = ({ withNavOffset, offsetLeft }) => {
+const NewsContent: React.FC = () => {
   const navigate = useNavigate();
   const { state } = useLocation();
   const article: ArticleViewModel = (state?.article as ArticleViewModel) || fallbackArticle;
   const releasedLabel = typeof article.releasedMinutes === 'number' ? `Released ${article.releasedMinutes} minutes ago` : 'Just released';
-
-  // --- LAYOUT STATE ---
-  const [activeTab, setActiveTab] = React.useState<string>('discover');
-  const [isSidebarOpen, setSidebarOpen] = React.useState<boolean>(true);
 
   // --- CONTENT STATE ---
   const [fullText, setFullText] = useState<string[]>([]);
@@ -43,12 +32,7 @@ const NewsContent: React.FC<NewsContentProps> = ({ withNavOffset, offsetLeft }) 
   const [isExpanded, setIsExpanded] = useState<boolean>(false);
   
   const hasFetched = useRef(false);
-
-    const NAV_RAIL_WIDTH = 80; 
-    const DISCOVER_WIDTH = isSidebarOpen ? 300 : 0; 
-    const INTERNAL_GAP = 24;
-    const internalLeft = NAV_RAIL_WIDTH + DISCOVER_WIDTH + INTERNAL_GAP;
-    const contentLeft = withNavOffset ? (offsetLeft ?? NAV_RAIL_WIDTH) : internalLeft;
+  const chatBarRef = useRef<HTMLDivElement | null>(null);
 
   // --- HELPER: SOURCE PILL ---
   const getSourceDetails = () => {
@@ -86,24 +70,30 @@ const NewsContent: React.FC<NewsContentProps> = ({ withNavOffset, offsetLeft }) 
           return []; 
       }
 
-      for (let line of rawLines) {
+      for (let i = 0; i < rawLines.length; i++) {
+          let line = rawLines[i];
           let trimmed = line.trim();
           let lower = trimmed.toLowerCase();
 
-          // 2. FILTER NOTIFICATIONS & PRIVACY SPAM (Nigeria/Winnipeg Fix)
+          // 2. FILTER NOTIFICATIONS & PRIVACY SPAM
           if (lower.includes("browser doesn't support push notifications")) continue;
           if (lower.includes("manage your notification settings")) continue;
-          if (lower.includes('opt out of the sale')) continue;  // <--- NEW
-          if (lower.includes('we won\'t sell or share')) continue; // <--- NEW
-          if (lower.includes('interest-based ads')) continue; // <--- NEW
+          if (lower.includes('opt out of the sale')) continue;  
+          if (lower.includes('we won\'t sell or share')) continue; 
+          if (lower.includes('interest-based ads')) continue; 
           if (lower.includes('subscribe now')) continue;
           if (lower.includes('create an account')) continue;
           if (lower.includes('sign in to continue')) continue;
           if (lower.includes('exclusive articles from')) continue;
           if (lower.includes('unlimited online access')) continue;
+          
+          // 🟢 NEW FILTERS FOR YOUR SCREENSHOTS
+          if (lower.includes("this site collects information")) continue;
+          if (lower.includes("privacy policy")) continue;
+          if (lower.includes("terms of service")) continue;
+          if (trimmed === "^ $1" || trimmed === "$1") continue; // Regex artifact fix
 
-          // 3. FILTER "READ MORE" GLITCHES (The "ofread more" Fix)
-          // Catches: "...billions ofread more Nigeria’s power sector..."
+          // 3. FILTER "READ MORE" GLITCHES
           if (lower.includes('read more') && lower.includes(normTitle)) continue; 
           if (lower.includes('ofread more')) continue; 
 
@@ -128,9 +118,11 @@ const NewsContent: React.FC<NewsContentProps> = ({ withNavOffset, offsetLeft }) 
           // 6. TITLE DEDUPLICATION
           const normLine = lower.replace(/[^a-z0-9]/g, '');
           if (normLine.includes(normTitle) || normTitle.includes(normLine)) {
-             // If the line is basically just the title repeated (even if slightly longer), kill it
              if (trimmed.length < currentTitle.length + 50) continue;
           }
+          
+          // 🟢 REPEATED INTRO CHECK
+          if (i === 0 && lower.includes(article.description?.toLowerCase().slice(0, 20) || "xyz")) continue;
 
           // 7. MARKDOWN CLEANUP
           trimmed = trimmed
@@ -209,34 +201,34 @@ const NewsContent: React.FC<NewsContentProps> = ({ withNavOffset, offsetLeft }) 
 
   const visibleText = isExpanded ? fullText : fullText.slice(0, 5);
 
-  return (
-        <div className="nc-page">
-            {!withNavOffset && (
-                <>
-                    <NavRail
-                        activeTab={activeTab}
-                        onTabClick={(tab) => {
-                            setActiveTab(tab);
-                            if (tab === 'discover') setSidebarOpen(true);
-                            if (tab === 'chats') navigate('/reguserhome');
-                        }}
-                        onOpenSidebar={(tab) => setSidebarOpen(tab === 'discover')}
-                    />
+    // Allow scrolling while the cursor is over the fixed chat bar
+    useEffect(() => {
+        const el = chatBarRef.current;
+        if (!el) return;
+        const onWheel = (e: WheelEvent) => {
+            e.preventDefault();
+            window.scrollBy({ top: e.deltaY });
+        };
+        const onTouchStart = (e: TouchEvent) => {
+           // touch logic (simplified for brevity)
+        };
+        const onTouchMove = (e: TouchEvent) => {
+            // touch logic
+        };
+        el.addEventListener('wheel', onWheel, { passive: false });
+        return () => {
+            el.removeEventListener('wheel', onWheel as any);
+        };
+    }, []);
 
-                    <DiscoverSidebar
-                        isOpen={isSidebarOpen && activeTab === 'discover'}
-                        onClose={() => setSidebarOpen(false)}
-                        onCategorySelect={() => navigate('/discover')}
-                    />
-                </>
-            )}
-
-    <main className="nc-main" style={{ paddingLeft: contentLeft }}>
-        
-         
-
-        <div className="nc-article-container">
-            <button className="nc-back-btn" onClick={() => navigate(-1)}>
+    return (
+        <div className="nc-main">
+            <div className="nc-article-container">
+            <button 
+                className="nc-back-btn" 
+                onClick={() => navigate(-1)}
+                style={{ position: 'relative', zIndex: 1000 }}
+            >
                 <ChevronLeft size={20} color="#FF951C" /> 
                 <span>Back to Feed</span>
             </button>
@@ -284,6 +276,13 @@ const NewsContent: React.FC<NewsContentProps> = ({ withNavOffset, offsetLeft }) 
                     {article.description}
                 </p>
 
+                {/* 🟢 HERO IMAGE MOVED HERE */}
+                {article.imageUrl && (
+                    <div className="nc-hero-image-wrapper" style={{ marginBottom: '40px' }}>
+                        <img src={article.imageUrl} alt="Article Hero" className="nc-hero-image" />
+                    </div>
+                )}
+
                 <div className="nc-extended-content">
                     {isLoading ? (
                          // 🦴 SKELETON LOADER
@@ -302,7 +301,7 @@ const NewsContent: React.FC<NewsContentProps> = ({ withNavOffset, offsetLeft }) 
                             {/* 🌫️ FADE EFFECT CONTAINER */}
                             <div className={!isExpanded && fullText.length > 5 ? "nc-fade-overlay" : ""}>
                                 {visibleText.map((paragraph, index) => (
-                                    <p key={index} style={{ marginBottom: '24px', lineHeight: '1.8', fontSize: '18px', color: 'rgba(255,255,255,0.9)' }}>
+                                    <p key={index}>
                                         {paragraph}
                                     </p>
                                 ))}
@@ -344,15 +343,10 @@ const NewsContent: React.FC<NewsContentProps> = ({ withNavOffset, offsetLeft }) 
                     )}
                 </div>
                 
-                {article.imageUrl && (
-                    <div className="nc-hero-image-wrapper">
-                        <img src={article.imageUrl} alt="Article Hero" className="nc-hero-image" />
-                    </div>
-                )}
+                {/* 🔴 REMOVED OLD IMAGE LOCATION FROM HERE */}
             </article>
-
-            <div className="nc-chat-wrapper" style={{ left: `${contentLeft}px` }}>
-                <div className="nc-chat-bar">
+            <div className="nc-chat-wrapper">
+                <div className="nc-chat-bar" ref={chatBarRef}>
                     <div className="nc-chat-input-group">
                         <span className="nc-paperclip-icon">📎</span>
                         <input 
@@ -368,9 +362,7 @@ const NewsContent: React.FC<NewsContentProps> = ({ withNavOffset, offsetLeft }) 
                     </div>
                 </div>
             </div>
-
-        </div>
-      </main>
+      </div>
     </div>
   );
 };
