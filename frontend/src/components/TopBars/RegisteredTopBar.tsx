@@ -15,16 +15,8 @@ const RegisteredTopBar: FC<RegisteredTopBarProps> = ({ session }) => {
 
 
   const handleLogout = async () => {
-    try {
-      // Use global scope to ensure all tabs and storage are cleared
-      const { error } = await supabase.auth.signOut({ scope: "global" });
-      if (error) {
-        console.error("Error logging out:", error);
-      }
-    } finally {
-      // Show logout success screen then auto-redirect
-      navigate("/logout-success", { replace: true });
-    }
+    // Navigate first to avoid protected-route redirects on auth state change
+    navigate("/logout-success", { replace: true });
   };
 
   const handleUpgrade = () => {

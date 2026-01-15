@@ -12,14 +12,8 @@ const PaidTopBar: FC<PaidTopBarProps> = ({ session }) => {
   const navigate = useNavigate();
 
   const handleLogout = async () => {
-    try {
-      const { error } = await supabase.auth.signOut({ scope: "global" });
-      if (error) {
-        console.error("Error logging out:", error);
-      }
-    } finally {
-      navigate("/logout-success", { replace: true });
-    }
+    // Navigate first to avoid route-guard redirection to /login for OAuth users
+    navigate("/logout-success", { replace: true });
   };
 
   return (

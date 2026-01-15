@@ -29,11 +29,30 @@
     }
   }
   
+  .pa-flagged__topRow {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 16px;
+    margin-bottom: 18px;
+  }
+
   .pa-flagged__title {
     font-size: 20px;
     font-weight: 700;
     color: #ffffff;
-    margin: 10px 0 18px;
+    margin: 10px 0 0;
+  }
+
+  .pa-flagged__logout {
+    border: 1px solid #ff951c;
+    background: #1c1c1c;
+    color: #f0f0f0;
+    padding: 8px 18px;
+    border-radius: 16px;
+    box-shadow: 1px 1px 12.8px #ff951c;
+    cursor: pointer;
+    font-size: 16px;
   }
   
   /* ===== Filters ===== */

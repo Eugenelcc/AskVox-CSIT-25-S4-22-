@@ -18,6 +18,8 @@ class Settings(BaseSettings):
     supabase_url: str | None = None
     supabase_anon_key: str | None = None
     supabase_service_role_key: str | None = None
+    # Stripe
+    stripe_secret_key: str | None = None
 
 
 settings = Settings()

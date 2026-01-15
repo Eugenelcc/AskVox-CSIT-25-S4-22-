@@ -18,6 +18,7 @@ export interface UserProfile {
   email: string;
   username: string | null;
   avatar_url: string | null;
+  wake_word?: string | null;
 }
 
 

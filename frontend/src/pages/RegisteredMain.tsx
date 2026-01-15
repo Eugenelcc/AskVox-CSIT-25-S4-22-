@@ -29,6 +29,7 @@ import type { ChatMessage, DatabaseMessage, UserProfile } from "../types/databas
 import AccountDetails from './settings/AccountDetails';
 import DeleteAccount from './settings/DeleteAccount';
 import PaymentBilling from './settings/PaymentBilling';
+import WakeWord from './settings/WakeWord';
 
 
 // Constants 
@@ -1080,6 +1081,8 @@ export default function Dashboard({
               <DeleteAccount session={session} />
             ) : activeSettingsKey === "billing" ? (
               <PaymentBilling session={session} />
+            ) : activeSettingsKey === "wakeword" ? (
+              <WakeWord session={session} />
             ) : (
               <></>
             )
@@ -1111,7 +1114,10 @@ export default function Dashboard({
                     <BlackHole />
                     <h3 className="orb-caption">
                       Hi {profile?.username ?? "User"}, say{" "}
-                      <span className="visual-askvox">"Hey AskVox"</span> to begin or type below.
+                      <span className="visual-askvox">
+                        {`"${(profile?.wake_word?.trim?.() || "Hey AskVox")}"`}
+                      </span>{" "}
+                      to begin or type below.
                     </h3>
                   </section>
                 )
