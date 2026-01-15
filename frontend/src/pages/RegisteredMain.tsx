@@ -141,12 +141,13 @@ export default function Dashboard({
           senderId: msg.role === "user" ? session.user.id : LLAMA_ID, 
           content: msg.content, 
           createdAt: msg.created_at,
-          displayName: msg.display_name // Mapping the name from DB to UI
+          displayName: msg.display_name, // Mapping the name from DB to UI
+          meta: msg.meta ?? null,
         })));
       }
     };
     fetchMessages();
-  }, [activeSessionId, isNewChat, session.user.id]); 
+  }, [activeSessionId, isNewChat, session?.user?.id]);
 
   const loadFolders = async () => {
     if (!session?.user?.id) return;
@@ -309,6 +310,7 @@ export default function Dashboard({
             content: msg.content,
             createdAt: msg.created_at,
             displayName: msg.display_name,
+            meta: msg.meta ?? null,
           }))
         );
       }
@@ -397,8 +399,9 @@ export default function Dashboard({
     if (createdSession) setIsNewChat(false);
 
     try {
+      const API_BASE_URL = import.meta.env.VITE_API_URL || "http://localhost:8000";
       // 5. Call AI API
-      const response = await fetch("http://localhost:8000/llamachats/cloud", {
+      const response = await fetch(`${API_BASE_URL}/llamachats/cloud_plus`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -417,11 +420,19 @@ export default function Dashboard({
       });
 
       
+      if (!response.ok) {
+        const errorText = await response.text();
+        console.error("❌ AI API error:", response.status, response.statusText, errorText);
+        setIsSending(false);
+        return;
+      }
+
       const data = await response.json();
       console.log("🤖 AI Response Data:", data); // Debug Log
 
       // Handle different API response formats
       const replyText = data.answer || data.response || data.reply || ""; 
+      const meta = data.payload || null;
 
       // Guard against empty responses (Prevents the "Dots" issue)
       if (!replyText) {
@@ -439,7 +450,8 @@ export default function Dashboard({
         senderId: LLAMA_ID, 
         content: replyText, 
         createdAt: new Date().toISOString(),
-        displayName: "AskVox"
+        displayName: "AskVox",
+        meta,
       }]);
 
     } catch (err) { 

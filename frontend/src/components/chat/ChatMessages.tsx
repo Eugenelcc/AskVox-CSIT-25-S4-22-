@@ -1,10 +1,10 @@
-import { type FC, useEffect } from "react";
+
+
+import { type FC, useEffect, useState } from "react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import "./ChatMessages.css";
 import Loading from "./Loading";
-
-// ✅ IMPORT the types instead of defining them
 import type { ChatMessage } from "../../types/database";
 
 interface ChatMessagesProps {
@@ -12,7 +12,6 @@ interface ChatMessagesProps {
   isLoading?: boolean;
 }
 
-// Helper to keep formatting clean
 function cleanMarkdown(md: string): string {
   let out = md.replace(/\r\n/g, "\n");
   out = out.replace(/\s+(\d+\.\s)/g, "\n$1");
@@ -25,52 +24,118 @@ function cleanMarkdown(md: string): string {
 }
 
 const ChatMessages: FC<ChatMessagesProps> = ({ messages, isLoading }) => {
-  // Auto-scroll to bottom logic
+  const [openSourcesForMsg, setOpenSourcesForMsg] = useState<string | number | null>(null);
+
   useEffect(() => {
     const container = document.querySelector(".uv-chat-scroll-outer") as HTMLElement | null;
     if (!container) return;
-
-    container.scrollTo({
-      top: container.scrollHeight,
-      behavior: "smooth",
-    });
+    container.scrollTo({ top: container.scrollHeight, behavior: "smooth" });
   }, [messages, isLoading]);
 
   return (
     <div className="av-chat-window">
       <div className="av-chat-scroll">
         {messages.map((m) => {
-          // ✅ Fix Logic: Assistant is always 212020, everyone else is User
           const isAssistant = m.senderId === 212020;
           const isUser = !isAssistant;
+          const sources = m.meta?.sources ?? [];
+          const images = m.meta?.images ?? [];
+          const youtube = m.meta?.youtube ?? [];
 
           return (
             <div
               key={m.id}
-              className={`av-chat-row ${
-                isUser ? "av-chat-row-user" : "av-chat-row-assistant"
-              }`}
+              className={`av-chat-row ${isUser ? "av-chat-row-user" : "av-chat-row-assistant"}`}
             >
-              <div
-                className={`av-chat-bubble ${
-                  isUser ? "av-chat-bubble-user" : "av-chat-bubble-assistant"
-                }`}
-              >
+              <div className={`av-chat-bubble ${isUser ? "av-chat-bubble-user" : "av-chat-bubble-assistant"}`}>
                 {isAssistant ? (
-                  <div className="av-md">
-                    <ReactMarkdown
-                      remarkPlugins={[remarkGfm]}
-                      components={{
-                        p({ children }) {
-                          const text = String(children).trim();
-                          if (!text) return null;
-                          return <p>{children}</p>;
-                        },
-                      }}
-                    >
-                      {cleanMarkdown(m.content)}
-                    </ReactMarkdown>
-                  </div>
+                  <>
+                    <div className="av-md">
+                      <ReactMarkdown remarkPlugins={[remarkGfm]}>
+                        {cleanMarkdown(m.content)}
+                      </ReactMarkdown>
+                    </div>
+
+                    {/* ✅ Images (below text like ChatGPT) */}
+                    {images.length > 0 && (
+                      <div className="av-media-row">
+                        {images.map((img, idx) => (
+                          <a
+                            key={idx}
+                            className="av-image-card"
+                            href={img.url}
+                            target="_blank"
+                            rel="noreferrer"
+                            title={img.alt ?? "Image"}
+                          >
+                            <img src={img.url} alt={img.alt ?? "Image"} />
+                          </a>
+                        ))}
+                      </div>
+                    )}
+
+                    {/* ✅ YouTube embeds (below images like ChatGPT) */}
+                    {youtube.length > 0 && (
+                      <div className="av-video-col">
+                        {youtube.map((v) => (
+                          <div key={v.video_id} className="av-youtube-card">
+                            <div className="av-youtube-title">{v.title}</div>
+                            <iframe
+                              className="av-youtube-frame"
+                              src={`https://www.youtube.com/embed/${v.video_id}`}
+                              title={v.title}
+                              allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture"
+                              allowFullScreen
+                            />
+                          </div>
+                        ))}
+                      </div>
+                    )}
+
+                    {/* ✅ Knowledge sources panel (your design) */}
+                    {sources.length > 0 && (
+                      <div className="av-sources-bar">
+                        <button
+                          className="av-sources-pill"
+                          type="button"
+                          onClick={() => setOpenSourcesForMsg(openSourcesForMsg === m.id ? null : m.id)}
+                        >
+                          {sources.length} sources
+                        </button>
+                      </div>
+                    )}
+
+                    {/* ✅ Sources modal (right-side panel style) */}
+                    {openSourcesForMsg === m.id && sources.length > 0 && (
+                      <div className="av-sources-modal" role="dialog" aria-modal="true">
+                        <button
+                          className="av-sources-close"
+                          type="button"
+                          aria-label="Close"
+                          onClick={() => setOpenSourcesForMsg(null)}
+                        >
+                          ✕
+                        </button>
+                        <div className="av-sources-title">Sources</div>
+                        <div className="av-sources-list">
+                          {sources.map((s, idx) => (
+                            <a
+                              key={idx}
+                              className="av-source-item"
+                              href={s.url}
+                              target="_blank"
+                              rel="noreferrer"
+                            >
+                              <div className="av-source-name">{s.title}</div>
+                              <div className="av-source-url">{s.url}</div>
+                              {s.snippet && <div className="av-source-snippet">{s.snippet}</div>}
+                              <div className="av-source-divider" />
+                            </a>
+                          ))}
+                        </div>
+                      </div>
+                    )}
+                  </>
                 ) : (
                   m.content
                 )}
