@@ -60,7 +60,7 @@ const NewsContent: React.FC<NewsContentProps> = ({ sidebarOpen }) => {
     ? article.source.charAt(0).toUpperCase() + article.source.slice(1) 
     : "News Source";
 
-  // --- REFINED CLEANER ---
+ // --- 🔴 REFINED CLEANER (Fixes Spectrum News artifacts, $1 bugs, & Navigation junk) ---
   const cleanJinaOutput = (markdown: string, currentTitle: string) => {
       if (!markdown) return [];
 
@@ -69,7 +69,7 @@ const NewsContent: React.FC<NewsContentProps> = ({ sidebarOpen }) => {
       const cleanLines: string[] = [];
       const normTitle = currentTitle.toLowerCase().replace(/[^a-z0-9]/g, '');
 
-      // 1. SECURITY CHECK
+      // 1. SECURITY CHECK (Cloudflare)
       const lowerFullText = markdown.toLowerCase();
       if (
           lowerFullText.includes("verify you are human") ||
@@ -84,33 +84,77 @@ const NewsContent: React.FC<NewsContentProps> = ({ sidebarOpen }) => {
           let trimmed = line.trim();
           let lower = trimmed.toLowerCase();
 
-          // 2. FILTER JUNK
+          // --- 🚫 2.1 SPECIFIC FIXES FOR SPECTRUM NEWS / $1 ARTIFACTS ---
+          
+          // Remove lines starting with $1 or specific pipe formats like "$1|January 15..."
+          if (/^(\$1)+/.test(trimmed)) continue; 
+          if (trimmed.startsWith('$1|')) continue; 
+          
+          // Remove Navigation & App Prompts
+          if (lower.includes('open in our app')) continue;
+          if (lower.includes('toggle navigation')) continue;
+          if (lower.includes('set weather location')) continue;
+          if (lower.includes('confirm your location')) continue;
+          if (lower.includes('enter a valid zipcode')) continue;
+          if (lower.includes('choose news source')) continue;
+          if (lower.includes('change location')) continue;
+          if (trimmed === 'English' || trimmed === 'Español') continue;
+
+          // Remove Video Player & Gallery Controls
+          if (lower.includes('play_arrow') || lower.includes('volume_up')) continue;
+          if (lower.includes('arrow_back') || lower.includes('fullscreen')) continue;
+          if (lower.includes('captions off') || lower.includes('playback speed')) continue;
+          if (lower.includes('picture-in-picture')) continue;
+          if (lower.includes('resolution') && lower.includes('auto')) continue;
+
+          // Remove "Read More" / "You May Also Like" lists
+          if (lower.includes('you may also be interested in')) continue;
+          if (lower.includes("here's what you need to know")) continue;
+          if (lower.includes("here's a wrap-up")) continue;
+
+          // --- 🚫 2.2 STANDARD FILTERS ---
           if (lower.includes("browser doesn't support push notifications")) continue;
           if (lower.includes("manage your notification settings")) continue;
-          if (lower.includes('opt out of the sale')) continue;  
           if (lower.includes('subscribe now')) continue;
           if (lower.includes('sign in to continue')) continue;
           if (lower.includes("privacy policy")) continue;
           if (lower.includes("terms of service")) continue;
-          if (trimmed === "^ $1" || trimmed === "$1") continue; 
-
+          
+          // Clean standard "Read More" and duplicate titles
           if (lower.includes('read more') && lower.includes(normTitle)) continue; 
           if (lower.includes('ofread more')) continue; 
-
           if (trimmed.startsWith('* ') && lower.includes('daily content')) continue;
 
-          if (trimmed.length < 50) continue; 
-          if (trimmed.includes('$1')) continue; 
-          
-          if (i === 0 && lower.includes(article.description?.toLowerCase().slice(0, 20) || "xyz")) continue;
+          // Remove generic headers/footers
+          if (trimmed.startsWith('BY ') || trimmed.startsWith('PUBLISHED ')) continue;
+          if (trimmed.includes('©') && trimmed.includes('rights reserved')) continue;
+          if (trimmed.includes('----')) continue; 
 
+          // Filter very short/empty junk (e.g. "Rochester", "3:15")
+          if (trimmed.length < 50 && !trimmed.endsWith('.')) {
+              // Only allow short lines if they look like real sentences
+              if (!trimmed.includes(' ')) continue; 
+              // Filter timestamps like "3:15" or "Rochester 2 days ago"
+              if (/\d+:\d+/.test(trimmed)) continue; 
+              if (lower.includes('ago')) continue;
+          }
+          
+          // --- 🛠️ 3. CLEANING INSIDE THE LINE ---
+          
+          // Remove the specific "$1" artifact from within text (e.g. "according to the $1.")
+          trimmed = trimmed.replace(/\$1/g, ''); 
+
+          // Standard markdown cleanup
           trimmed = trimmed
             .replace(/\!\[.*?\]\(.*?\)/g, '')   
             .replace(/\[.*?\]\(.*?\)/g, '$1')   
             .replace(/(\*\*|__)(.*?)\1/g, '$2') 
             .replace(/^#+\s/gm, '');            
 
+          // 4. DEDUPLICATE & SAVE
           if (uniqueLines.has(trimmed)) continue;
+          if (trimmed.length < 10) continue; // Skip tiny remnants
+
           uniqueLines.add(trimmed);
           cleanLines.push(trimmed);
       }
