@@ -1,13 +1,20 @@
 import { useEffect } from "react";
 import { useNavigate } from "react-router-dom";
 import { CheckCircle2 } from "lucide-react";
+import { supabase } from "../../supabaseClient";
 
 export default function LogoutSuccess() {
   const navigate = useNavigate();
 
   useEffect(() => {
-    const id = window.setTimeout(() => navigate("/", { replace: true }), 2000);
-    return () => window.clearTimeout(id);
+    let cancelled = false;
+    (async () => {
+      try { await supabase.auth.signOut({ scope: "global" }); } catch {}
+      if (cancelled) return;
+      const id = window.setTimeout(() => navigate("/", { replace: true }), 2000);
+      return () => window.clearTimeout(id);
+    })();
+    return () => { cancelled = true; };
   }, [navigate]);
 
   return (

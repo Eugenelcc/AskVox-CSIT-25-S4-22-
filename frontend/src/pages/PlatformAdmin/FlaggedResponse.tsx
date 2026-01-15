@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
+import { useNavigate } from "react-router-dom";
 import Background from "../../components/background/background";
 import PlatformAdminNavRail from "./PlatformAdminNavRail";
 import "./flagged.css";
@@ -173,6 +174,7 @@ const INITIAL_ROWS: FlagRow[] = [
 ];
 
 export default function FlaggedResponsePage() {
+  const navigate = useNavigate();
   /** rows state + localStorage */
   const [rows, setRows] = useState<FlagRow[]>(() => {
     try {
@@ -347,13 +349,22 @@ export default function FlaggedResponsePage() {
     setIsEditing(false);
   };
 
+  const handleLogout = () => {
+    navigate("/logout-success");
+  };
+
   return (
     <div className="pa-flagged">
       <PlatformAdminNavRail activeTab="flagged" onTabClick={() => {}} />
       <Background />
 
       <div className="pa-flagged__canvas">
-        <div className="pa-flagged__title">Flagged request</div>
+        <div className="pa-flagged__topRow">
+          <div className="pa-flagged__title">Flagged request</div>
+          <button className="pa-flagged__logout" type="button" onClick={handleLogout}>
+            Logout
+          </button>
+        </div>
 
         {/* Filters */}
         <div className="pa-flagged__filtersRow">

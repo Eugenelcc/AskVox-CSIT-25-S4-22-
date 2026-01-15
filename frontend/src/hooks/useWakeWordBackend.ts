@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
+import { supabase } from '../supabaseClient';
 
 type UseWakeProps = {
   onWake?: (score: number) => void;
@@ -70,9 +71,13 @@ export function useWakeWordBackend({
     try { postLog(`[seg ${seg}] send sr=${sr} samples=${length} dur=${durMs}ms bytes=${merged.byteLength}`, 'upload'); } catch {}
 
     try {
+      const { data: sessionRes } = await supabase.auth.getSession();
+      const token = sessionRes?.session?.access_token;
+      const headers: Record<string, string> = { 'Content-Type': 'application/octet-stream' };
+      if (token) headers['Authorization'] = `Bearer ${token}`;
       const resp = await fetch(`http://localhost:8000/wake/transcribe_pcm?sr=${sr}`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/octet-stream' },
+        headers,
         body: merged.buffer,
       });
       if (!resp.ok) return;

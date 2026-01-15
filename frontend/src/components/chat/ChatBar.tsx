@@ -9,6 +9,7 @@ interface ChatBarProps {
   onMicClick?: () => void;
   onQuizClick?: () => void;
   disabled?: boolean;
+  wakeWord?: string;
 }
 
 const MAX_TEXTAREA_HEIGHT = 160;
@@ -19,6 +20,7 @@ const ChatBar: FC<ChatBarProps> = ({
   onMicClick,
   onQuizClick,
   disabled,
+  wakeWord,
 }) => {
   const [value, setValue] = useState("");
   const textareaRef = useRef<HTMLTextAreaElement | null>(null);
@@ -184,7 +186,7 @@ const ChatBar: FC<ChatBarProps> = ({
         <textarea
           ref={textareaRef}
           className="av-input"
-          placeholder='Enter text here or say "Hey AskVox"...'
+          placeholder={`Enter text here or say "${wakeWord ?? 'Hey AskVox'}"...`}
           value={value}
           onChange={(e) => setValue(e.target.value)}
           onKeyDown={handleKeyDown}

@@ -44,8 +44,9 @@ export default function PlatformAdminNavRail({
     // ✅ 2) 라우팅 이동
     if (tab === "dashboard") navigate("/platformadmin/dashboard");
     if (tab === "flagged") navigate("/platformadmin/flagged");
-    if (tab === "reviewed") navigate("/platformadmin/reviewed");
-    if (tab === "settings") navigate("/platformadmin/settings");
+    if (tab === "reviewed") navigate("/platformadmin/education");
+    // Settings should open the global account settings page
+    if (tab === "settings") navigate("/settings/account");
   };
 
   return (

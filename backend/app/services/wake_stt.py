@@ -3,7 +3,9 @@ import re
 from typing import Optional, List
 
 import numpy as np
-from fastapi import APIRouter, Body, Query
+from fastapi import APIRouter, Body, Query, Request
+import httpx
+from app.core.config import settings
 from rapidfuzz import fuzz
 
 try:
@@ -59,23 +61,65 @@ def _core_words(wake_norm: str) -> List[str]:
     return [w for w in wake_norm.split() if w and w not in GREETINGS]
 
 
-def _build_initial_prompt() -> str:
+def _build_initial_prompt(wake_phrase: str) -> str:
     custom = os.getenv("WAKE_PROMPT")
     if custom:
         return custom
-    wake_norm = _normalize(USER_WAKE_PHRASE)
+    wake_norm = _normalize(wake_phrase)
     cores = _core_words(wake_norm)
     core = cores[0] if cores else wake_norm.split()[-1]
     spelled = " ".join(list(core.upper()))
     return (
-        f"The assistant wake phrase is '{USER_WAKE_PHRASE}'. "
+        f"The assistant wake phrase is '{wake_phrase}'. "
         f"If you hear it, transcribe it exactly. The name '{core}' is spelled {spelled} and pronounced 'nee-roo-bah'. "
         f"Do not substitute with similar words like 'hello' or 'new baba'."
     )
 
 
+async def _resolve_user_wake_phrase(request: Request) -> str:
+    """Resolve the user's custom wake word from Supabase profiles, falling back to env."""
+    default_phrase = USER_WAKE_PHRASE
+    try:
+        auth = request.headers.get("authorization") or request.headers.get("Authorization")
+        if not auth or not auth.lower().startswith("bearer "):
+            return default_phrase
+        token = auth.split(" ", 1)[1]
+        base = settings.supabase_url or os.getenv("SUPABASE_URL")
+        anon = settings.supabase_anon_key or os.getenv("SUPABASE_ANON_KEY")
+        if not base or not anon:
+            return default_phrase
+
+        async with httpx.AsyncClient(timeout=5.0) as client:
+            # Get user id from Supabase Auth
+            uresp = await client.get(f"{base}/auth/v1/user", headers={"Authorization": f"Bearer {token}", "apikey": anon})
+            if uresp.status_code != 200:
+                return default_phrase
+            uid = (uresp.json() or {}).get("id")
+            if not uid:
+                return default_phrase
+
+            # Fetch profile wake_word
+            presp = await client.get(
+                f"{base}/rest/v1/profiles",
+                headers={"Authorization": f"Bearer {token}", "apikey": anon},
+                params={"id": f"eq.{uid}", "select": "wake_word"},
+            )
+            if presp.status_code != 200:
+                return default_phrase
+            rows = presp.json() or []
+            if not rows:
+                return default_phrase
+            wake_word = (rows[0] or {}).get("wake_word")
+            if isinstance(wake_word, str) and wake_word.strip():
+                return wake_word.strip()
+            return default_phrase
+    except Exception:
+        return default_phrase
+
+
 @router.post("/transcribe_pcm")
 async def transcribe_pcm(
+    request: Request,
     body: bytes = Body(..., media_type="application/octet-stream"),
     sr: int = Query(16000, description="Sample rate of the incoming Float32 PCM"),
 ):
@@ -94,10 +138,11 @@ async def transcribe_pcm(
     # Guards: minimum duration and minimum RMS energy
     MIN_DURATION = 0.8  # seconds
     rms = float(np.sqrt(np.mean(audio ** 2))) if audio.size else 0.0
+    user_phrase = await _resolve_user_wake_phrase(request)
     if dur < MIN_DURATION:
         return {
             "text": "",
-            "wake_phrase": USER_WAKE_PHRASE,
+            "wake_phrase": user_phrase,
             "score": 0,
             "wake_match": False,
             "command": "",
@@ -107,7 +152,7 @@ async def transcribe_pcm(
     if rms < MIN_RMS:
         return {
             "text": "",
-            "wake_phrase": USER_WAKE_PHRASE,
+            "wake_phrase": user_phrase,
             "score": 0,
             "wake_match": False,
             "command": "",
@@ -134,7 +179,7 @@ async def transcribe_pcm(
     result = model.transcribe(
         audio,
         fp16=False,
-        initial_prompt=_build_initial_prompt(),
+        initial_prompt=_build_initial_prompt(user_phrase),
         language=WHISPER_LANGUAGE,
         temperature=WHISPER_TEMPERATURE,
         beam_size=WHISPER_BEAM_SIZE,
@@ -150,7 +195,7 @@ async def transcribe_pcm(
     except Exception:
         pass
 
-    wake_norm = _normalize(USER_WAKE_PHRASE)
+    wake_norm = _normalize(user_phrase)
     wake_window = _extract_wake_window(text, max_words=5)
     score = int(fuzz.partial_ratio(wake_window, wake_norm))
     wake_match = score >= WAKE_THRESHOLD
@@ -184,7 +229,7 @@ async def transcribe_pcm(
 
     try:
         print(
-            f"🔍 [Wake] phrase='{USER_WAKE_PHRASE}' window='{wake_window}' "
+            f"🔍 [Wake] phrase='{user_phrase}' window='{wake_window}' "
             f"score={score} core_score={core_score} core_present={core_present}/{len(core_words)} "
             f"earliest_core_pos={earliest_core_pos} match={wake_match}"
         )
@@ -217,7 +262,7 @@ async def transcribe_pcm(
 
     return {
         "text": text,
-        "wake_phrase": USER_WAKE_PHRASE,
+        "wake_phrase": user_phrase,
         "score": score,
         "wake_match": wake_match,
         "command": command,
