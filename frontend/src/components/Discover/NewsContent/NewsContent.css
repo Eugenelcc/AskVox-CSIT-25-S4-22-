@@ -1,6 +1,6 @@
 /* --- PAGE LAYOUT --- */
 .nc-page {
-    /* 🟢 Keep Sidebar width at 300px to match RegisteredMain.tsx */
+    /* Match RegisteredMain.tsx sidebar width */
     --nc-sidebar-width: 300px;
     --nc-side-gap: 24px;
 
@@ -14,50 +14,6 @@
     padding-left: 8px; 
 }
 
-/* --- SIDEBAR (Legacy styles if used separately) --- */
-.nc-sidebar {
-    width: var(--nc-sidebar-width);
-    padding: 20px 22px;
-    display: flex;
-    flex-direction: column;
-    position: sticky;
-    top: 16px;
-    align-self: flex-start;
-    min-height: calc(100vh - 32px);
-    background: linear-gradient(180deg, rgba(255,255,255,0.07) 0%, rgba(102,102,102,0.07) 100%);
-    box-shadow: 0px 4px 32px 4px rgba(255,255,255,0.15);
-    border-radius: 19px;
-    border: 1px solid rgba(255,255,255,0.06);
-}
-
-.nc-sidebar__header {
-    display: flex;
-    align-items: center;
-    gap: 12px;
-    margin-bottom: 20px;
-}
-
-.nc-sidebar__title {
-    font-size: 24px;
-    color: #fff;
-}
-
-.nc-sidebar__nav {
-    display: flex;
-    flex-direction: column;
-    gap: 16px;
-    padding-top: 6px;
-}
-
-.nc-nav-item {
-    font-size: 16px;
-    color: #FF951C;
-    cursor: pointer;
-    transition: color 0.2s;
-}
-
-.nc-nav-item:hover, .nc-nav-item.active { color: #ffffff; }
-
 /* --- MAIN CONTENT --- */
 .nc-main {
     flex: 1;
@@ -67,187 +23,13 @@
     max-width: none;
     margin: 0; 
     
-    /* 🔴 CRITICAL SCROLL FIXES BELOW: */
-    
-    /* 1. Force container to be as tall as the screen */
+    /* SCROLL FIXES */
     height: 100vh; 
-    
-    /* 2. Enable internal scrolling (Restored from visible to auto) */
     overflow-y: auto; 
-    
-    /* 3. Ensure padding doesn't add to width/height calculations */
     box-sizing: border-box; 
-}
-
-/* TOP RIGHT ACTIONS */
-.nc-top-actions {
-    position: absolute;
-    top: 32px;
-    right: 40px;
-    display: flex;
-    gap: 16px;
-}
-
-.nc-pill {
-    background: transparent;
-    border: 1px solid rgba(255, 255, 255, 0.3);
-    color: #fff;
-    padding: 8px 24px;
-    border-radius: 99px;
-    cursor: pointer;
-    font-size: 14px;
-    transition: all 0.2s;
-}
-
-.nc-pill:hover {
-    border-color: #FF951C;
-    color: #FF951C;
-}
-
-/* BACK BUTTON */
-.nc-back-btn {
-    background: transparent;
-    border: none;
-    display: flex;
-    align-items: center;
-    gap: 8px;
-    color: #FF951C;
-    cursor: pointer;
-    margin-bottom: 32px;
-    font-size: 14px;
-
-    /* 🟢 ADD THESE LINES TO FIX CLICKING: */
-    position: relative; 
-    z-index: 1000; /* Forces button above transparent headers or overlays */
-}
-
-/* --- HEADER & HEADLINE --- */
-.nc-headline {
-    font-size: 42px;
-    line-height: 1.2;
-    margin-bottom: 16px;
     
-    background: linear-gradient(90deg, #FF951C 0%, #E06C00 100%);
-    -webkit-background-clip: text;
-    -webkit-text-fill-color: transparent;
-    background-clip: text;
-}
-
-.nc-meta-row {
-    display: flex;
-    align-items: center;
-    gap: 16px;
-    margin-bottom: 32px;
-}
-
-.nc-time {
-    color: rgba(255, 255, 255, 0.4);
-    font-size: 14px;
-}
-
-/* SOURCES PILL */
-.nc-sources-pill {
-    display: flex;
-    align-items: center;
-    gap: 8px;
-    background: rgba(255, 255, 255, 0.05);
-    border: 1px solid rgba(255, 255, 255, 0.1);
-    padding: 6px 12px;
-    border-radius: 99px;
-    font-size: 13px;
-    color: rgba(255, 255, 255, 0.8);
-    cursor: pointer;
-}
-
-.nc-avatars {
-    display: flex;
-    padding-left: 5px;
-}
-
-.nc-avatars img {
-    width: 20px;
-    height: 20px;
-    border-radius: 50%;
-    border: 1px solid #000;
-    margin-left: -8px;
-}
-
-.nc-actions {
-    display: flex;
-    gap: 8px;
-    margin-left: auto; /* Push to right */
-}
-
-.nc-icon-btn {
-    background: transparent;
-    border: none;
-    color: #FF951C;
-    cursor: pointer;
-    opacity: 0.8;
-}
-.nc-icon-btn:hover { opacity: 1; }
-
-/* --- BODY TEXT --- */
-.nc-summary {
-    font-size: 18px;
-    line-height: 1.6;
-    color: rgba(255, 255, 255, 0.9);
-    margin-bottom: 32px;
-}
-
-.nc-extended-content h3 {
-    font-size: 20px;
-    color: #fff;
-    margin: 32px 0 12px;
-}
-
-.nc-extended-content p {
-    font-size: 18px;
-    line-height: 1.8; /* Slightly looser line height for easier scanning */
-    color: rgba(255, 255, 255, 0.7);
-    
-    /* 🟢 READABILITY FIX: */
-    max-width: 800px; /* Limits line length */
-    margin: 0 auto 24px auto; /* Centers the text block & adds bottom spacing */
-}
-
-.nc-extended-content ul {
-    margin-left: 24px;
-    color: rgba(255, 255, 255, 0.7);
-    font-size: 18px;
-    line-height: 1.6;
-}
-
-.nc-extended-content li {
-    margin-bottom: 8px;
-}
-
-.nc-hero-image-wrapper {
-    margin-top: 40px;
-    border-radius: 16px;
-    overflow: hidden;
-}
-
-.nc-hero-image {
-    width: 100%;
-    height: auto;
-    display: block;
-}
-
-/* Center the article content within the available space */
-.nc-article-container {
-    max-width: 1120px; 
-    margin: 0 auto;  
-}
-
-/* Ensure no unintended card/background around the text column */
-.nc-article-container,
-.nc-body,
-.nc-extended-content {
-    background: transparent !important;
-    border: 0 !important;
-    box-shadow: none !important;
-    border-radius: 0 !important;
+    /* 🟢 ANIMATION: Smooth padding transition if needed */
+    transition: padding 0.3s cubic-bezier(0.4, 0, 0.2, 1);
 }
 
 /* --- CHAT BAR (Fixed Bottom) --- */
@@ -255,7 +37,7 @@
     position: fixed;
     bottom: 32px;
     
-    /* 1. Alignment: Start after Sidebar (300px) + Rail (80px) */
+    /* 1. DEFAULT (Sidebar Open): Start after Sidebar (300px) + Rail (80px) = 380px */
     left: 380px; 
     right: 0;
     
@@ -264,16 +46,25 @@
     z-index: 50;
     pointer-events: none;
     
-    /* 🟢 2. FIX: Add 60px padding to match the article text's padding */
+    /* 2. PADDING FIX: Match the padding of .nc-main (60px) */
     padding: 0 60px; 
     box-sizing: border-box;
+
+    /* 🟢 ANIMATION: Smooth slide when sidebar closes */
+    transition: left 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+/* 🟢 STATE: Sidebar Closed Override */
+.nc-main.nc-sidebar-closed .nc-chat-wrapper {
+    /* When sidebar is closed, only account for the 80px Nav Rail */
+    left: 80px;
 }
 
 .nc-chat-bar {
     pointer-events: auto;
     width: 100%;
     
-    /* 🟢 3. FIX: Match the article's max-width so they stop growing at the same point */
+    /* 3. WIDTH SYNC: Match the Article's max-width container */
     max-width: 1120px; 
     
     background: #1B1A1A;
@@ -286,65 +77,53 @@
     box-shadow: 0 10px 40px rgba(0,0,0,0.5);
 }
 
-.nc-chat-input-group {
-    display: flex;
-    align-items: center;
-    gap: 12px;
-    flex: 1;
+/* --- ARTICLE STYLES --- */
+.nc-article-container {
+    max-width: 1120px; 
+    margin: 0 auto;  
 }
 
-.nc-paperclip-icon {
-    color: rgba(255, 255, 255, 0.3);
-    font-size: 20px;
-    cursor: pointer;
+.nc-extended-content p {
+    font-size: 18px;
+    line-height: 1.8; /* Better readability */
+    color: rgba(255, 255, 255, 0.7);
+    
+    /* 🟢 READABILITY FIX: Constrain width and center */
+    max-width: 800px; 
+    margin: 0 auto 24px auto; 
 }
 
-.nc-chat-input {
-    background: transparent;
-    border: none;
-    color: #fff;
-    font-size: 16px;
+/* ... Keep existing helper classes ... */
+.nc-headline {
+    font-size: 42px;
+    line-height: 1.2;
+    margin-bottom: 16px;
+    background: linear-gradient(90deg, #FF951C 0%, #E06C00 100%);
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+    background-clip: text;
+}
+
+.nc-summary {
+    font-size: 18px;
+    line-height: 1.6;
+    color: rgba(255, 255, 255, 0.9);
+    margin-bottom: 32px;
+}
+
+.nc-hero-image-wrapper {
+    margin-top: 20px;
+    border-radius: 16px;
+    overflow: hidden;
+}
+
+.nc-hero-image {
     width: 100%;
-    outline: none;
-}
-.nc-chat-input::placeholder {
-    color: rgba(255, 255, 255, 0.3);
+    height: auto;
+    display: block;
 }
 
-.nc-chat-actions {
-    display: flex;
-    align-items: center;
-    gap: 12px;
-}
-
-.nc-chat-icon {
-    background: transparent;
-    border: none;
-    color: rgba(255, 255, 255, 0.6);
-    cursor: pointer;
-    display: flex;
-    align-items: center;
-}
-.nc-chat-icon:hover { color: #fff; }
-
-.nc-send-btn {
-    background: rgba(255, 255, 255, 0.1);
-    border: none;
-    width: 40px;
-    height: 40px;
-    border-radius: 50%;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    color: #FF951C;
-    cursor: pointer;
-    transition: background 0.2s;
-}
-.nc-send-btn:hover {
-    background: rgba(255, 149, 28, 0.2);
-}
-
-/* --- SKELETON LOADING ANIMATION --- */
+/* Skeleton Loading Animation */
 @keyframes shimmer {
   0% { background-position: -200% 0; }
   100% { background-position: 200% 0; }
@@ -359,19 +138,29 @@
   border-radius: 4px;
 }
 
-/* --- READ MORE FADE EFFECT --- */
-.nc-fade-overlay {
-    position: relative;
+/* --- Rest of button/icon styles from previous version --- */
+.nc-back-btn {
+    background: transparent;
+    border: none;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    color: #FF951C;
+    cursor: pointer;
+    margin-bottom: 32px;
+    font-size: 14px;
 }
-
-.nc-fade-overlay::after {
-    content: "";
-    position: absolute;
-    bottom: 0;
-    left: 0;
-    width: 100%;
-    height: 150px; 
-    /* Fades from Transparent to Black */
-    background: linear-gradient(to bottom, rgba(0,0,0,0) 0%, #000000 100%); 
-    pointer-events: none;
-}
+.nc-meta-row { display: flex; align-items: center; gap: 16px; margin-bottom: 32px; }
+.nc-time { color: rgba(255, 255, 255, 0.4); font-size: 14px; }
+.nc-sources-pill { display: flex; align-items: center; gap: 8px; background: rgba(255, 255, 255, 0.05); border: 1px solid rgba(255, 255, 255, 0.1); padding: 6px 12px; border-radius: 99px; font-size: 13px; color: rgba(255, 255, 255, 0.8); cursor: pointer; }
+.nc-actions { display: flex; gap: 8px; margin-left: auto; }
+.nc-icon-btn { background: transparent; border: none; color: #FF951C; cursor: pointer; opacity: 0.8; }
+.nc-chat-input-group { display: flex; align-items: center; gap: 12px; flex: 1; }
+.nc-paperclip-icon { color: rgba(255, 255, 255, 0.3); font-size: 20px; cursor: pointer; }
+.nc-chat-input { background: transparent; border: none; color: #fff; font-size: 16px; width: 100%; outline: none; }
+.nc-chat-input::placeholder { color: rgba(255, 255, 255, 0.3); }
+.nc-chat-actions { display: flex; align-items: center; gap: 12px; }
+.nc-chat-icon { background: transparent; border: none; color: rgba(255, 255, 255, 0.6); cursor: pointer; display: flex; align-items: center; }
+.nc-send-btn { background: rgba(255, 255, 255, 0.1); border: none; width: 40px; height: 40px; border-radius: 50%; display: flex; align-items: center; justify-content: center; color: #FF951C; cursor: pointer; transition: background 0.2s; }
+.nc-fade-overlay { position: relative; }
+.nc-fade-overlay::after { content: ""; position: absolute; bottom: 0; left: 0; width: 100%; height: 150px; background: linear-gradient(to bottom, rgba(0,0,0,0) 0%, #000000 100%); pointer-events: none; }

@@ -3,6 +3,11 @@ import { useLocation, useNavigate } from 'react-router-dom';
 import { Heart, Share2, Mic, Puzzle, Send, ChevronLeft, ChevronDown, ChevronUp } from 'lucide-react';
 import './NewsContent.css';
 
+// 🟢 1. Define Props Interface
+interface NewsContentProps {
+  sidebarOpen: boolean; // Received from RegisteredMain
+}
+
 type ArticleViewModel = {
   title: string;
   description?: string;
@@ -20,9 +25,14 @@ const fallbackArticle: ArticleViewModel = {
   source: 'AskVox News',
 };
 
-const NewsContent: React.FC = () => {
+// 🟢 2. Accept sidebarOpen as a Prop
+const NewsContent: React.FC<NewsContentProps> = ({ sidebarOpen }) => {
   const navigate = useNavigate();
   const { state } = useLocation();
+  
+  // Note: We do NOT use useOutletContext here anymore because 
+  // this component is rendered directly in RegisteredMain.
+
   const article: ArticleViewModel = (state?.article as ArticleViewModel) || fallbackArticle;
   const releasedLabel = typeof article.releasedMinutes === 'number' ? `Released ${article.releasedMinutes} minutes ago` : 'Just released';
 
@@ -50,7 +60,7 @@ const NewsContent: React.FC = () => {
     ? article.source.charAt(0).toUpperCase() + article.source.slice(1) 
     : "News Source";
 
-  // --- 🔴 REFINED CLEANER (Fixes "Read More" & Privacy Spam) ---
+  // --- REFINED CLEANER ---
   const cleanJinaOutput = (markdown: string, currentTitle: string) => {
       if (!markdown) return [];
 
@@ -59,14 +69,13 @@ const NewsContent: React.FC = () => {
       const cleanLines: string[] = [];
       const normTitle = currentTitle.toLowerCase().replace(/[^a-z0-9]/g, '');
 
-      // 1. SECURITY CHECK (Cloudflare)
+      // 1. SECURITY CHECK
       const lowerFullText = markdown.toLowerCase();
       if (
           lowerFullText.includes("verify you are human") ||
           lowerFullText.includes("needs to review the security") ||
           lowerFullText.includes("cloudflare")
       ) {
-          console.warn("⚠️ Article blocked by Cloudflare.");
           return []; 
       }
 
@@ -75,65 +84,33 @@ const NewsContent: React.FC = () => {
           let trimmed = line.trim();
           let lower = trimmed.toLowerCase();
 
-          // 2. FILTER NOTIFICATIONS & PRIVACY SPAM
+          // 2. FILTER JUNK
           if (lower.includes("browser doesn't support push notifications")) continue;
           if (lower.includes("manage your notification settings")) continue;
           if (lower.includes('opt out of the sale')) continue;  
-          if (lower.includes('we won\'t sell or share')) continue; 
-          if (lower.includes('interest-based ads')) continue; 
           if (lower.includes('subscribe now')) continue;
-          if (lower.includes('create an account')) continue;
           if (lower.includes('sign in to continue')) continue;
-          if (lower.includes('exclusive articles from')) continue;
-          if (lower.includes('unlimited online access')) continue;
-          
-          // 🟢 NEW FILTERS FOR YOUR SCREENSHOTS
-          if (lower.includes("this site collects information")) continue;
           if (lower.includes("privacy policy")) continue;
           if (lower.includes("terms of service")) continue;
-          if (trimmed === "^ $1" || trimmed === "$1") continue; // Regex artifact fix
+          if (trimmed === "^ $1" || trimmed === "$1") continue; 
 
-          // 3. FILTER "READ MORE" GLITCHES
           if (lower.includes('read more') && lower.includes(normTitle)) continue; 
           if (lower.includes('ofread more')) continue; 
 
-          // 4. FILTER BULLET ADS
-          if (trimmed.startsWith('* ') && (
-              lower.includes('daily content') || 
-              lower.includes('financial post') ||
-              lower.includes('account settings')
-          )) continue;
+          if (trimmed.startsWith('* ') && lower.includes('daily content')) continue;
 
-          // 5. FILTER GENERIC JUNK
           if (trimmed.length < 50) continue; 
           if (trimmed.includes('$1')) continue; 
-          if (trimmed.startsWith('=')) continue;
-          if (trimmed.startsWith('-')) continue;
-          if (lower.includes('read also')) continue;
-          if (lower.includes('click here')) continue;
-          if (trimmed.includes('appeared first on')) continue;
-          if (trimmed.includes('http')) continue; 
-          if (trimmed.startsWith('By:') && trimmed.includes('Posted:')) continue;
-
-          // 6. TITLE DEDUPLICATION
-          const normLine = lower.replace(/[^a-z0-9]/g, '');
-          if (normLine.includes(normTitle) || normTitle.includes(normLine)) {
-             if (trimmed.length < currentTitle.length + 50) continue;
-          }
           
-          // 🟢 REPEATED INTRO CHECK
           if (i === 0 && lower.includes(article.description?.toLowerCase().slice(0, 20) || "xyz")) continue;
 
-          // 7. MARKDOWN CLEANUP
           trimmed = trimmed
             .replace(/\!\[.*?\]\(.*?\)/g, '')   
             .replace(/\[.*?\]\(.*?\)/g, '$1')   
             .replace(/(\*\*|__)(.*?)\1/g, '$2') 
             .replace(/^#+\s/gm, '');            
 
-          // 8. DEDUPLICATE
           if (uniqueLines.has(trimmed)) continue;
-          
           uniqueLines.add(trimmed);
           cleanLines.push(trimmed);
       }
@@ -201,19 +178,12 @@ const NewsContent: React.FC = () => {
 
   const visibleText = isExpanded ? fullText : fullText.slice(0, 5);
 
-    // Allow scrolling while the cursor is over the fixed chat bar
     useEffect(() => {
         const el = chatBarRef.current;
         if (!el) return;
         const onWheel = (e: WheelEvent) => {
             e.preventDefault();
             window.scrollBy({ top: e.deltaY });
-        };
-        const onTouchStart = (e: TouchEvent) => {
-           // touch logic (simplified for brevity)
-        };
-        const onTouchMove = (e: TouchEvent) => {
-            // touch logic
         };
         el.addEventListener('wheel', onWheel, { passive: false });
         return () => {
@@ -222,7 +192,8 @@ const NewsContent: React.FC = () => {
     }, []);
 
     return (
-        <div className="nc-main">
+        // 🟢 3. APPLY CLASS: If sidebarOpen prop is false, add 'nc-sidebar-closed'
+        <div className={`nc-main ${!sidebarOpen ? 'nc-sidebar-closed' : ''}`}>
             <div className="nc-article-container">
             <button 
                 className="nc-back-btn" 
@@ -276,7 +247,6 @@ const NewsContent: React.FC = () => {
                     {article.description}
                 </p>
 
-                {/* 🟢 HERO IMAGE MOVED HERE */}
                 {article.imageUrl && (
                     <div className="nc-hero-image-wrapper" style={{ marginBottom: '40px' }}>
                         <img src={article.imageUrl} alt="Article Hero" className="nc-hero-image" />
@@ -285,20 +255,17 @@ const NewsContent: React.FC = () => {
 
                 <div className="nc-extended-content">
                     {isLoading ? (
-                         // 🦴 SKELETON LOADER
                          <div style={{ marginTop: '20px' }}>
                             <div className="nc-skeleton-line" style={{ width: '100%' }}></div>
                             <div className="nc-skeleton-line" style={{ width: '90%' }}></div>
                             <div className="nc-skeleton-line" style={{ width: '95%' }}></div>
                             <div className="nc-skeleton-line" style={{ width: '80%', marginBottom: '40px' }}></div>
-                            
                             <div className="nc-skeleton-line" style={{ width: '100%' }}></div>
                             <div className="nc-skeleton-line" style={{ width: '85%' }}></div>
                             <div className="nc-skeleton-line" style={{ width: '90%' }}></div>
                          </div>
                     ) : (
                         <>
-                            {/* 🌫️ FADE EFFECT CONTAINER */}
                             <div className={!isExpanded && fullText.length > 5 ? "nc-fade-overlay" : ""}>
                                 {visibleText.map((paragraph, index) => (
                                     <p key={index}>
@@ -306,7 +273,6 @@ const NewsContent: React.FC = () => {
                                     </p>
                                 ))}
                             </div>
-                            
                             {fullText.length > 5 && (
                                 <button 
                                     onClick={() => setIsExpanded(!isExpanded)}
@@ -342,8 +308,6 @@ const NewsContent: React.FC = () => {
                         </div>
                     )}
                 </div>
-                
-                {/* 🔴 REMOVED OLD IMAGE LOCATION FROM HERE */}
             </article>
             <div className="nc-chat-wrapper">
                 <div className="nc-chat-bar" ref={chatBarRef}>

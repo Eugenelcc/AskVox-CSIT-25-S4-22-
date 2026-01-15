@@ -1006,8 +1006,18 @@ export default function Dashboard({
   
   
 
+  // compute content offset so both the main content and the fixed chatbar
+  // can stay in sync when sidebars open/close
+  const navRailWidth = 80; // fixed rail width (matches NavRail)
+  const discoverSidebarLeft = 110; // matches .av-settings { left: 110px; }
+  const discoverSidebarWidth = 310; // matches .av-settings { width: 310px; }
+  const viewingArticle = location.pathname.startsWith("/discover/news");
+  const discoverOpen = isSidebarOpen && (activeTab === "discover" || viewingArticle);  const contentMarginLeft = discoverOpen
+    ? `${discoverSidebarLeft + discoverSidebarWidth}px`
+    : `${navRailWidth}px`;
+
   return (
-    <div className="uv-root" style={{ display: 'flex', overflowX: 'hidden' }}>
+    <div className="uv-root" style={{ display: 'flex', overflowX: 'hidden', ['--content-offset' as any]: contentMarginLeft }}>
       <Background />
       
       <NavRail
@@ -1068,14 +1078,7 @@ export default function Dashboard({
       )}
 
 
-      {(() => {
-        const navRailWidth = 80; // fixed rail
-        const viewingArticle = location.pathname.startsWith("/discover/news");
-        const discoverSidebarWidth = (showDiscover || viewingArticle) ? 300 : 0; // sidebar when open or on article
-        const discoverPadding = (activeTab === 'discover' && !showDiscover && !viewingArticle) ? 60 : 0; // extra spacing only for feed
-        const contentMarginLeft = `${navRailWidth + discoverSidebarWidth + discoverPadding}px`;
-        return (
-          <div style={{
+      <div style={{
             flex: 1,
             marginLeft: contentMarginLeft,
             transition: 'margin-left 250ms ease',
@@ -1197,8 +1200,6 @@ export default function Dashboard({
           </div>
         )}
       </div>
-        );
-      })()}
     </div>
   );
 };
