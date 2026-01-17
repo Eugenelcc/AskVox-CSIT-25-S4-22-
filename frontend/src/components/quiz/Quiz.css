@@ -59,6 +59,11 @@
 .av-quizBody {
   padding: 16px;
   color: #fff;
+
+  
+  overflow-y: auto;
+  max-height: calc(100vh - 64px - 48px - 32px);
+  /* 64px header, 48px top/btm margin, 32px body padding (16+16) */
 }
 
 /* ================= CHOOSE SCREEN ================= */

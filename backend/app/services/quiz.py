@@ -11,7 +11,7 @@ load_dotenv()
 
 router = APIRouter(prefix="/quiz", tags=["quiz"])
 
-SUPABASE_URL = os.getenv("SUPABASE_URL", "")
+SUPABASE_URL = os.getenv("SUPABASE_URL", "").rstrip("/")
 SUPABASE_SERVICE_ROLE_KEY = os.getenv("SUPABASE_SERVICE_ROLE_KEY", "")
 API_BASE_LOCAL = os.getenv("API_BASE_LOCAL", "http://localhost:8000").rstrip("/")
 
@@ -25,6 +25,9 @@ GEMINI_MODEL = os.getenv("GEMINI_MODEL", "gemini-2.0-flash")
 
 # Choose provider: set QUIZ_PROVIDER=gemini or llama in .env
 QUIZ_PROVIDER = os.getenv("QUIZ_PROVIDER", "gemini").lower().strip()
+
+# Verifier toggle (you usually want this ON)
+VERIFY_ANSWERS = os.getenv("QUIZ_VERIFY", "1").strip() in ("1", "true", "yes", "on")
 
 QuizMode = Literal["A", "B", "C"]
 
@@ -49,6 +52,22 @@ class GenerateQuizRes(BaseModel):
     questions: List[QuizQuestion]
 
 
+# ---------- NEW: Feedback ----------
+class QuizFeedbackReq(BaseModel):
+    title: str
+    questions: List[QuizQuestion]
+    userAnswers: List[Optional[int]]  # same length as questions
+
+
+class QuizFeedbackRes(BaseModel):
+    strengths: List[str]
+    weakAreas: List[str]
+    recommended: str
+
+
+# -------------------------
+# Supabase helpers
+# -------------------------
 def _require_supabase():
     if not SUPABASE_URL or not SUPABASE_SERVICE_ROLE_KEY:
         raise HTTPException(
@@ -66,15 +85,9 @@ def _sb_headers():
 
 
 def _safe_json_extract(text: str) -> dict:
-    """
-    Extract JSON even if the model adds extra words.
-    1) Try json.loads
-    2) Brace-balanced extraction from first '{'
-    """
     t = (text or "").strip()
     if not t:
         return {}
-
     try:
         return json.loads(t)
     except Exception:
@@ -91,20 +104,22 @@ def _safe_json_extract(text: str) -> dict:
         elif t[i] == "}":
             depth -= 1
             if depth == 0:
-                chunk = t[start : i + 1]
+                chunk = t[start: i + 1]
                 try:
                     return json.loads(chunk)
                 except Exception:
                     return {}
-
     return {}
 
 
 async def _fetch_queries(user_id: str, session_id: Optional[str], limit: int) -> List[dict]:
+    """
+    queries table: must include id uuid + transcribed_text + created_at + detected_domain + input_mode + session_id
+    """
     _require_supabase()
 
     params = {
-        "select": "transcribed_text,created_at,detected_domain,input_mode,session_id",
+        "select": "id,transcribed_text,created_at,detected_domain,input_mode,session_id",
         "user_id": f"eq.{user_id}",
         "order": "created_at.desc",
         "limit": str(limit),
@@ -112,54 +127,79 @@ async def _fetch_queries(user_id: str, session_id: Optional[str], limit: int) ->
     if session_id:
         params["session_id"] = f"eq.{session_id}"
 
-    async with httpx.AsyncClient(timeout=20) as client:
-        res = await client.get(
-            f"{SUPABASE_URL}/rest/v1/queries",
-            headers=_sb_headers(),
-            params=params,
-        )
+    timeout = httpx.Timeout(connect=15.0, read=30.0, write=15.0, pool=10.0)
+    async with httpx.AsyncClient(timeout=timeout) as client:
+        res = await client.get(f"{SUPABASE_URL}/rest/v1/queries", headers=_sb_headers(), params=params)
         if res.status_code >= 400:
-            raise HTTPException(
-                status_code=502,
-                detail=f"Supabase queries fetch failed: {res.text[:200]}",
-            )
+            raise HTTPException(status_code=502, detail=f"Supabase queries fetch failed: {res.text[:200]}")
         return res.json() or []
 
 
-async def _get_last_prompt_from_queries(user_id: str, session_id: Optional[str]) -> str:
+async def _fetch_latest_response_for_query(query_id: str) -> str:
+    """
+    responses table: must include response_text + generated_at + query_id
+    """
+    _require_supabase()
+    if not query_id:
+        return ""
+
+    params = {
+        "select": "response_text,generated_at,model_used,query_id",
+        "query_id": f"eq.{query_id}",
+        "order": "generated_at.desc",
+        "limit": "1",
+    }
+
+    timeout = httpx.Timeout(connect=15.0, read=30.0, write=15.0, pool=10.0)
+    async with httpx.AsyncClient(timeout=timeout) as client:
+        res = await client.get(f"{SUPABASE_URL}/rest/v1/responses", headers=_sb_headers(), params=params)
+        if res.status_code >= 400:
+            return ""
+        rows = res.json() or []
+        if not rows:
+            return ""
+        return (rows[0].get("response_text") or "").strip()
+
+
+async def _get_last_turn(user_id: str, session_id: Optional[str]) -> Tuple[str, str]:
+    """
+    Returns (last_user_prompt, last_assistant_response)
+    """
     rows = await _fetch_queries(user_id=user_id, session_id=session_id, limit=1)
     if not rows:
-        return ""
-    return (rows[0].get("transcribed_text") or "").strip()
+        return "", ""
+    last_prompt = (rows[0].get("transcribed_text") or "").strip()
+    qid = str(rows[0].get("id") or "")
+    last_resp = await _fetch_latest_response_for_query(qid)
+    return last_prompt, last_resp
 
 
-def _build_context_from_rows(rows: List[dict]) -> str:
+async def _fetch_turns_with_responses(user_id: str, session_id: Optional[str], limit: int) -> List[Tuple[str, str]]:
     """
-    Convert query rows into a compact context block for the model.
-    Oldest first (so it reads like a conversation).
+    Returns list of (user_prompt, assistant_response) oldest -> newest
     """
+    rows = await _fetch_queries(user_id=user_id, session_id=session_id, limit=limit)
     if not rows:
-        return ""
+        return []
 
-    ordered = list(reversed(rows))  # oldest -> newest
-    lines: List[str] = []
-    for r in ordered:
-        txt = (r.get("transcribed_text") or "").strip()
-        if not txt:
+    rows = list(reversed(rows))  # oldest -> newest
+    out: List[Tuple[str, str]] = []
+    for r in rows:
+        prompt = (r.get("transcribed_text") or "").strip()
+        if not prompt:
             continue
-        dom = (r.get("detected_domain") or "general").strip()
-        mode = (r.get("input_mode") or "").strip()
-        lines.append(f"- [{dom} | {mode}] {txt}")
-
-    return "\n".join(lines).strip()
+        qid = str(r.get("id") or "")
+        resp = await _fetch_latest_response_for_query(qid)
+        out.append((prompt, resp))
+    return out
 
 
 # -------------------------
-# LLaMA call (detached)
+# Model calls (DETACHED)
 # -------------------------
-async def _call_llama(prompt: str) -> str:
+async def _call_llama_detached(prompt: str) -> str:
     """
-    Calls your existing /llamachats/cloud route BUT detached from user's real chat.
+    Uses your /llamachats/cloud but DETACHED so it won't log quiz/verifier/feedback text into chat tables.
     """
     url = f"{API_BASE_LOCAL}/llamachats/cloud"
     payload = {
@@ -169,9 +209,7 @@ async def _call_llama(prompt: str) -> str:
         "session_id": None,  # detach
         "user_id": None,     # detach
     }
-
-    timeout = httpx.Timeout(connect=10.0, read=220.0, write=20.0, pool=10.0)
-
+    timeout = httpx.Timeout(connect=15.0, read=240.0, write=30.0, pool=20.0)
     async with httpx.AsyncClient(timeout=timeout) as client:
         res = await client.post(url, json=payload)
         if res.status_code >= 400:
@@ -180,9 +218,6 @@ async def _call_llama(prompt: str) -> str:
         return (data.get("answer") or "").strip()
 
 
-# -------------------------
-# ✅ Gemini call (bigger timeouts + retry + ReadError)
-# -------------------------
 async def _call_gemini(prompt: str) -> str:
     if not GEMINI_API_KEY:
         raise HTTPException(status_code=500, detail="Missing GEMINI_API_KEY")
@@ -190,26 +225,27 @@ async def _call_gemini(prompt: str) -> str:
     url = f"{GEMINI_BASE_URL}/models/{GEMINI_MODEL}:generateContent"
     params = {"key": GEMINI_API_KEY}
 
-    # Keep output smaller so connection is less likely to get cut mid-stream
     body = {
         "contents": [{"role": "user", "parts": [{"text": prompt}]}],
         "generationConfig": {
-            "temperature": 0.4,
-            "maxOutputTokens": 900,  # ✅ reduce output
+            "temperature": 0.3,
+            "maxOutputTokens": 900,
         },
     }
 
-    # ✅ bigger connect + read timeouts
-    timeout = httpx.Timeout(connect=45.0, read=240.0, write=30.0, pool=20.0)
-
-    # ✅ more robust transport
+    timeout = httpx.Timeout(connect=60.0, read=300.0, write=60.0, pool=30.0)
     limits = httpx.Limits(max_keepalive_connections=10, max_connections=20, keepalive_expiry=30.0)
-    transport = httpx.AsyncHTTPTransport(retries=0)  # we do our own retries
+    transport = httpx.AsyncHTTPTransport(retries=0)
 
-    async with httpx.AsyncClient(timeout=timeout, limits=limits, transport=transport) as client:
+    async with httpx.AsyncClient(
+        timeout=timeout,
+        limits=limits,
+        transport=transport,
+        http2=True,
+        follow_redirects=True,
+    ) as client:
         last_exc: Exception | None = None
-
-        for attempt in range(1, 5):  # ✅ 4 tries
+        for attempt in range(1, 5):
             try:
                 res = await client.post(url, params=params, json=body)
                 if res.status_code >= 400:
@@ -219,13 +255,11 @@ async def _call_gemini(prompt: str) -> str:
                 try:
                     return (data["candidates"][0]["content"]["parts"][0]["text"] or "").strip()
                 except Exception:
-                    # fall back for debugging
                     return json.dumps(data)[:800]
 
-            except (httpx.ConnectTimeout, httpx.ReadTimeout, httpx.ReadError) as e:
+            except (httpx.ConnectTimeout, httpx.ReadTimeout, httpx.ReadError, httpx.RemoteProtocolError) as e:
                 last_exc = e
-                # small backoff
-                await asyncio.sleep(0.6 * attempt)
+                await asyncio.sleep(0.8 * attempt)
                 continue
 
         raise HTTPException(status_code=502, detail=f"Gemini network error after retries: {last_exc}")
@@ -234,9 +268,12 @@ async def _call_gemini(prompt: str) -> str:
 async def _call_model(prompt: str) -> str:
     if QUIZ_PROVIDER == "gemini":
         return await _call_gemini(prompt)
-    return await _call_llama(prompt)
+    return await _call_llama_detached(prompt)
 
 
+# -------------------------
+# Prompting - QUIZ
+# -------------------------
 def _build_quiz_prompt(base_text: str, num_questions: int, must_avoid: List[str]) -> str:
     avoid_block = ""
     if must_avoid:
@@ -250,6 +287,11 @@ Your response MUST start with "{{" and end with "}}".
 
 Create a {num_questions}-question multiple choice quiz based ONLY on the content below.
 
+IMPORTANT:
+- Questions must test SUBJECT KNOWLEDGE from the content (facts/concepts/understanding).
+- DO NOT ask meta questions about the conversation itself.
+- DO NOT ask things like: "primary focus", "what is discussed", "what kind of notes", "what is the discussion about".
+
 CONTENT:
 {base_text}
 
@@ -257,11 +299,11 @@ CONTENT:
 
 STRICT RULES:
 - Each question has EXACTLY 4 options.
-- Each option MUST be a full, meaningful answer choice (2–10 words).
-- DO NOT use placeholder options like "A", "B", "C", "D", "Option A", "Option 1".
+- Options must be short but meaningful (1–8 words).
 - Exactly one correct answer.
 - answerIndex is 0-3.
-- Avoid trick questions. Prefer clear factual/understanding questions.
+- No placeholders like "A", "B", "Option A".
+- Keep questions direct (e.g., "What is a dwarf planet?").
 
 Return format exactly:
 {{
@@ -317,8 +359,6 @@ Return ONLY valid JSON. No extra text.
 Your response MUST start with "{{" and end with "}}".
 
 Convert the following into VALID JSON ONLY.
-Do not add explanations. Do not add markdown.
-
 TEXT:
 {raw}
 """.strip()
@@ -334,7 +374,7 @@ async def _verify_answer_index(question: str, options: List[str]) -> int:
 Return ONLY valid JSON. No extra text.
 Your response MUST start with "{{" and end with "}}".
 
-Pick the correct answerIndex (0-3) for the multiple-choice question.
+Pick the correct answerIndex (0-3) for this multiple-choice question.
 
 FORMAT:
 {{"answerIndex": 0}}
@@ -362,11 +402,7 @@ Options:
     return 0
 
 
-async def _generate_fill_to_n(
-    base_text: str,
-    target_n: int,
-    max_rounds: int = 6,
-) -> List[QuizQuestion]:
+async def _generate_fill_to_n(base_text: str, target_n: int, max_rounds: int = 6) -> List[QuizQuestion]:
     collected: List[QuizQuestion] = []
     avoid: List[str] = []
 
@@ -394,27 +430,77 @@ async def _generate_fill_to_n(
 
         avoid.extend(new_qtexts)
 
-    for q in collected:
-        try:
-            q.answerIndex = await _verify_answer_index(q.q, q.options)
-        except Exception:
-            pass
+    if VERIFY_ANSWERS:
+        for q in collected:
+            try:
+                q.answerIndex = await _verify_answer_index(q.q, q.options)
+            except Exception:
+                pass
 
     return collected[:target_n]
 
 
+# -------------------------
+# Prompting - FEEDBACK
+# -------------------------
+def _build_feedback_prompt(title: str, correct: List[dict], wrong: List[dict]) -> str:
+    return f"""
+You are AskVox Learning Feedback Engine.
+
+Return ONLY valid JSON.
+NO markdown. NO explanations.
+Response MUST start with "{{" and end with "}}".
+
+Quiz Title:
+{title}
+
+CORRECTLY ANSWERED (user understands these areas):
+{json.dumps(correct, ensure_ascii=False)}
+
+INCORRECTLY ANSWERED (user struggled here):
+{json.dumps(wrong, ensure_ascii=False)}
+
+TASK:
+- Infer learning strengths from correct answers
+- Infer weak knowledge areas from incorrect answers
+- MUST be topic-specific (no generic phrases like "good effort")
+
+RULES:
+- strengths: 2–4 short phrases (3–8 words)
+- weakAreas: 2–4 short phrases
+- recommended: ONE short learning suggestion sentence
+
+Return JSON format:
+{{
+  "strengths": ["..."],
+  "weakAreas": ["..."],
+  "recommended": "..."
+}}
+""".strip()
+
+
+# -------------------------
+# Routes
+# -------------------------
 @router.post("/generate", response_model=GenerateQuizRes)
 async def generate_quiz(req: GenerateQuizReq):
     if req.num_questions < 1 or req.num_questions > 10:
         raise HTTPException(status_code=400, detail="num_questions must be between 1 and 10.")
 
+    # Build content per mode
     if req.mode == "A":
-        last_prompt = await _get_last_prompt_from_queries(req.user_id, req.session_id)
+        last_prompt, last_resp = await _get_last_turn(req.user_id, req.session_id)
         if not last_prompt:
             raise HTTPException(status_code=400, detail="No last prompt found yet. Send a chat message first.")
 
         title = "Quiz from Last Prompt"
-        base_text = f'User prompt: "{last_prompt}"'
+        base_text = f"""
+USER ASKED:
+{last_prompt}
+
+ASSISTANT ANSWERED:
+{last_resp if last_resp else "(No assistant response found.)"}
+""".strip()
 
     elif req.mode == "B":
         topic = (req.topic or "").strip()
@@ -423,29 +509,83 @@ async def generate_quiz(req: GenerateQuizReq):
 
         title = f"Quiz: {topic}"
         base_text = f"""
-Topic: {topic}
+TOPIC:
+{topic}
 
-Generate questions ONLY about this topic.
-Do NOT use unrelated prior chat topics.
+Make questions ONLY about this topic.
+Do NOT use any other topics.
 """.strip()
 
     else:  # "C"
-        rows = await _fetch_queries(req.user_id, req.session_id, limit=60)
-        ctx = _build_context_from_rows(rows)
-        if not ctx:
+        turns = await _fetch_turns_with_responses(req.user_id, req.session_id, limit=25)
+        if not turns:
             raise HTTPException(status_code=400, detail="No discussion found yet. Chat first, then generate Mode C.")
 
         title = "Quiz from Current Discussion"
-        base_text = f"Conversation context (oldest → newest):\n{ctx}".strip()
+
+        lines: List[str] = []
+        for (p, a) in turns:
+            lines.append(f"USER: {p}")
+            if a:
+                lines.append(f"ASSISTANT: {a}")
+        base_text = "\n".join(lines).strip()
 
     questions = await _generate_fill_to_n(base_text, req.num_questions)
-
     if not questions:
         raise HTTPException(status_code=502, detail="Parsed quiz had no valid questions.")
 
     questions = questions[: req.num_questions]
-
     for i, q in enumerate(questions, start=1):
         q.id = f"q{i}"
 
     return GenerateQuizRes(title=title, questions=questions)
+
+
+@router.post("/feedback", response_model=QuizFeedbackRes)
+async def quiz_feedback(req: QuizFeedbackReq):
+    if len(req.questions) != len(req.userAnswers):
+        raise HTTPException(status_code=400, detail="userAnswers length must match questions length")
+
+    correct, wrong = [], []
+
+    for q, ans in zip(req.questions, req.userAnswers):
+        entry = {
+            "question": q.q,
+            "options": q.options,
+            "correctIndex": q.answerIndex,
+            "userIndex": ans,
+        }
+        if ans is None:
+            wrong.append(entry)
+        elif ans == q.answerIndex:
+            correct.append(entry)
+        else:
+            wrong.append(entry)
+
+    prompt = _build_feedback_prompt(req.title, correct, wrong)
+
+    raw = await _call_model(prompt)
+    parsed = _safe_json_extract(raw)
+    if not parsed:
+        parsed = await _repair_to_json(raw)
+
+    strengths = parsed.get("strengths") or []
+    weak = parsed.get("weakAreas") or []
+    rec = (parsed.get("recommended") or "").strip()
+
+    # Hard fallbacks
+    if not isinstance(strengths, list) or not strengths:
+        strengths = ["Core topic understanding"]
+    if not isinstance(weak, list) or not weak:
+        weak = ["Advanced topic details"]
+    if not rec:
+        rec = "Review the incorrect questions and try another quiz."
+
+    strengths = [str(x).strip() for x in strengths if str(x).strip()][:4]
+    weak = [str(x).strip() for x in weak if str(x).strip()][:4]
+
+    return QuizFeedbackRes(
+        strengths=strengths,
+        weakAreas=weak,
+        recommended=rec,
+    )
