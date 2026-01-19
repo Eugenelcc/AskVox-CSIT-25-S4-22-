@@ -5,7 +5,8 @@ export type UiCategory =
   | 'Trending' 
   | 'Technology' 
   | 'Science'
-  | 'Gaming' // 🟢 NEW 
+  | 'Gaming' 
+  | 'Finance & Business'
   | 'History & World Events' 
   | 'Sports' 
   | 'Cooking & Food' 
@@ -22,69 +23,68 @@ export interface NewsArticle {
   category?: string;
   source?: string;
   url?: string;
+  // 🟢 NEW: Added this so the UI can render the source stack
+  all_sources?: { 
+      title: string; 
+      url: string; 
+      source: string; 
+      domain_url?: string; 
+      description?: string; // <--- ADD THIS
+  }[];
 }
 
-// 2. The Translation Map
-const CATEGORY_MAP: Record<string, string> = {
-  'Trending': 'top',
-  'Technology': 'technology',
-  'Science': 'science',
-  'Gaming': 'gaming', // 🟢 NEW (Will be trapped by backend)
-  'History & World Events': 'world',
-  'Sports': 'sports',
-  'Cooking & Food': 'food',
-  'Geography & Travel': 'tourism',
-  'Entertainment': 'entertainment',
-  'Education': 'education',
-  'Breaking': 'top',
-  'Domains': 'top' 
-};
+// Types for the AI Synthesis Response
+export interface SynthesisResponse {
+    content: string;
+    sources: {
+      title: string;
+      url: string;
+      source: string;
+      citation_index: number;
+    }[];
+}
 
-// Ensure this matches your FastAPI URL (check trailing slash if needed)
 const API_BASE_URL = import.meta.env.VITE_API_URL || 'http://localhost:8000';
 
-// 🟢 UPDATE: Added 'country' parameter (defaults to empty string for Global)
+// 🟢 FETCH FEED (List View)
 export async function fetchNews(uiCategory: string = 'Trending', country: string = ''): Promise<NewsArticle[]> {
-  const apiCategory = CATEGORY_MAP[uiCategory] || 'top';
+  // Map UI labels to simple keys so the backend's "Optimizer" can handle them
+  let apiCategory = uiCategory.toLowerCase();
+  
+  if (uiCategory === 'Trending') apiCategory = 'trending'; // Let backend expand this
+  if (uiCategory === 'Finance & Business') apiCategory = 'business';
+  if (uiCategory === 'History & World Events') apiCategory = 'world';
+  if (uiCategory === 'Cooking & Food') apiCategory = 'food';
+  if (uiCategory === 'Geography & Travel') apiCategory = 'travel';
   
   console.log(`📡 FRONTEND: Asking Backend for '${apiCategory}' (Country: ${country || 'Global'})...`);
 
   try {
-    // --- SIMPLE ARCHITECTURE ---
-    // We do NOT check Supabase here. We ask the Backend.
-    // The Backend will check the DB, check the 60-min timer, 
-    // and return either Cached Data or Fresh Data.
-    
-    // 🟢 UPDATE: Construct URL with optional country parameter
-    let url = `${API_BASE_URL}/news/refresh?category=${apiCategory}`;
+    let url = `${API_BASE_URL}/news/refresh?category=${encodeURIComponent(apiCategory)}`;
     if (country) {
         url += `&country=${country}`;
     }
 
-    const response = await fetch(url, {
-      method: 'POST'
-    });
+    const response = await fetch(url, { method: 'POST' });
 
     if (!response.ok) {
       throw new Error(`Backend error: ${response.status}`);
     }
 
-    // The Backend returns the list of articles directly (JSON)
     const data = await response.json();
-    
     console.log(`✅ FRONTEND: Backend returned ${data.length} articles.`);
     return data;
 
   } catch (error) {
     console.error("❌ API Call Failed:", error);
     
-    // --- FALLBACK (Optional) ---
-    // If Backend is completely dead, TRY to read old cache from Supabase manually
+    // Fallback: Try Supabase Cache
     console.log("⚠️ Backend dead? Trying to read offline cache from Supabase...");
     
-    // 🟢 UPDATE: Construct the correct cache key for fallback logic
-    // If country is present, key is 'technology_us', otherwise just 'technology'
-    const cacheKey = country ? `${apiCategory}_${country}` : apiCategory;
+    // 🟢 FIX: Match the Backend's naming convention ("AI_FEED_...")
+    const cacheKey = country 
+        ? `AI_FEED_${apiCategory}_${country}` 
+        : `AI_FEED_${apiCategory}`;
 
     const { data: cache } = await supabase
       .from('news_cache')
@@ -93,5 +93,40 @@ export async function fetchNews(uiCategory: string = 'Trending', country: string
       .maybeSingle();
 
     return (cache?.data as NewsArticle[]) || [];
+  }
+}
+
+// 🟢 UPDATE THIS FUNCTION
+export async function synthesizeStory(topic: string, providedSources?: any[]): Promise<SynthesisResponse> {
+  try {
+    const bodyPayload: any = { query: topic };
+
+    // 🟢 If we have sources, send them to the backend
+    if (providedSources && providedSources.length > 0) {
+      console.log(`📦 Sending ${providedSources.length} existing sources to backend...`);
+      bodyPayload.sources = providedSources.map(s => ({
+        title: s.title,
+        url: s.url,
+        source: s.source,
+        snippet: s.description || ""  // Ensure we send the snippet or empty string
+      }));
+    }
+
+    const response = await fetch(`${API_BASE_URL}/news/synthesize`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify(bodyPayload),
+    });
+
+    if (!response.ok) throw new Error('Failed to synthesize story');
+    return await response.json();
+  } catch (error) {
+    console.error("Synthesis Error:", error);
+    return { 
+      content: "Sorry, I couldn't generate a report at this time. Please try again later.", 
+      sources: [] 
+    };
   }
 }

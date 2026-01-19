@@ -35,6 +35,30 @@ import WakeWord from './settings/WakeWord';
 // Constants 
 const LLAMA_ID = 212020; 
 type SettingsKey = "account" | "billing" | "delete" | "wakeword";
+type ArticleContext = {
+  title: string;
+  url?: string;
+  imageUrl?: string;
+  description?: string;
+  cached_content?: string;
+  cached_at?: string;
+  source_type?: string;
+  publishedAt?: string;
+  releasedMinutes?: number;
+  all_sources?: { title: string; url: string; source: string; domain_url?: string }[];
+};
+type NewsContext = {
+  sessionId: string | null;
+  title: string;
+  imageUrl?: string;
+  description?: string;
+  publishedAt?: string;
+  releasedMinutes?: number;
+  all_sources?: { title: string; url: string; source: string; domain_url?: string }[];
+  path: string;
+  slug: string;
+  url?: string;
+};
 
 
 //---Quiz---//
@@ -73,13 +97,14 @@ export default function Dashboard({
   const voiceSessionIdRef = useRef<string | null>(null);
   
   // Sidebar & Navigation State
-  const [sessions, setSessions] = useState<{id: string, title: string}[]>([]); // all chats the user has created, shown in the sidebar
+  const [sessions, setSessions] = useState<{id: string, title: string, article_context?: ArticleContext | null}[]>([]); // all chats the user has created, shown in the sidebar
   const [activeSessionId, setActiveSessionId] = useState<string | null>(null); // currently selected chat session
   const [activeTab, setActiveTab] = useState<string>(
     initialTab ?? (location.pathname === "/discover" ? "discover" : "chats")
   ); // Tracks which tab is active in the NavRail
   const [isSidebarOpen, setSidebarOpen] = useState(false); // Sidebar visibility
   const [isNewChat, setIsNewChat] = useState(false); //When user starts a new chat
+  const [newsContext, setNewsContext] = useState<NewsContext | null>(null);
   // Stores chat folders
   const [folders, setFolders] = useState<{
     id: string;   
@@ -127,7 +152,11 @@ export default function Dashboard({
       });
       
     // Fetch Sessions
-    supabase.from('chat_sessions').select('*,display_name').eq('user_id', session.user.id).order('created_at', { ascending: false })
+    supabase
+      .from('chat_sessions')
+      .select('id,title,article_context')
+      .eq('user_id', session.user.id)
+      .order('created_at', { ascending: false })
       .then(({ data }) => data && setSessions(data));
   }, [session.user.id]);
 
@@ -197,6 +226,28 @@ export default function Dashboard({
     setActiveSessionId(sessionId);
     setMessages([]);
     setIsNewChat(false);
+    const sess = sessions.find((s) => s.id === sessionId);
+    const articleCtx = sess?.article_context;
+    if (articleCtx?.title) {
+      const slug = articleCtx.title
+        .toLowerCase()
+        .replace(/[^a-z0-9]+/g, '-')
+        .replace(/(^-|-$)/g, '') || 'article';
+      setNewsContext({
+        sessionId,
+        title: articleCtx.title,
+        imageUrl: articleCtx.imageUrl,
+        description: articleCtx.description,
+        publishedAt: articleCtx.publishedAt,
+        releasedMinutes: articleCtx.releasedMinutes,
+        all_sources: articleCtx.all_sources,
+        url: articleCtx.url,
+        slug,
+        path: "/discover/news",
+      });
+    } else if (newsContext?.sessionId && newsContext.sessionId !== sessionId) {
+      setNewsContext(null);
+    }
   };
 
   const handleTabClick = (tab: string) => {
@@ -286,7 +337,7 @@ export default function Dashboard({
 
     const { data: allSessions } = await supabase
       .from("chat_sessions")
-      .select("id, title")
+      .select("id, title, article_context")
       .eq("user_id", session.user.id)
       .order("created_at", { ascending: false });
 
@@ -321,13 +372,16 @@ export default function Dashboard({
   };
 
 
-  const handleSubmit = async (text: string) => {
+  const handleSubmit = async (
+    text: string,
+    options?: { forceNewSession?: boolean; context?: ArticleContext }
+  ): Promise<string | null> => {
     const trimmed = text.trim();
     if (!trimmed || !session?.user?.id) return;
     console.log("💬 [Text] route=llamachats/cloud payload=", trimmed);
 
     // 1. Determine Session ID
-    let currentSessionId = activeSessionId;
+    let currentSessionId = options?.forceNewSession ? null : activeSessionId;
     const createdSession = !currentSessionId;
     if (!currentSessionId) {
       // Block initial fetch until we finish first-write
@@ -337,7 +391,17 @@ export default function Dashboard({
         .from('chat_sessions')
         .insert({
           user_id: session.user.id,
-          title: trimmed.slice(0, 30) + '...',
+          title: options?.context?.title
+            ? options.context.title.slice(0, 60)
+            : trimmed.slice(0, 30) + '...',
+          article_context: options?.context?.title
+            ? {
+                ...options.context,
+                source_type: "news_article",
+                cached_content: options.context.description || "",
+                cached_at: new Date().toISOString(),
+              }
+            : null,
         })
         .select()
         .single();
@@ -353,7 +417,7 @@ export default function Dashboard({
       // ✅ Refresh sidebar sessions from DB
       const { data: allSessions } = await supabase
         .from('chat_sessions')
-        .select('id, title')
+        .select('id, title, article_context')
         .eq('user_id', session.user.id)
         .order('created_at', { ascending: false });
 
@@ -401,24 +465,50 @@ export default function Dashboard({
 
     try {
       const API_BASE_URL = import.meta.env.VITE_API_URL || "http://localhost:8000";
+      const activeContext = options?.context?.title
+        ? options.context
+        : (newsContext && newsContext.sessionId === currentSessionId
+          ? {
+              title: newsContext.title,
+              url: newsContext.url,
+              imageUrl: newsContext.imageUrl,
+              description: newsContext.description,
+              publishedAt: newsContext.publishedAt,
+              releasedMinutes: newsContext.releasedMinutes,
+              all_sources: newsContext.all_sources,
+            }
+          : undefined);
+      const modelMessage = activeContext?.title
+        ? `Regarding the article "${activeContext.title}", ${trimmed}`
+        : trimmed;
+      const llamaPayload = {
+        message: modelMessage,
+        history: [
+          ...messages.map(m => ({
+            role: m.senderId === session.user.id ? "user" : "assistant",
+            content: m.content,
+          })),
+          { role: "user", content: modelMessage },
+        ],
+        query_id: queryId,
+        session_id: currentSessionId,
+        user_id: session.user.id,
+        article_title: activeContext?.title || null,
+        article_url: activeContext?.url || null,
+      };
+      console.log("🧪 [LLAMA] payload:", llamaPayload);
+      const llamaStart = performance.now();
+      console.time("llama_request_ms");
       // 5. Call AI API
       const response = await fetch(`${API_BASE_URL}/llamachats/cloud_plus`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          message: trimmed,
-          history: [
-            ...messages.map(m => ({
-              role: m.senderId === session.user.id ? "user" : "assistant",
-              content: m.content,
-            })),
-            { role: "user", content: trimmed },
-          ],
-          query_id: queryId,         
-          session_id: currentSessionId,
-          user_id: session.user.id,
-        })
+        body: JSON.stringify(llamaPayload)
       });
+
+      const llamaEnd = performance.now();
+      console.timeEnd("llama_request_ms");
+      console.log("🧪 [LLAMA] status:", response.status, "elapsed_ms:", Math.round(llamaEnd - llamaStart));
 
       
       if (!response.ok) {
@@ -459,6 +549,69 @@ export default function Dashboard({
        console.error("❌ Error sending message:", err);
        setIsSending(false); 
     }
+    return currentSessionId;
+  };
+
+  const handleNewsQuestion = async (
+    question: string,
+    article: {
+      title: string;
+      imageUrl?: string;
+      description?: string;
+      publishedAt?: string;
+      releasedMinutes?: number;
+      all_sources?: { title: string; url: string; source: string; domain_url?: string }[];
+      url?: string;
+      slug: string;
+      path: string;
+    }
+  ) => {
+    setActiveTab("chats");
+    setSidebarOpen(true);
+    if (location.pathname.startsWith("/discover")) {
+      navigate(paid ? "/paiduserhome" : "/reguserhome");
+    }
+    setActiveSessionId(null);
+    setIsNewChat(true);
+
+    setNewsContext({
+      sessionId: null,
+      title: article.title,
+      imageUrl: article.imageUrl,
+      description: article.description,
+      publishedAt: article.publishedAt,
+      releasedMinutes: article.releasedMinutes,
+      all_sources: article.all_sources,
+      url: article.url,
+      slug: article.slug,
+      path: article.path,
+    });
+
+    const sessionId = await handleSubmit(question, {
+      forceNewSession: true,
+      context: {
+        title: article.title,
+        url: article.url,
+        imageUrl: article.imageUrl,
+        description: article.description,
+        publishedAt: article.publishedAt,
+        releasedMinutes: article.releasedMinutes,
+        all_sources: article.all_sources,
+      },
+    });
+
+    setNewsContext({
+      sessionId: sessionId ?? null,
+      title: article.title,
+      imageUrl: article.imageUrl,
+      description: article.description,
+      publishedAt: article.publishedAt,
+      releasedMinutes: article.releasedMinutes,
+      all_sources: article.all_sources,
+      url: article.url,
+      slug: article.slug,
+      path: article.path,
+    });
   };
 
   const showSidebar = isSidebarOpen && activeTab === 'chats';
@@ -666,7 +819,7 @@ export default function Dashboard({
                 try {
                   const { data: allSessions } = await supabase
                     .from('chat_sessions')
-                    .select('id, title')
+                    .select('id, title, article_context')
                     .eq('user_id', session.user.id)
                     .order('created_at', { ascending: false });
                   if (allSessions) setSessions(allSessions);
@@ -1107,7 +1260,7 @@ export default function Dashboard({
 
           ) : activeTab === "discover" ? (
             location.pathname.startsWith("/discover/news") ? (
-              <NewsContent />
+              <NewsContent sidebarOpen={discoverOpen} onAskQuestion={handleNewsQuestion} />
             ) : (
               <DiscoverView withNavOffset={false} category={discoverCategory} />
             )
@@ -1144,6 +1297,42 @@ export default function Dashboard({
               {activeSessionId && !isNewChat && !isVoiceMode && (
                 <div className="uv-chat-scroll-outer">
                   <div className="uv-chat-area">
+                    {newsContext && (!newsContext.sessionId || newsContext.sessionId === activeSessionId) && (
+                      <div className="uv-news-context-card">
+                        {newsContext.imageUrl && (
+                          <img
+                            src={newsContext.imageUrl}
+                            alt={newsContext.title}
+                            className="uv-news-context-image"
+                          />
+                        )}
+                        <div className="uv-news-context-body">
+                          <div className="uv-news-context-title">{newsContext.title}</div>
+                          <button
+                            className="uv-news-context-link"
+                            onClick={() => {
+                              setActiveTab("discover");
+                              setSidebarOpen(true);
+                              navigate(`/discover/news/${newsContext.slug}`, {
+                                state: {
+                                  article: {
+                                    title: newsContext.title,
+                                    imageUrl: newsContext.imageUrl,
+                                    description: newsContext.description,
+                                    publishedAt: newsContext.publishedAt,
+                                    releasedMinutes: newsContext.releasedMinutes,
+                                    all_sources: newsContext.all_sources,
+                                    url: newsContext.url,
+                                  },
+                                },
+                              });
+                            }}
+                          >
+                            Click here to go back to the news
+                          </button>
+                        </div>
+                      </div>
+                    )}
                     <ChatMessages messages={messages} isLoading={isSending} />
                   </div>
                 </div>

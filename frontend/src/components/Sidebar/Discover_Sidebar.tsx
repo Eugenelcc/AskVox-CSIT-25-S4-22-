@@ -9,6 +9,7 @@ type DiscoverKey =
   | "Technology"
   | "Science"
   | "Gaming"
+  | "Finance & Business"
   | "History & World Events"
   | "Sports"
   | "Cooking & Food"
@@ -77,6 +78,14 @@ export default function DiscoverSidebar({
           onClick={() => pick("Science")}
         >
           Science
+        </button>
+
+        <button
+          type="button"
+          className={`av-settings__item ${activeKey === "Finance & Business" ? "is-active" : ""}`}
+          onClick={() => pick("Finance & Business")}
+        >
+          Finance & Business
         </button>
 
         <button

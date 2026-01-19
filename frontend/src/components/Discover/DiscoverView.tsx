@@ -27,9 +27,12 @@ type CardData = {
     title: string;
     description?: string;
     releasedMinutes: number;
+    publishedAt?: string;
     bookmarked: boolean;
     source?: string;
-    url?: string; 
+    url?: string;
+    // 🟢 NEW
+    all_sources?: { title: string; url: string; source: string }[];
 };
 
 const sortArticles = (articles: NewsArticle[], mode: 'Trending' | 'Latest') => {
@@ -49,12 +52,21 @@ const sortArticles = (articles: NewsArticle[], mode: 'Trending' | 'Latest') => {
 
 function minutesFromNow(iso: string | undefined, now: number): number {
     if (!iso) return 0;
-    const cleanIso = iso.replace(' ', 'T') + (iso.includes('Z') ? '' : 'Z');
-    const t = new Date(cleanIso).getTime();
-    const diff = Math.round((now - t) / 60000);
-    return Math.max(0, diff);
-}
+    try {
+        // Ensure ISO format compatibility without breaking timezone offsets
+        const hasTzOffset = /[+-]\d{2}:?\d{2}$/.test(iso);
+        const cleanIso = iso.replace(' ', 'T') + (iso.includes('Z') || hasTzOffset ? '' : 'Z');
+        const t = new Date(cleanIso).getTime();
+        
+        // 🟢 FIX: Check for Invalid Date
+        if (isNaN(t)) return NaN;
 
+        const diff = Math.round((now - t) / 60000);
+        return Math.max(0, diff);
+    } catch {
+        return NaN;
+    }
+}
 export interface DiscoverViewProps {
     withNavOffset?: boolean;
     category?: string | null;
@@ -80,6 +92,12 @@ const DiscoverView: React.FC<DiscoverViewProps> = ({ withNavOffset, category, fe
         const timer = setInterval(() => setCurrentTime(Date.now()), 60000); 
         return () => clearInterval(timer);
     }, []);
+
+
+    useEffect(() => {
+    console.log("Fetched Articles: ", rawArticles.length);
+    console.log("Displayed Articles: ", displayedArticles.length);
+}, [rawArticles, displayedArticles]);
 
     // Close menu when clicking outside
     useEffect(() => {
@@ -134,17 +152,27 @@ const DiscoverView: React.FC<DiscoverViewProps> = ({ withNavOffset, category, fe
         setDisplayedArticles(newOrder);
     };
 
-    // --- RENDER HELPERS ---
-    const toCard = useCallback((article: NewsArticle, variant: CardData['variant']): CardData => {
+   // --- RENDER HELPERS ---
+    const toCard = useCallback((article: any, variant: CardData['variant']): CardData => {
+        
+        // 🟢 FIX: Use || instead of ?? to catch empty strings ("")
+        // Added a high-quality abstract news fallback from Unsplash
+        const validImage = article.imageUrl && article.imageUrl.startsWith('http') 
+            ? article.imageUrl 
+            : 'https://images.unsplash.com/photo-1504711434969-e33886168f5c?q=80&w=1000&auto=format&fit=crop';
+
         return {
             variant,
-            imageUrl: article.imageUrl ?? '/assets/hero-verstappen.jpg',
+            imageUrl: validImage,
             title: article.title,
             description: article.description,
             releasedMinutes: minutesFromNow(article.publishedAt, currentTime),
+            publishedAt: article.publishedAt,
             bookmarked: false,
             source: article.source,
-            url: article.url, 
+            url: article.url,
+            // @ts-ignore
+            all_sources: article.all_sources 
         };
     }, [currentTime]);
 

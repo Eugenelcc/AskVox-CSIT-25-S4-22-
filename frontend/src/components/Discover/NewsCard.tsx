@@ -1,6 +1,6 @@
 import React from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Heart, Clock } from 'lucide-react'; // Changed Bookmark to Heart
+import { Heart, Clock } from 'lucide-react'; 
 import './DiscoverNews.css';
 
 export interface NewsCardProps {
@@ -9,41 +9,37 @@ export interface NewsCardProps {
     title: string;
     description?: string;
     releasedMinutes: number;
+    publishedAt?: string;
     bookmarked: boolean;
     source?: string;
     url?: string;
+    // 🟢 NEW: Array of sources from the AI cluster
+    all_sources?: { title: string; url: string; source: string; domain_url?: string }[];
 }
 
 // --- 1. Helper Functions ---
 
 const getDomain = (link?: string) => {
     if (!link) return '';
-    try {
-        return new URL(link).hostname.replace('www.', '');
-    } catch  {
-        return '';
+    try { return new URL(link).hostname.replace('www.', ''); } catch { return ''; }
+};
+
+const getFaviconUrl = (link?: string, domainUrl?: string) => {
+    // 1. Try backend-provided publisher homepage first (most accurate)
+    if (domainUrl) {
+         try {
+             const domain = new URL(domainUrl).hostname;
+             return `https://www.google.com/s2/favicons?domain=${domain}&sz=32`;
+         } catch {}
     }
-};
-
-const getFaviconUrl = (link?: string) => {
+    // 2. Fallback to extracting domain from article link
     const domain = getDomain(link);
-    if (!domain) return '';
-    return `https://www.google.com/s2/favicons?domain=${domain}&sz=32`;
-};
-
-const formatSource = (src?: string, url?: string) => {
-    // If no source name, try to use the domain name
-    if (!src) return getDomain(url) || 'News';
-    return src
-        .split(/[-_]/)
-        .map(word => word.charAt(0).toUpperCase() + word.slice(1))
-        .join(' ');
+    return domain ? `https://www.google.com/s2/favicons?domain=${domain}&sz=32` : '';
 };
 
 const formatTime = (mins: number) => {
-    if (mins < 60) {
-        return `${mins}m ago`;
-    }
+    if (isNaN(mins) || mins === 0) return 'Just now'; // Handle NaN or 0
+    if (mins < 60) return `${mins}m ago`;
     const hours = Math.floor(mins / 60);
     return `${hours}h ago`;
 };
@@ -55,41 +51,45 @@ interface CardFooterProps {
     source?: string;
     releasedMinutes: number;
     bookmarked: boolean;
+    all_sources?: NewsCardProps['all_sources'];
 }
 
-const CardFooter: React.FC<CardFooterProps> = ({ url, source, releasedMinutes, bookmarked }) => (
-    <div className="news-meta">
-        <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-            {/* Source Icon - Only shows if URL exists */}
-            {url && (
-                <img 
-                    src={getFaviconUrl(url)} 
-                    alt="" 
-                    style={{ width: 16, height: 16, borderRadius: '2px', objectFit: 'contain' }} 
-                    onError={(e) => (e.currentTarget.style.display = 'none')}
-                />
-            )}
-            
-            {/* Source Name & Time */}
-            <span style={{ color: '#FF951C', fontWeight: 500 }}>
-                {formatSource(source, url)}
-            </span>
-            <span style={{ margin: '0 4px', opacity: 0.4 }}>•</span>
-            <span style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
-                <Clock size={12} /> {formatTime(releasedMinutes)}
-            </span>
+const CardFooter: React.FC<CardFooterProps> = ({ url, source, releasedMinutes, bookmarked, all_sources }) => {
+    const isCluster = all_sources && all_sources.length > 1;
+
+    return (
+        <div className="news-meta">
+            <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                {isCluster ? (
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                        {/* 1. Display 3 source icons */}
+                        <div style={{ display: 'flex', marginRight: '4px' }}>
+                            {all_sources.slice(0, 3).map((src, i) => (
+                                <img 
+                                    key={i}
+                                    src={getFaviconUrl(src.url, src.domain_url)} 
+                                    alt=""
+                                    style={{
+                                        width: 18, height: 18, borderRadius: '50%',
+                                        marginLeft: i > 0 ? '-8px' : '0', // Overlap
+                                        zIndex: 3 - i
+                                    }}
+                                    onError={(e) => e.currentTarget.style.display = 'none'}
+                                />
+                            ))}
+                        </div>
+                        {/* 2. Display the source count */}
+                        <span style={{ color: '#aaa', fontWeight: 500, fontSize: '13px' }}>
+                            {all_sources.length} sources
+                        </span>
+                    </div>
+                ) : (
+                    <div>{source}</div>  // Single source
+                )}
+            </div>
         </div>
-        
-        {/* Heart Icon (Orange when bookmarked) */}
-        <button className="icon-btn" style={{ background: 'transparent', border: 'none', cursor: 'pointer' }}>
-            <Heart 
-                size={18} 
-                color={bookmarked ? '#FF951C' : 'rgba(255,255,255,0.6)'} 
-                fill={bookmarked ? '#FF951C' : 'none'} 
-            />
-        </button>
-    </div>
-);
+    );
+};
 
 // --- 3. Main Component ---
 
@@ -99,25 +99,26 @@ const NewsCard: React.FC<NewsCardProps> = ({
     title, 
     description, 
     releasedMinutes, 
+    publishedAt,
     bookmarked,
     source,
-    url 
+    url,
+    all_sources // 🟢 Receive the sources
 }) => {
     const navigate = useNavigate();
-    const slug = title
-        .toLowerCase()
-        .replace(/[^a-z0-9]+/g, '-')
-        .replace(/(^-|-$)/g, '') || 'article';
+    const slug = title.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/(^-|-$)/g, '') || 'article';
 
     const goDetail = () => {
         navigate(`/discover/news/${slug}`, {
             state: {
-                article: { title, description, imageUrl, releasedMinutes, source, url }
+                // Pass everything to the detail page so it can render the "Analysis" view
+                article: { title, description, imageUrl, releasedMinutes, publishedAt, source, url, all_sources }
             }
         });
     };
     
-    const footerProps = { url, source, releasedMinutes, bookmarked };
+    // Pass all_sources to the footer
+    const footerProps = { url, source, releasedMinutes, bookmarked, all_sources };
 
     if (variant === 'hero') {
         return (
@@ -149,7 +150,6 @@ const NewsCard: React.FC<NewsCardProps> = ({
         );
     }
 
-    // Standard Variant
     return (
         <div className="news-card" onClick={goDetail} style={{ cursor: 'pointer' }}>
             <img src={imageUrl} alt={title} className="news-card__image" style={{ height: 160 }} />
