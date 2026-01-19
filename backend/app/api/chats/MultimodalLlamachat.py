@@ -25,7 +25,7 @@ SUPABASE_STORAGE_BUCKET = os.getenv("SUPABASE_STORAGE_BUCKET", "chat-images")
 
 # Google APIs
 GOOGLE_API_KEY = os.getenv("GOOGLE_API_KEY", "")
-GOOGLE_CSE_ID = os.getenv("GOOGLE_CSE_ID", "")
+GOOGLE_CSE_ID = os.getenv("GOOGLE_CSE_ID", "")  # Custom Search Engine ID
 YOUTUBE_API_KEY = os.getenv("YOUTUBE_API_KEY", "")
 
 # Internet RAG provider (optional)
@@ -35,10 +35,6 @@ USE_SUPABASE_STORAGE_FOR_IMAGES = os.getenv("USE_SUPABASE_STORAGE_FOR_IMAGES", "
 FORCE_WEB_SOURCES = os.getenv("FORCE_WEB_SOURCES", "0") == "1"
 FORCE_YOUTUBE = os.getenv("FORCE_YOUTUBE", "0") == "1"
 FORCE_IMAGES = os.getenv("FORCE_IMAGES", "0") == "1"
-
-# Hallucination resistance knobs
-STRICT_EVIDENCE_MODE = os.getenv("STRICT_EVIDENCE_MODE", "1") == "1"
-MAX_UNCITED_ITEMS_ALLOWED = int(os.getenv("MAX_UNCITED_ITEMS_ALLOWED", "0"))  # 0 = drop all uncited list items
 
 # -----------------------
 # PROMPT SIZE GUARDS
@@ -68,7 +64,6 @@ CITATIONS RULES (VERY IMPORTANT):
 - If you are not sure / not supported by evidence, say so and do not cite.
 """
 
-# ✅ GENERAL: remove Kdrama-specific instruction
 MODEL_JSON_INSTRUCTION = f"""
 You MUST respond in STRICT JSON with this schema (no markdown fences, no extra text before/after):
 
@@ -80,19 +75,11 @@ You MUST respond in STRICT JSON with this schema (no markdown fences, no extra t
 
   "web_query": "string (short query if need_web_sources)",
   "image_query": "string (short query if need_images)",
-  "youtube_query": "string (short query if need_youtube)",
-
-  "answer_items": [
-    {{
-      "text": "string (one list item / recommendation)",
-      "cite": 1
-    }}
-  ]
+  "youtube_query": "string (short query if need_youtube)"
 }}
 
 Rules:
-- answer_markdown is the final answer the user sees (may be empty if you instead fill answer_items).
-- answer_items is OPTIONAL but strongly preferred when web sources are used.
+- answer_markdown is the final answer the user sees.
 - Apply these formatting rules:
 {FORMAT_INSTRUCTION}
 
@@ -100,8 +87,7 @@ Rules:
 
 - If need_web_sources=false then web_query must be "" (same for image/youtube).
 - Do not invent citations. Only cite if evidence exists.
-- If the user includes a specific year (e.g., 2026), the web_query MUST include that year.
-- When web sources are provided, DO NOT list named items unless you can cite them.
+- If the user includes a specific year (e.g., 2026), the web_query MUST include that year and "kdrama"/"korean drama" when relevant.
 """
 
 # -----------------------
@@ -144,30 +130,27 @@ class AssistantPayload(BaseModel):
     sources: List[SourceItem] = Field(default_factory=list)
     images: List[ImageItem] = Field(default_factory=list)
     youtube: List[YouTubeItem] = Field(default_factory=list)
-    # Optional diagnostics (kept inside payload so you can inspect during dev)
-    diagnostics: Dict[str, Any] = Field(default_factory=dict)
 
 class ChatResponse(BaseModel):
     answer: str
     payload: AssistantPayload
 
 # -----------------------
-# ROUTING
+# Option A: Keyword Router + Option C: Escalation + Tool Budget
 # -----------------------
 _MEDIA_WORDS_RE = re.compile(r"\b(video|videos|youtube|yt|watch|tutorial|guide|how to|walkthrough)\b", re.I)
 _IMAGE_WORDS_RE = re.compile(r"\b(image|images|picture|pictures|photo|photos|png|jpg|jpeg|sticker|diagram|infographic|show me)\b", re.I)
 
+# ✅ UPDATED: web triggers are more "explicit web intent" + year-based "released in 2026"
+# - remove "now" and the generic "202[0-9]" trigger because it causes accidental web routing
 _WEB_WORDS_RE = re.compile(
-    r"\b(latest|news|today|current|update|updated|recent|price|pricing|cost|release|released|schedule|announcement|"
-    r"source|sources|link|links|cite|citation|according to|reference|verify|fact check)\b",
+    r"\b(latest|news|today|current|update|updated|recent|price|release|released|schedule|announcement|"
+    r"source|sources|link|links|cite|citation|according to|reference)\b",
     re.I,
 )
 
-# ✅ general time-sensitive: "best/top/new + 20xx"
-_YEAR_WEB_INTENT_RE = re.compile(
-    r"\b(released|release|airing|air|premiere|premiered|launch|launched|announced|new|best|top|recommended)\b.*\b(20\d{2})\b",
-    re.I,
-)
+# ✅ NEW: "year request" signals a time-sensitive lookup (e.g., "released in 2026")
+_YEAR_WEB_INTENT_RE = re.compile(r"\b(released|release|airing|air|premiere|premiered|new|best)\b.*\b(20\d{2})\b", re.I)
 
 _UNCERTAIN_RE = re.compile(
     r"\b(i (don't|do not) know|not sure|can't verify|cannot verify|unsure|might be|may be|could be|depends|"
@@ -189,6 +172,7 @@ def keyword_router(message: str) -> Dict[str, bool]:
         "want_web": want_web,
     }
 
+# ✅ FIX: Empty answer is NOT a signal that "web is needed"
 def looks_like_needs_web(answer_md: str) -> bool:
     if not answer_md or not answer_md.strip():
         return False
@@ -208,16 +192,35 @@ def make_fallback_query(message: str, max_len: int = 120) -> str:
     return (q[:max_len] if q else message[:max_len])
 
 def enforce_web_query_constraints(user_message: str, web_q: str) -> str:
-    # ✅ GENERAL: only enforce year(s). No topic forcing.
+    """
+    Guardrail: don't trust model's web_query completely (Llama 2 planner can hallucinate titles like "Vagabond").
+
+    If user asked for a year (e.g., 2026), enforce that year in web_q.
+    If user is asking about Kdrama, enforce 'kdrama' keyword.
+    """
     msg = (user_message or "").strip()
     q = (web_q or "").strip()
-    years = extract_years(msg)
 
+    years = extract_years(msg)
+    wants_kdrama = bool(re.search(r"\b(kdrama|k-drama|k drama|korean drama|k-drama)\b", msg, re.I)) or bool(
+        re.search(r"\b(kdrama|korean drama)\b", q, re.I)
+    )
+
+    # If model gave nothing, use user message
     if not q:
         q = msg[:120]
 
-    if years and not any(y in q for y in years):
-        q = f"{q} {years[0]}"
+    # If user specified year(s), enforce year presence
+    if years:
+        if not any(y in q for y in years):
+            q = f"{q} {years[0]}"
+
+    # Enforce topic keyword when it's clearly a kdrama query
+    # (If user said "Kdrama", we ensure query stays in that domain.)
+    if re.search(r"\b(kdrama|k-drama|korean drama)\b", msg, re.I) and not re.search(
+        r"\b(kdrama|k-drama|korean drama)\b", q, re.I
+    ):
+        q = f"{q} kdrama"
 
     q = re.sub(r"\s+", " ", q).strip()
     return q[:120]
@@ -228,10 +231,13 @@ def apply_tool_budget(
     need_img: bool,
     need_yt: bool,
 ) -> Tuple[bool, bool, bool]:
+    # Media only when user explicitly asked OR forced by env
     if not (user_flags.get("want_images") or FORCE_IMAGES):
         need_img = False
     if not (user_flags.get("want_youtube") or FORCE_YOUTUBE):
         need_yt = False
+
+    # Web is handled by "hard gate" policy in caller
     return need_web, need_img, need_yt
 
 # -----------------------
@@ -468,6 +474,8 @@ def extract_json(text: str) -> Dict[str, Any]:
         return json.loads(text)
     except Exception:
         pass
+
+    # ✅ more robust: first "{" to last "}"
     start = text.find("{")
     end = text.rfind("}")
     if start == -1 or end == -1 or end <= start:
@@ -477,24 +485,6 @@ def extract_json(text: str) -> Dict[str, Any]:
         return json.loads(candidate)
     except Exception:
         return {}
-
-def repair_json_instruction(user_message: str) -> str:
-    return f"""
-Return ONLY valid JSON (no extra text, no markdown fences) matching this schema:
-
-{{
-  "answer_markdown": "string",
-  "need_web_sources": true/false,
-  "need_images": true/false,
-  "need_youtube": true/false,
-  "web_query": "string",
-  "image_query": "string",
-  "youtube_query": "string",
-  "answer_items": [{{"text":"string","cite":1}}]
-}}
-
-User message: {user_message}
-"""
 
 def build_prompt(
     message: str,
@@ -550,20 +540,47 @@ async def call_cloudrun(prompt: str, timeout: httpx.Timeout) -> str:
         async with httpx.AsyncClient(timeout=timeout) as client:
             resp = await _post(client)
     except httpx.ReadTimeout as e:
-        print("CLOUD RUN READ TIMEOUT: retrying once", {"error": str(e) or repr(e)}, flush=True)
+        req_url = getattr(getattr(e, "request", None), "url", None)
+        print(
+            "CLOUD RUN READ TIMEOUT: retrying once",
+            {"url": str(req_url) if req_url else None, "error": str(e) or repr(e)},
+            flush=True,
+        )
         retry_timeout = httpx.Timeout(
             connect=timeout.connect,
             read=max(timeout.read or 0, 600.0),
             write=timeout.write,
             pool=timeout.pool,
         )
-        async with httpx.AsyncClient(timeout=retry_timeout) as retry_client:
-            resp = await _post(retry_client)
+        try:
+            async with httpx.AsyncClient(timeout=retry_timeout) as retry_client:
+                resp = await _post(retry_client)
+        except httpx.RequestError as e2:
+            req_url = getattr(getattr(e2, "request", None), "url", None)
+            err_type = type(e2).__name__
+            err_text = str(e2) or repr(e2)
+            print(
+                "CLOUD RUN REQUEST ERROR:",
+                {"type": err_type, "url": str(req_url) if req_url else None, "error": err_text},
+                flush=True,
+            )
+            raise HTTPException(
+                status_code=502,
+                detail=f"Cloud Run request failed ({err_type}): {err_text}",
+            )
     except httpx.RequestError as e:
+        req_url = getattr(getattr(e, "request", None), "url", None)
         err_type = type(e).__name__
         err_text = str(e) or repr(e)
-        print("CLOUD RUN REQUEST ERROR:", {"type": err_type, "error": err_text}, flush=True)
-        raise HTTPException(status_code=502, detail=f"Cloud Run request failed ({err_type}): {err_text}")
+        print(
+            "CLOUD RUN REQUEST ERROR:",
+            {"type": err_type, "url": str(req_url) if req_url else None, "error": err_text},
+            flush=True,
+        )
+        raise HTTPException(
+            status_code=502,
+            detail=f"Cloud Run request failed ({err_type}): {err_text}",
+        )
 
     if resp.status_code >= 400:
         raise HTTPException(status_code=502, detail=f"Cloud Run returned {resp.status_code}: {resp.text[:200]}")
@@ -578,9 +595,6 @@ async def call_cloudrun(prompt: str, timeout: httpx.Timeout) -> str:
         raise HTTPException(status_code=502, detail="Cloud Run response missing answer field")
     return raw
 
-# -----------------------
-# Article context helpers (unchanged)
-# -----------------------
 async def fetch_session_article_context(session_id: str) -> Dict[str, Any]:
     if not (SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY and session_id):
         return {}
@@ -694,8 +708,25 @@ async def update_session_article_cache(
     except Exception as e:
         print(f"CACHE UPDATE EXCEPTION: {e}", flush=True)
 
+def repair_json_instruction(user_message: str) -> str:
+    return f"""
+Return ONLY valid JSON (no extra text, no markdown fences) matching this schema:
+
+{{
+  "answer_markdown": "string",
+  "need_web_sources": true/false,
+  "need_images": true/false,
+  "need_youtube": true/false,
+  "web_query": "string",
+  "image_query": "string",
+  "youtube_query": "string"
+}}
+
+User message: {user_message}
+"""
+
 # -----------------------
-# Citation token validation
+# Inline citation token validation
 # -----------------------
 _CITE_TOKEN_RE = re.compile(r"\[\[cite:(\d+)\]\]")
 
@@ -713,86 +744,6 @@ def validate_and_clean_citations(answer_md: str, sources: List[SourceItem]) -> s
     out = re.sub(r"\n{3,}", "\n\n", out)
     return out.strip()
 
-def build_answer_from_items(answer_items: List[Dict[str, Any]], sources: List[SourceItem]) -> str:
-    """
-    Evidence-gated list builder:
-    - keep only items with valid cite index
-    - render numbered list with [[cite:n]]
-    """
-    if not answer_items:
-        return ""
-
-    max_n = len(sources)
-    kept = []
-    for it in answer_items:
-        txt = (it or {}).get("text") or ""
-        cite = (it or {}).get("cite")
-        if not txt.strip():
-            continue
-        if isinstance(cite, int) and 1 <= cite <= max_n:
-            kept.append((txt.strip(), cite))
-
-    if not kept:
-        return ""
-
-    lines = []
-    # one sentence intro is allowed, keep it minimal:
-    lines.append("Here are results supported by the retrieved sources:")
-    for i, (txt, cite) in enumerate(kept, start=1):
-        lines.append(f"{i}. {txt} [[cite:{cite}]]")
-    return "\n".join(lines).strip()
-
-def detect_uncited_numbered_lines(answer_md: str) -> int:
-    """
-    Count numbered-list lines that contain no [[cite:n]] token.
-    This is a generic hallucination signal.
-    """
-    bad = 0
-    for line in (answer_md or "").splitlines():
-        s = line.strip()
-        if not re.match(r"^\d+\.\s+", s):
-            continue
-        if not _CITE_TOKEN_RE.search(s):
-            bad += 1
-    return bad
-
-def compute_confidence(answer_md: str, sources: List[SourceItem]) -> Tuple[float, Dict[str, Any]]:
-    """
-    Simple, explainable confidence score.
-    - drops hard when list items are uncited while sources exist
-    - drops when answer contains uncertainty phrases
-    """
-    signals: Dict[str, Any] = {}
-    score = 0.60  # base
-
-    has_sources = len(sources) > 0
-    signals["has_sources"] = has_sources
-    signals["num_sources"] = len(sources)
-    signals["answer_len"] = len((answer_md or "").strip())
-
-    if has_sources:
-        # Encourage proper citations
-        uncited = detect_uncited_numbered_lines(answer_md)
-        signals["uncited_numbered_items"] = uncited
-        if uncited > 0:
-            score -= min(0.40, 0.15 * uncited)
-
-    if _UNCERTAIN_RE.search(answer_md or ""):
-        signals["contains_uncertainty_language"] = True
-        score -= 0.15
-    else:
-        signals["contains_uncertainty_language"] = False
-
-    if not (answer_md or "").strip():
-        score = 0.05
-        signals["empty_answer"] = True
-    else:
-        signals["empty_answer"] = False
-
-    # Clamp
-    score = max(0.0, min(1.0, score))
-    return score, signals
-
 # -----------------------
 # CLOUD CALL
 # -----------------------
@@ -808,6 +759,7 @@ async def generate_cloud_structured(
     if not LLAMA_CLOUDRUN_URL:
         raise HTTPException(status_code=500, detail="LLAMA_CLOUDRUN_URL missing in .env")
 
+    # Moderation placeholder
     mod = await moderation_check(message)
     if not mod.get("allowed", True):
         return AssistantPayload(
@@ -815,7 +767,6 @@ async def generate_cloud_structured(
             sources=[],
             images=[],
             youtube=[],
-            diagnostics={"moderation": mod},
         )
 
     # Article context
@@ -825,7 +776,11 @@ async def generate_cloud_structured(
         article_block = cached_block
     elif article_url:
         article_block, scraped_text = await fetch_article_context(article_url, article_title or "")
-        await update_session_article_cache(session_id=session_id, article_context=article_context, scraped_text=scraped_text)
+        await update_session_article_cache(
+            session_id=session_id,
+            article_context=article_context,
+            scraped_text=scraped_text,
+        )
 
     # Internal RAG placeholder
     rag_chunks = await rag_retrieve(message, k=4)
@@ -834,35 +789,42 @@ async def generate_cloud_structured(
     timeout = httpx.Timeout(connect=10.0, read=300.0, write=10.0, pool=10.0)
     trimmed_history = history[-max_history:] if max_history and max_history > 0 else []
 
-    # 1) Draft plan
-    raw = await call_cloudrun(build_prompt(message, trimmed_history, rag_block=rag_block, article_block=article_block), timeout=timeout)
+    # ✅ Draft answer first (no tools yet)
+    raw = await call_cloudrun(
+        build_prompt(message, trimmed_history, rag_block=rag_block, article_block=article_block),
+        timeout=timeout,
+    )
     plan = extract_json(raw)
 
-    if not plan or "answer_markdown" not in plan:
+    # ✅ Better repair (include broken output)
+    if not plan or "answer_markdown" not in plan or not (plan.get("answer_markdown") or "").strip():
         repair_prompt = repair_json_instruction(message) + "\n\nMODEL OUTPUT TO REPAIR:\n" + raw[:2000]
         raw_fix = await call_cloudrun(repair_prompt, timeout=timeout)
-        plan = extract_json(raw_fix) or {}
+        plan = extract_json(raw_fix) or plan or {}
 
     answer_md = (plan.get("answer_markdown") or "").strip()
-    answer_items = plan.get("answer_items") or []
 
+    # Model suggestions (soft)
     need_web = bool(plan.get("need_web_sources"))
     need_img = bool(plan.get("need_images"))
     need_yt = bool(plan.get("need_youtube"))
-
     web_q = (plan.get("web_query") or "").strip()
     img_q = (plan.get("image_query") or "").strip()
     yt_q = (plan.get("youtube_query") or "").strip()
 
-    # 2) Deterministic keyword routing
+    # ✅ Deterministic keyword routing
     user_flags = keyword_router(message)
-    escalate_web = bool(user_flags.get("want_web")) or looks_like_needs_web(answer_md)
-    allow_web = bool(user_flags.get("want_web")) or FORCE_WEB_SOURCES or escalate_web
 
+    # ✅ Escalate web only when truly needed (and NOT due to empty answer)
+    escalate_web = bool(user_flags.get("want_web")) or looks_like_needs_web(answer_md)
+
+    # ✅ HARD POLICY GATE: allow web only if user asked OR forced OR escalation
+    allow_web = bool(user_flags.get("want_web")) or FORCE_WEB_SOURCES or escalate_web
     if not allow_web:
         need_web = False
         web_q = ""
 
+    # Env force flags
     if FORCE_WEB_SOURCES:
         need_web = True
     if FORCE_IMAGES:
@@ -870,22 +832,31 @@ async def generate_cloud_structured(
     if FORCE_YOUTUBE:
         need_yt = True
 
+    # Explicit user request overrides model
     if user_flags.get("want_images"):
         need_img = True
     if user_flags.get("want_youtube"):
         need_yt = True
 
+    # Only elevate web if allowed by policy
     if allow_web and escalate_web:
         need_web = True
+    if not allow_web:
+        need_web = False
+        web_q = ""
 
+    # ✅ Tool budget: prevent unwanted media spam
     need_web, need_img, need_yt = apply_tool_budget(user_flags, need_web, need_img, need_yt)
 
+    # ✅ Query fallbacks + keyword constraint enforcement
     if need_web:
         years = extract_years(message)
+        # If user asked for a year, lock query to the user's message (don't trust model's web_q)
         if years:
             web_q = make_fallback_query(message, max_len=120)
         elif not web_q:
             web_q = make_fallback_query(article_title or message, max_len=120)
+
         web_q = enforce_web_query_constraints(message, web_q)
 
     if need_img and not img_q:
@@ -893,25 +864,35 @@ async def generate_cloud_structured(
     if need_yt and not yt_q:
         yt_q = make_fallback_query(message, max_len=120)
 
-    print("ROUTED FLAGS:", {
-        "need_web": need_web, "web_q": web_q,
-        "need_img": need_img, "img_q": img_q,
-        "need_yt": need_yt, "yt_q": yt_q,
-        "user_flags": user_flags,
-        "escalate_web": escalate_web,
-        "allow_web": allow_web,
-    }, flush=True)
+    print(
+        "ROUTED FLAGS:",
+        {
+            "need_web": need_web,
+            "web_q": web_q,
+            "need_img": need_img,
+            "img_q": img_q,
+            "need_yt": need_yt,
+            "yt_q": yt_q,
+            "answer_len": len(answer_md),
+            "user_flags": user_flags,
+            "escalate_web": escalate_web,
+            "allow_web": allow_web,
+        },
+        flush=True,
+    )
 
     sources: List[SourceItem] = []
     images: List[ImageItem] = []
     youtube: List[YouTubeItem] = []
-    evidence_chunks: List[Dict[str, str]] = []
 
-    # 3) Web + evidence + second pass
+    # 3) Web sources + evidence + second pass answer (only if need_web)
+    evidence_chunks: List[Dict[str, str]] = []
     if need_web and web_q:
         sources = await google_web_search(web_q, num=7)
 
-        tav_sources, tav_chunks = await internet_rag_search_and_extract(web_q, max_sources=min(6, len(sources) or 6))
+        tav_sources, tav_chunks = await internet_rag_search_and_extract(
+            web_q, max_sources=min(6, len(sources) or 6)
+        )
         if tav_sources:
             seen = {s.url.lower(): s for s in sources if s.url}
             for s in tav_sources:
@@ -924,6 +905,7 @@ async def generate_cloud_structured(
 
         web_evidence_block = build_web_evidence_block(sources, evidence_chunks)
 
+        # ✅ second pass should fail-soft (no 502)
         raw2 = ""
         try:
             raw2 = await call_cloudrun(
@@ -940,77 +922,39 @@ async def generate_cloud_structured(
             print("SECOND PASS CLOUDRUN FAILED:", e.detail, flush=True)
 
         plan2 = extract_json(raw2) if raw2 else {}
-        if raw2 and (not plan2 or "answer_markdown" not in plan2):
+
+        # ✅ Repair second pass too (include broken output)
+        if raw2 and (not plan2 or "answer_markdown" not in plan2 or not (plan2.get("answer_markdown") or "").strip()):
             try:
                 repair2 = repair_json_instruction(message) + "\n\nMODEL OUTPUT TO REPAIR:\n" + raw2[:2000]
                 raw2_fix = await call_cloudrun(repair2, timeout=timeout)
-                plan2 = extract_json(raw2_fix) or {}
+                plan2 = extract_json(raw2_fix) or plan2 or {}
             except HTTPException as e:
                 print("SECOND PASS REPAIR FAILED:", e.detail, flush=True)
 
-        if plan2:
-            answer_md = (plan2.get("answer_markdown") or answer_md).strip()
-            answer_items = plan2.get("answer_items") or answer_items
+        if plan2 and (plan2.get("answer_markdown") or "").strip():
+            answer_md = (plan2.get("answer_markdown") or "").strip()
 
+        # Soft updates from plan2
+        if plan2:
             need_img = bool(plan2.get("need_images", need_img))
             need_yt = bool(plan2.get("need_youtube", need_yt))
             img_q = (plan2.get("image_query") or img_q).strip()
             yt_q = (plan2.get("youtube_query") or yt_q).strip()
+            web_q2 = (plan2.get("web_query") or "").strip()
+            if web_q2:
+                web_q = enforce_web_query_constraints(message, web_q2)
 
+        # ✅ Re-apply tool budget to stop model from forcing media unexpectedly
         need_web, need_img, need_yt = apply_tool_budget(user_flags, need_web, need_img, need_yt)
+
+        # Fallbacks again
         if need_img and not img_q:
             img_q = make_fallback_query(message, max_len=120)
         if need_yt and not yt_q:
             yt_q = make_fallback_query(message, max_len=120)
 
-    # 4) STRICT EVIDENCE MODE: build final answer from answer_items (cited)
-    if STRICT_EVIDENCE_MODE and sources:
-        built = build_answer_from_items(answer_items if isinstance(answer_items, list) else [], sources)
-        if built:
-            answer_md = built
-
-    # 5) Final fallback if still empty
-    if not answer_md:
-        if sources:
-            answer_md = "I found sources, but couldn’t confidently extract a supported answer from them. Please rephrase your question."
-        else:
-            answer_md = "I couldn’t generate the response just now. Try asking again or rephrasing."
-
-    # 6) Validate citation tokens (and optionally drop uncited list items)
-    if sources:
-        answer_md = validate_and_clean_citations(answer_md, sources)
-        if STRICT_EVIDENCE_MODE:
-            # Drop uncited numbered lines if any exist
-            lines = []
-            dropped = 0
-            for line in answer_md.splitlines():
-                s = line.strip()
-                if re.match(r"^\d+\.\s+", s) and not _CITE_TOKEN_RE.search(s):
-                    dropped += 1
-                    continue
-                lines.append(line)
-            if dropped > MAX_UNCITED_ITEMS_ALLOWED:
-                answer_md = "\n".join(lines).strip() or "I couldn't find enough supported information in the retrieved sources."
-    else:
-        answer_md = _CITE_TOKEN_RE.sub("", answer_md).strip()
-
-    # 7) Confidence + diagnostics
-    conf, signals = compute_confidence(answer_md, sources)
-    diagnostics = {
-        "confidence": conf,
-        "signals": signals,
-        "need_web": need_web,
-        "web_q": web_q,
-        "need_img": need_img,
-        "img_q": img_q,
-        "need_yt": need_yt,
-        "yt_q": yt_q,
-        "strict_evidence_mode": STRICT_EVIDENCE_MODE,
-    }
-
-    print("DIAGNOSTICS:", diagnostics, flush=True)
-
-    # 8) Images
+    # 4) Images
     if need_img and img_q:
         img_results = await google_image_search(img_q, num=4)
         print("IMAGE RESULTS:", len(img_results), flush=True)
@@ -1032,21 +976,33 @@ async def generate_cloud_structured(
 
         images = [im for im in images if im.url]
 
-    # 9) YouTube
+    # 5) YouTube
     if need_yt and yt_q:
         youtube = await youtube_search(yt_q, num=2)
         print("YOUTUBE RESULTS:", len(youtube), flush=True)
+
+    # 6) Final fallback if answer_md still empty
+    if not answer_md:
+        answer_md = (
+            "I couldn’t generate the full response just now, but I’ve gathered the requested resources below. "
+            "Try asking again or rephrasing and I’ll retry."
+        )
+
+    # 7) Validate citation tokens
+    if sources:
+        answer_md = validate_and_clean_citations(answer_md, sources)
+    else:
+        answer_md = _CITE_TOKEN_RE.sub("", answer_md).strip()
 
     return AssistantPayload(
         answer_markdown=answer_md,
         sources=sources,
         images=images,
         youtube=youtube,
-        diagnostics=diagnostics,
     )
 
 # -----------------------
-# Persist assistant payload (optional)
+# Persist assistant payload into chat_messages.meta (optional)
 # -----------------------
 async def persist_assistant_message(
     session_id: str,
