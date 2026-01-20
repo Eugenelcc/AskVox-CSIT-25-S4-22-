@@ -9,14 +9,12 @@
   .uv-hero {
     position: relative;
     width: 100%;
-    min-height: calc(100vh - 360px); /* keep center comfortably above input */
+    min-height: calc(100vh - 220px); /* adnust for top bar & chatbar */
   
     display: flex;
     flex-direction: column;
     align-items: center;
     justify-content: center; /* centers orb vertically  */
-    /* reserve ample vertical space so caption stays above fixed chatbar */
-    padding-bottom: clamp(320px, 30vh, 480px);
   
     pointer-events: none; /* orb handles clicks */
   }
@@ -74,21 +72,11 @@
   .orb-caption {
     font-family: "ABeeZee", system-ui, -apple-system, BlinkMacSystemFont,
       "Segoe UI", sans-serif;
-    /* Keep caption compact on chat page; override component default */
-    font-size: clamp(22px, 2.4vw, 32px) !important;
+    font-size: 40px;
     line-height: 1.4;
     letter-spacing: 0.02em;
     color: #f0f0f0;
     text-align: center;
-  }
-
-  /* Match caption line width to chat input width and keep on one line */
-  .uv-hero .orb-caption {
-    width: min(900px, calc(100% - 160px));
-    margin: 0 auto 48px; /* extra gap above input */
-    white-space: nowrap;
-    position: relative;
-    z-index: 5; /* sit beneath input if overlapping due to viewport */
   }
   
   
@@ -153,26 +141,6 @@
     text-align: left;
     cursor: pointer;
     padding: 0;
-
-  }
-  /* Fixed caption aligned with ChatBar width and offset */
-  .av-chatbar-caption {
-    position: fixed;
-    left: var(--content-offset, 80px);
-    right: 0;
-    bottom: 172px; /* 156px baseline + 16px visual gap above input */
-    width: auto;
-    display: flex;
-    justify-content: center;
-    pointer-events: none; /* allow clicks to pass to the page */
-    z-index: 19; /* just below chatbar (20) so no overlap issues */
-  }
-
-  .av-chatbar-caption .orb-caption {
-    width: min(900px, calc(100% - 160px));
-    margin: 0;
-    white-space: nowrap;
-    font-size: clamp(20px, 2vw, 28px) !important;
   }
   
   /* Folder Modal */
@@ -190,4 +158,6 @@
   .fm-btnSecondary{background:#333;border-color:#5a3c18}
   .fm-btnPrimary{background:#434343;border-color:#754B1C}
   
+
+
 

@@ -11,7 +11,7 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
-router = APIRouter(prefix="/llamachats", tags=["llamachat-plus"])
+router = APIRouter(prefix="/llamachats-multi", tags=["llamachat-plus"])
 
 # -----------------------
 # ENV
@@ -486,6 +486,29 @@ def extract_json(text: str) -> Dict[str, Any]:
     except Exception:
         return {}
 
+def extract_fallback_answer(text: str) -> str:
+    if not text:
+        return ""
+    # Try to recover answer_markdown from malformed JSON
+    try:
+        data = json.loads(text)
+        if isinstance(data, dict):
+            ans = (data.get("answer_markdown") or "").strip()
+            if ans:
+                return ans
+    except Exception:
+        pass
+
+    match = re.search(r"\"answer_markdown\"\s*:\s*\"(.*?)\"", text, re.S)
+    if match:
+        raw_str = match.group(1)
+        try:
+            return json.loads(f"\"{raw_str}\"").strip()
+        except Exception:
+            return raw_str.strip()
+
+    return ""
+
 def build_prompt(
     message: str,
     history: List[HistoryItem],
@@ -803,6 +826,10 @@ async def generate_cloud_structured(
         plan = extract_json(raw_fix) or plan or {}
 
     answer_md = (plan.get("answer_markdown") or "").strip()
+    if not answer_md:
+        answer_md = extract_fallback_answer(raw)
+    if not answer_md:
+        answer_md = extract_fallback_answer(raw_fix if "raw_fix" in locals() else "")
 
     # Model suggestions (soft)
     need_web = bool(plan.get("need_web_sources"))
@@ -934,6 +961,8 @@ async def generate_cloud_structured(
 
         if plan2 and (plan2.get("answer_markdown") or "").strip():
             answer_md = (plan2.get("answer_markdown") or "").strip()
+        if not answer_md:
+            answer_md = extract_fallback_answer(raw2)
 
         # Soft updates from plan2
         if plan2:

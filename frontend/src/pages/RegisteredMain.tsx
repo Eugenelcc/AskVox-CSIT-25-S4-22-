@@ -623,7 +623,7 @@ export default function Dashboard({
       const llamaStart = performance.now();
       console.time("llama_request_ms");
       // 5. Call AI API
-      const response = await fetch(`${API_BASE_URL}/llamachats/cloud_plus`, {
+      const response = await fetch(`${API_BASE_URL}/llamachats-multi/cloud_plus`, { //MultiModel llamachat.py
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(llamaPayload)
