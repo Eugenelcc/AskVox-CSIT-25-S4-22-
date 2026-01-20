@@ -79,7 +79,7 @@ You MUST respond in STRICT JSON with this schema (no markdown fences, no extra t
 }}
 
 Rules:
-- answer_markdown is the final answer the user sees.
+- answer_markdown is the final answer the user sees. It should be a full, informative response.
 - Apply these formatting rules:
 {FORMAT_INSTRUCTION}
 
@@ -811,45 +811,181 @@ async def generate_cloud_structured(
 
     timeout = httpx.Timeout(connect=10.0, read=300.0, write=10.0, pool=10.0)
     trimmed_history = history[-max_history:] if max_history and max_history > 0 else []
-
-    # ✅ Draft answer first (no tools yet)
-    raw = await call_cloudrun(
-        build_prompt(message, trimmed_history, rag_block=rag_block, article_block=article_block),
-        timeout=timeout,
-    )
-    plan = extract_json(raw)
-
-    # ✅ Better repair (include broken output)
-    if not plan or "answer_markdown" not in plan or not (plan.get("answer_markdown") or "").strip():
-        repair_prompt = repair_json_instruction(message) + "\n\nMODEL OUTPUT TO REPAIR:\n" + raw[:2000]
-        raw_fix = await call_cloudrun(repair_prompt, timeout=timeout)
-        plan = extract_json(raw_fix) or plan or {}
-
-    answer_md = (plan.get("answer_markdown") or "").strip()
-    if not answer_md:
-        answer_md = extract_fallback_answer(raw)
-    if not answer_md:
-        answer_md = extract_fallback_answer(raw_fix if "raw_fix" in locals() else "")
-
-    # Model suggestions (soft)
-    need_web = bool(plan.get("need_web_sources"))
-    need_img = bool(plan.get("need_images"))
-    need_yt = bool(plan.get("need_youtube"))
-    web_q = (plan.get("web_query") or "").strip()
-    img_q = (plan.get("image_query") or "").strip()
-    yt_q = (plan.get("youtube_query") or "").strip()
-
-    # ✅ Deterministic keyword routing
+    # ✅ Deterministic keyword routing (early for hybrid flow)
     user_flags = keyword_router(message)
 
-    # ✅ Escalate web only when truly needed (and NOT due to empty answer)
-    escalate_web = bool(user_flags.get("want_web")) or looks_like_needs_web(answer_md)
+    raw = ""
+    raw_fix = ""
+    answer_md = ""
+    plan: Dict[str, Any] = {}
 
-    # ✅ HARD POLICY GATE: allow web only if user asked OR forced OR escalation
-    allow_web = bool(user_flags.get("want_web")) or FORCE_WEB_SOURCES or escalate_web
-    if not allow_web:
-        need_web = False
-        web_q = ""
+    need_web = False
+    need_img = False
+    need_yt = False
+    web_q = ""
+    img_q = ""
+    yt_q = ""
+
+    sources: List[SourceItem] = []
+    images: List[ImageItem] = []
+    youtube: List[YouTubeItem] = []
+    evidence_chunks: List[Dict[str, str]] = []
+
+    allow_web_base = bool(user_flags.get("want_web")) or FORCE_WEB_SOURCES
+    allow_web = allow_web_base
+    escalate_web = False
+
+    async def fetch_web_sources(query: str) -> Tuple[List[SourceItem], List[Dict[str, str]]]:
+        base_sources = await google_web_search(query, num=3)
+        evidence: List[Dict[str, str]] = []
+
+        need_tav = max(0, 3 - len(base_sources))
+        if need_tav > 0:
+            tav_sources, tav_chunks = await internet_rag_search_and_extract(
+                query, max_sources=min(3, need_tav)
+            )
+            if tav_sources:
+                seen = {s.url.lower(): s for s in base_sources if s.url}
+                for s in tav_sources:
+                    key = (s.url or "").lower()
+                    if not key or key in seen:
+                        continue
+                    base_sources.append(s)
+                    seen[key] = s
+            evidence = tav_chunks
+
+        return base_sources, evidence
+
+    # --- Hybrid: single-pass with evidence if user requested web ---
+    if allow_web_base:
+        need_web = True
+        web_q = make_fallback_query(article_title or message, max_len=120)
+        web_q = enforce_web_query_constraints(message, web_q)
+
+        if web_q:
+            sources, evidence_chunks = await fetch_web_sources(web_q)
+
+        web_evidence_block = build_web_evidence_block(sources, evidence_chunks)
+
+        raw = await call_cloudrun(
+            build_prompt(
+                message,
+                trimmed_history,
+                rag_block=rag_block,
+                web_evidence_block=web_evidence_block,
+                article_block=article_block,
+            ),
+            timeout=timeout,
+        )
+        print("CLOUDRUN RAW (web pass) len:", len(raw), "snippet:", raw[:500], flush=True)
+        plan = extract_json(raw)
+
+        if not plan or "answer_markdown" not in plan or not (plan.get("answer_markdown") or "").strip():
+            repair_prompt = repair_json_instruction(message) + "\n\nMODEL OUTPUT TO REPAIR:\n" + raw[:2000]
+            raw_fix = await call_cloudrun(repair_prompt, timeout=timeout)
+            plan = extract_json(raw_fix) or plan or {}
+
+        answer_md = (plan.get("answer_markdown") or "").strip()
+        if not answer_md:
+            answer_md = extract_fallback_answer(raw)
+        if not answer_md and raw_fix:
+            answer_md = extract_fallback_answer(raw_fix)
+        if not answer_md and raw:
+            answer_md = raw.strip()
+
+        need_img = bool(plan.get("need_images"))
+        need_yt = bool(plan.get("need_youtube"))
+        img_q = (plan.get("image_query") or "").strip()
+        yt_q = (plan.get("youtube_query") or "").strip()
+    else:
+        # --- Single-pass without web, then optional second pass only if needed ---
+        raw = await call_cloudrun(
+            build_prompt(message, trimmed_history, rag_block=rag_block, article_block=article_block),
+            timeout=timeout,
+        )
+        print("CLOUDRUN RAW (no-web pass) len:", len(raw), "snippet:", raw[:500], flush=True)
+        plan = extract_json(raw)
+
+        if not plan or "answer_markdown" not in plan or not (plan.get("answer_markdown") or "").strip():
+            repair_prompt = repair_json_instruction(message) + "\n\nMODEL OUTPUT TO REPAIR:\n" + raw[:2000]
+            raw_fix = await call_cloudrun(repair_prompt, timeout=timeout)
+            plan = extract_json(raw_fix) or plan or {}
+
+        answer_md = (plan.get("answer_markdown") or "").strip()
+        if not answer_md:
+            answer_md = extract_fallback_answer(raw)
+        if not answer_md and raw_fix:
+            answer_md = extract_fallback_answer(raw_fix)
+        if not answer_md and raw:
+            answer_md = raw.strip()
+
+        need_web = bool(plan.get("need_web_sources"))
+        need_img = bool(plan.get("need_images"))
+        need_yt = bool(plan.get("need_youtube"))
+        web_q = (plan.get("web_query") or "").strip()
+        img_q = (plan.get("image_query") or "").strip()
+        yt_q = (plan.get("youtube_query") or "").strip()
+
+        # Escalate web only when needed
+        uncertain = looks_like_needs_web(answer_md)
+        escalate_web = bool(user_flags.get("want_web")) or uncertain
+        if uncertain:
+            print("UNCERTAINTY DETECTED -> enabling web sources", flush=True)
+        allow_web = bool(user_flags.get("want_web")) or FORCE_WEB_SOURCES or escalate_web
+        if allow_web and (need_web or escalate_web):
+            need_web = True
+            years = extract_years(message)
+            if years:
+                web_q = make_fallback_query(message, max_len=120)
+            elif not web_q:
+                web_q = make_fallback_query(article_title or message, max_len=120)
+            web_q = enforce_web_query_constraints(message, web_q)
+
+            if web_q:
+                sources, evidence_chunks = await fetch_web_sources(web_q)
+
+            web_evidence_block = build_web_evidence_block(sources, evidence_chunks)
+
+            raw2 = ""
+            try:
+                raw2 = await call_cloudrun(
+                    build_prompt(
+                        message,
+                        trimmed_history,
+                        rag_block=rag_block,
+                        web_evidence_block=web_evidence_block,
+                        article_block=article_block,
+                    ),
+                    timeout=timeout,
+                )
+                print("CLOUDRUN RAW (web second pass) len:", len(raw2), "snippet:", raw2[:500], flush=True)
+            except HTTPException as e:
+                print("SECOND PASS CLOUDRUN FAILED:", e.detail, flush=True)
+
+            plan2 = extract_json(raw2) if raw2 else {}
+            if raw2 and (not plan2 or "answer_markdown" not in plan2 or not (plan2.get("answer_markdown") or "").strip()):
+                try:
+                    repair2 = repair_json_instruction(message) + "\n\nMODEL OUTPUT TO REPAIR:\n" + raw2[:2000]
+                    raw2_fix = await call_cloudrun(repair2, timeout=timeout)
+                    plan2 = extract_json(raw2_fix) or plan2 or {}
+                except HTTPException as e:
+                    print("SECOND PASS REPAIR FAILED:", e.detail, flush=True)
+
+            if plan2 and (plan2.get("answer_markdown") or "").strip():
+                answer_md = (plan2.get("answer_markdown") or "").strip()
+            if not answer_md:
+                answer_md = extract_fallback_answer(raw2)
+            if not answer_md and raw2:
+                answer_md = raw2.strip()
+
+            if plan2:
+                need_img = bool(plan2.get("need_images", need_img))
+                need_yt = bool(plan2.get("need_youtube", need_yt))
+                img_q = (plan2.get("image_query") or img_q).strip()
+                yt_q = (plan2.get("youtube_query") or yt_q).strip()
+        else:
+            need_web = False
+            web_q = ""
 
     # Env force flags
     if FORCE_WEB_SOURCES:
@@ -865,27 +1001,10 @@ async def generate_cloud_structured(
     if user_flags.get("want_youtube"):
         need_yt = True
 
-    # Only elevate web if allowed by policy
-    if allow_web and escalate_web:
-        need_web = True
-    if not allow_web:
-        need_web = False
-        web_q = ""
-
     # ✅ Tool budget: prevent unwanted media spam
     need_web, need_img, need_yt = apply_tool_budget(user_flags, need_web, need_img, need_yt)
 
-    # ✅ Query fallbacks + keyword constraint enforcement
-    if need_web:
-        years = extract_years(message)
-        # If user asked for a year, lock query to the user's message (don't trust model's web_q)
-        if years:
-            web_q = make_fallback_query(message, max_len=120)
-        elif not web_q:
-            web_q = make_fallback_query(article_title or message, max_len=120)
-
-        web_q = enforce_web_query_constraints(message, web_q)
-
+    # ✅ Query fallbacks
     if need_img and not img_q:
         img_q = make_fallback_query(message, max_len=120)
     if need_yt and not yt_q:
@@ -907,81 +1026,6 @@ async def generate_cloud_structured(
         },
         flush=True,
     )
-
-    sources: List[SourceItem] = []
-    images: List[ImageItem] = []
-    youtube: List[YouTubeItem] = []
-
-    # 3) Web sources + evidence + second pass answer (only if need_web)
-    evidence_chunks: List[Dict[str, str]] = []
-    if need_web and web_q:
-        sources = await google_web_search(web_q, num=7)
-
-        tav_sources, tav_chunks = await internet_rag_search_and_extract(
-            web_q, max_sources=min(6, len(sources) or 6)
-        )
-        if tav_sources:
-            seen = {s.url.lower(): s for s in sources if s.url}
-            for s in tav_sources:
-                key = (s.url or "").lower()
-                if not key or key in seen:
-                    continue
-                sources.append(s)
-                seen[key] = s
-        evidence_chunks = tav_chunks
-
-        web_evidence_block = build_web_evidence_block(sources, evidence_chunks)
-
-        # ✅ second pass should fail-soft (no 502)
-        raw2 = ""
-        try:
-            raw2 = await call_cloudrun(
-                build_prompt(
-                    message,
-                    trimmed_history,
-                    rag_block=rag_block,
-                    web_evidence_block=web_evidence_block,
-                    article_block=article_block,
-                ),
-                timeout=timeout,
-            )
-        except HTTPException as e:
-            print("SECOND PASS CLOUDRUN FAILED:", e.detail, flush=True)
-
-        plan2 = extract_json(raw2) if raw2 else {}
-
-        # ✅ Repair second pass too (include broken output)
-        if raw2 and (not plan2 or "answer_markdown" not in plan2 or not (plan2.get("answer_markdown") or "").strip()):
-            try:
-                repair2 = repair_json_instruction(message) + "\n\nMODEL OUTPUT TO REPAIR:\n" + raw2[:2000]
-                raw2_fix = await call_cloudrun(repair2, timeout=timeout)
-                plan2 = extract_json(raw2_fix) or plan2 or {}
-            except HTTPException as e:
-                print("SECOND PASS REPAIR FAILED:", e.detail, flush=True)
-
-        if plan2 and (plan2.get("answer_markdown") or "").strip():
-            answer_md = (plan2.get("answer_markdown") or "").strip()
-        if not answer_md:
-            answer_md = extract_fallback_answer(raw2)
-
-        # Soft updates from plan2
-        if plan2:
-            need_img = bool(plan2.get("need_images", need_img))
-            need_yt = bool(plan2.get("need_youtube", need_yt))
-            img_q = (plan2.get("image_query") or img_q).strip()
-            yt_q = (plan2.get("youtube_query") or yt_q).strip()
-            web_q2 = (plan2.get("web_query") or "").strip()
-            if web_q2:
-                web_q = enforce_web_query_constraints(message, web_q2)
-
-        # ✅ Re-apply tool budget to stop model from forcing media unexpectedly
-        need_web, need_img, need_yt = apply_tool_budget(user_flags, need_web, need_img, need_yt)
-
-        # Fallbacks again
-        if need_img and not img_q:
-            img_q = make_fallback_query(message, max_len=120)
-        if need_yt and not yt_q:
-            yt_q = make_fallback_query(message, max_len=120)
 
     # 4) Images
     if need_img and img_q:
