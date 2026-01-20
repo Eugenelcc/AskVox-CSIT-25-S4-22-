@@ -306,6 +306,15 @@
   .av-menuItem:hover {
     background: rgba(255,255,255,0.06);
   }
+
+  /* danger action */
+  .av-menuItem--danger {
+    color: #ff6b6b;
+  }
+
+  .av-menuItem--danger:hover {
+    background: rgba(255, 107, 107, 0.12);
+  }
   
   .av-menuDivider {
     height: 2px;

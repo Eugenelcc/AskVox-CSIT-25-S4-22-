@@ -21,8 +21,20 @@ export default function Register() {
   // Profile picture 
   const [avatarFile, setAvatarFile] = useState<File | null>(null);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
+  const formCardRef = useRef<HTMLDivElement | null>(null);
+  const [scale, setScale] = useState(1);
 
   const navigate = useNavigate();
+  // If redirected here due to incomplete signup from Login, show a gentle tip
+  useEffect(() => {
+    const p = new URLSearchParams(window.location.search);
+    const err = p.get("err");
+    if (err === "complete_signup_first") {
+      // Optionally prefill email if provided
+      const em = p.get("email") || "";
+      if (em) setEmail(em);
+    }
+  }, []);
 
   const [showPass, setShowPass] = useState(false);
 
@@ -37,6 +49,30 @@ export default function Register() {
       if (avatarPreviewUrl) URL.revokeObjectURL(avatarPreviewUrl);
     };
   }, [avatarPreviewUrl]);
+
+  // Auto-scale the register card to always fit within viewport at any zoom
+  useEffect(() => {
+    const recomputeScale = () => {
+      const el = formCardRef.current;
+      if (!el) return;
+      // Measure the natural (unscaled) height
+      const natural = el.offsetHeight || 0;
+      // Keep a little breathing room top/bottom
+      const available = Math.max(0, window.innerHeight - 48);
+      const next = natural > 0 ? Math.min(1, available / natural) : 1;
+      // Avoid jitter: only update when change is meaningful
+      setScale((prev) => (Math.abs(prev - next) > 0.01 ? next : prev));
+    };
+    // First measure after paint
+    const t = window.setTimeout(recomputeScale, 0);
+    window.addEventListener("resize", recomputeScale);
+    window.addEventListener("orientationchange", recomputeScale);
+    return () => {
+      window.clearTimeout(t);
+      window.removeEventListener("resize", recomputeScale);
+      window.removeEventListener("orientationchange", recomputeScale);
+    };
+  }, []);
 
   const openFilePicker = () => fileInputRef.current?.click();
 
@@ -121,7 +157,7 @@ export default function Register() {
   const handleGoogleLogin = async () => {
     const { error } = await supabase.auth.signInWithOAuth({
       provider: "google",
-      options: { redirectTo: `${window.location.origin}/reguserhome` },
+      options: { redirectTo: `${window.location.origin}/auth/oauth-callback?intent=register`, queryParams: { prompt: "select_account" } },
     });
     if (error) alert(error.message);
   };
@@ -136,7 +172,8 @@ export default function Register() {
       <Background />
 
       <div className={`${styles.registerContainer} uv-responsive-container`}>
-        <div className={`${styles.registerForm} uv-responsive-form`}>
+        <div style={{ transform: scale < 1 ? `scale(${scale})` : undefined, transformOrigin: "top center", willChange: "transform" }}>
+          <div ref={formCardRef} className={`${styles.registerForm} uv-responsive-form`}>
           {/* To close */}
           <button
             type="button"
@@ -351,6 +388,7 @@ export default function Register() {
               Log in
             </Link>
           </p>
+          </div>
         </div>
       </div>
     </div>

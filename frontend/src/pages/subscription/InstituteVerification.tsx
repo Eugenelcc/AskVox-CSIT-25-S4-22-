@@ -19,14 +19,12 @@ export default function InstituteVerification() {
   const [submitted, setSubmitted] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const [hasPending, setHasPending] = useState(false);
-  const [checkingPending, setCheckingPending] = useState(true);
   const [error, setError] = useState<string | null>(null);
   // Check for existing pending verification request and lock UI if present
   useEffect(() => {
     let mounted = true;
     const check = async () => {
       try {
-        setCheckingPending(true);
         const { data: userRes, error: userErr } = await supabase.auth.getUser();
         if (userErr) throw userErr;
         const uid = userRes?.user?.id;
@@ -48,7 +46,7 @@ export default function InstituteVerification() {
         // Non-fatal; allow submission attempt, but show error
         if (mounted) setError((e as any)?.message || "Failed to check pending requests");
       } finally {
-        if (mounted) setCheckingPending(false);
+        if (!mounted) return;
       }
     };
     check();

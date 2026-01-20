@@ -12,6 +12,7 @@ type Profile = {
   gender: string | null;
   dob: string | null;
   avatar_url: string | null; // URL or storage path
+  learning_preference?: string | null;
 };
 
 export default function AccountDetails({ session }: { session: Session }) {
@@ -38,6 +39,8 @@ export default function AccountDetails({ session }: { session: Session }) {
   const [draftDob, setDraftDob] = useState<string>(""); // YYYY-MM-DD
   const [savingDob, setSavingDob] = useState(false);
   const [dobError, setDobError] = useState<string | null>(null);
+
+  // Learning Preference editing handled via onboarding page UI
 
   // Load profile
   useEffect(() => {
@@ -209,6 +212,11 @@ export default function AccountDetails({ session }: { session: Session }) {
     setOpenDobModal(false);
   };
 
+  // Open full-page preference selector (shared UI)
+  const openPref = () => {
+    navigate("/onboarding/preferences");
+  };
+
   return (
     <div className="acc-wrap">
       <div className="acc-card">
@@ -315,6 +323,20 @@ export default function AccountDetails({ session }: { session: Session }) {
                 title="Edit gender"
             >
                 <Pencil size={18} />
+            </button>
+          </div>
+
+          <div className="acc-row">
+            <div className="acc-label">Learning Preference:</div>
+            <div className="acc-value">{(profile?.learning_preference ?? "leisure").toLowerCase()}</div>
+            <button
+              className="acc-editBtn"
+              type="button"
+              onClick={openPref}
+              aria-label="Edit learning preference"
+              title="Edit learning preference"
+            >
+              <Pencil size={18} />
             </button>
           </div>
         </div>
@@ -470,6 +492,8 @@ export default function AccountDetails({ session }: { session: Session }) {
             </div>
           </div>
         )}
+
+        {/* Preference editing now uses the full-page onboarding UI */}
       </div>
     </div>
   );

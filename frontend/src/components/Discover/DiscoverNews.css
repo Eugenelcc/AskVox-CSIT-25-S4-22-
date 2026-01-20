@@ -4,6 +4,14 @@
   overflow-y: auto; /* allow scrolling within Discover content */
   max-height: calc(100vh - 75px); /* exclude top bar area */
   -webkit-overflow-scrolling: touch; /* smooth scrolling on touch devices */
+  /* Hide scrollbar visuals while keeping scroll functionality */
+  -ms-overflow-style: none; /* IE/Edge */
+  scrollbar-width: none;    /* Firefox */
+}
+
+.discover-root::-webkit-scrollbar { /* Chrome/Safari */
+  width: 0;
+  height: 0;
 }
 
 .discover-header {

@@ -3,7 +3,7 @@
   /* align with main content area; uses CSS var set on .uv-root */
   left: var(--content-offset, 80px);
   right: 0;
-  bottom: 95px;
+  bottom: 88px; /* slightly lower to free more room above */
   width: auto;
   display: flex;
   justify-content: center;

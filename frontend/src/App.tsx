@@ -15,12 +15,14 @@ import AccountSettingsPage from './pages/settings/AccountSettingsPage'
 import ForgotPassword from './pages/auth/ForgotPassword'
 import ResetPassword from './pages/auth/ResetPassword'
 import LogoutSuccess from './pages/auth/LogoutSuccess'
+import OAuthCallback from './pages/auth/OAuthCallback'
 import Payment from './pages/subscription/payment'
 import PlatformAdminDashboard from './pages/PlatformAdmin/dashboard'
 import FlaggedResponsePage from './pages/PlatformAdmin/FlaggedResponse' 
 import AdminEducation from './pages/admin/AdminEducation'
-import NewsContent from './components/Discover/NewsContent/NewsContent'
+// import NewsContent from './components/Discover/NewsContent/NewsContent'
 import InstituteVerification from './pages/subscription/InstituteVerification.tsx'
+import PreferenceSelect from './pages/onboarding/PreferenceSelect'
 
 
 function App() {
@@ -28,6 +30,7 @@ function App() {
   const [loading, setLoading] = useState(true)
   const [isPaid, setIsPaid] = useState<boolean>(false)
   const [isAdmin, setIsAdmin] = useState<boolean>(false)
+  const [needsPreference, setNeedsPreference] = useState<boolean>(false)
 
   useEffect(() => {
     let cancelled = false
@@ -61,6 +64,21 @@ function App() {
       }
     }
 
+    const checkPreference = async (userId: string) => {
+      try {
+        const { data } = await supabase
+          .from('profiles')
+          .select('learning_preference')
+          .eq('id', userId)
+          .maybeSingle()
+        const pref = (data?.learning_preference ?? '').toString().trim().toLowerCase()
+        const missing = !(pref === 'secondary' || pref === 'tertiary' || pref === 'university' || pref === 'leisure')
+        if (!cancelled) setNeedsPreference(missing && !isAdmin)
+      } catch {
+        if (!cancelled) setNeedsPreference(!isAdmin)
+      }
+    }
+
     // Boot: do not block UI on paid check
     supabase.auth.getSession().then(({ data: { session } }) => {
       if (cancelled) return
@@ -71,6 +89,7 @@ function App() {
         setIsAdmin(false)
         checkPaid(session.user.id)
         checkAdmin(session.user.id)
+        checkPreference(session.user.id)
       }
       else {
         setIsPaid(false)
@@ -86,6 +105,7 @@ function App() {
         setIsAdmin(false)
         checkPaid(session.user.id)
         checkAdmin(session.user.id)
+        checkPreference(session.user.id)
       }
       else {
         setIsPaid(false)
@@ -95,6 +115,15 @@ function App() {
 
     return () => { cancelled = true; subscription.unsubscribe() }
   }, [])
+
+  // Clean up stray empty hash fragments from placeholder links
+  useEffect(() => {
+    try {
+      if (window.location && window.location.hash === '#') {
+        window.history.replaceState(null, '', window.location.pathname)
+      }
+    } catch {}
+  }, [loading])
 
   if (loading) {
     return (
@@ -107,21 +136,22 @@ function App() {
   return (
     <BrowserRouter>
       <Routes>
-        {/* Root: if logged in, route based on subscription */}
+        {/* Root: if logged in, land on New Chat (gate onboarding only for brand new users) */}
         <Route
           path="/"
           element={
             session
-              ? (isAdmin ? <Navigate to="/platformadmin/dashboard" /> : (isPaid ? <Navigate to="/paiduserhome" /> : <Navigate to="/reguserhome" />))
+              ? (isAdmin ? <Navigate to="/platformadmin/dashboard" /> : (needsPreference ? <Navigate to="/onboarding/preferences" /> : <Navigate to="/newchat" />))
               : <UnregisteredMain session={session} />
           }
         />
 
         {/* Auth Routes: Redirect to role-aware destination if already logged in */}
-        <Route path="/login" element={!session ? <Login /> : <Navigate to={isAdmin ? "/platformadmin/dashboard" : (isPaid ? "/paiduserhome" : "/reguserhome")} />} />
-        <Route path="/register" element={!session ? <Register /> : <Navigate to={isAdmin ? "/platformadmin/dashboard" : (isPaid ? "/paiduserhome" : "/reguserhome")} />} />
+        <Route path="/login" element={!session ? <Login /> : (isAdmin ? <Navigate to="/platformadmin/dashboard" /> : (needsPreference ? <Navigate to="/onboarding/preferences" /> : <Navigate to="/newchat" />))} />
+        <Route path="/register" element={!session ? <Register /> : (isAdmin ? <Navigate to="/platformadmin/dashboard" /> : (needsPreference ? <Navigate to="/onboarding/preferences" /> : <Navigate to="/newchat" />))} />
         <Route path="/auth/confirmed" element={<ConfirmedPage />} />
         <Route path="/auth/check-email" element={<CheckEmailPage />} />
+        <Route path="/auth/oauth-callback" element={<OAuthCallback />} />
 
         {/* Protected Route */}
         <Route
@@ -130,8 +160,28 @@ function App() {
             session
               ? (isAdmin
                   ? <Navigate to="/platformadmin/dashboard" />
-                  : (isPaid ? <PaidMain session={session} /> : <RegisterMain session={session} />))
+                  : (needsPreference ? <Navigate to="/onboarding/preferences" /> : (isPaid ? <PaidMain session={session} /> : <RegisterMain session={session} />)))
               : <UnregisteredMain session={session} />
+          }
+        />
+        {/* New Chat route */}
+        <Route
+          path="/newchat"
+          element={
+            session
+              ? (isAdmin ? <Navigate to="/platformadmin/dashboard" /> : <RegisterMain session={session} />)
+              : <Navigate to="/login" />
+          }
+        />
+        {/* Back-compat: redirect old /chats/new to /newchat */}
+        <Route path="/chats/new" element={<Navigate to="/newchat" replace />} />
+        {/* Explicit chat routes for deep-linking a session */}
+        <Route
+          path="/chats/:sessionId"
+          element={
+            session
+              ? (isAdmin ? <Navigate to="/platformadmin/dashboard" /> : <RegisterMain session={session} />)
+              : <Navigate to="/login" />
           }
         />
         <Route
@@ -155,6 +205,11 @@ function App() {
         <Route 
           path="/upgrade"
           element={session ? <Upgrade /> : <Navigate to="/login" />}
+        />
+        {/* Onboarding: Learning Preference */}
+        <Route
+          path="/onboarding/preferences"
+          element={session ? (isAdmin ? <Navigate to="/platformadmin/dashboard" /> : <PreferenceSelect session={session} />) : <Navigate to="/login" />}
         />
         <Route
           path="/settings/account"

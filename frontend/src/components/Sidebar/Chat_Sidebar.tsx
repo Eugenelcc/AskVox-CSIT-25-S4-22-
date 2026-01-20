@@ -51,6 +51,7 @@ interface SidebarProps {
 
   onRenameChat?: (chatId: string) => void;
   onMoveChatToFolder?: (chatId: string, folderId: string) => void;
+  onDeleteChat?: (chatId: string) => void;
 }
 
 export default function Sidebar({
@@ -71,6 +72,7 @@ export default function Sidebar({
 
   onRenameChat,
   onMoveChatToFolder,
+  onDeleteChat,
 }: SidebarProps) {
   const [query, setQuery] = useState("");
 
@@ -138,13 +140,22 @@ export default function Sidebar({
   const openMenuAt = (setter: (v: any) => void, id: string, e: React.MouseEvent) => {
     e.stopPropagation();
     const rect = (e.currentTarget as HTMLElement).getBoundingClientRect();
-    setter({ id, x: rect.right + 8, y: rect.top - 6 });
+    // Position relative to the sidebar container to avoid extra offset
+    const container = menuRootRef.current?.getBoundingClientRect();
+    const baseLeft = container ? rect.right - container.left : rect.right;
+    const baseTop = container ? rect.top - container.top : rect.top;
+    // Nudge slightly to overlap the button edge
+    setter({ id, x: baseLeft - 2, y: baseTop + 2 });
   };
 
   const openMoveSubmenuAt = (chatId: string, e: React.MouseEvent) => {
     e.stopPropagation();
     const rect = (e.currentTarget as HTMLElement).getBoundingClientRect();
-    setMoveSubmenu({ chatId, x: rect.right + 8, y: rect.top - 6 });
+    const container = menuRootRef.current?.getBoundingClientRect();
+    const baseLeft = container ? rect.right - container.left : rect.right;
+    const baseTop = container ? rect.top - container.top : rect.top;
+    // Slightly to the right of the parent menu
+    setMoveSubmenu({ chatId, x: baseLeft + 4, y: baseTop + 2 });
   };
 
   return (
@@ -389,6 +400,22 @@ export default function Sidebar({
               <ArrowRightLeft size={14} />
               <span>Move to a Folder</span>
               <ArrowRight size={14} className="av-menuRight" />
+            </button>
+
+            <div className="av-menuDivider" />
+
+            <button
+              className="av-menuItem av-menuItem--danger"
+              type="button"
+              onClick={() => {
+                onDeleteChat?.(chatMenu.id);
+                setMoveSubmenu(null);
+                setChatMenu(null);
+              }}
+            >
+              <Trash2 size={14} />
+              <span>Delete Chat</span>
+              <span />
             </button>
           </div>
         )}

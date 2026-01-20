@@ -100,7 +100,7 @@ export default function Dashboard({
   const [sessions, setSessions] = useState<{id: string, title: string, article_context?: ArticleContext | null}[]>([]); // all chats the user has created, shown in the sidebar
   const [activeSessionId, setActiveSessionId] = useState<string | null>(null); // currently selected chat session
   const [activeTab, setActiveTab] = useState<string>(
-    initialTab ?? (location.pathname === "/discover" ? "discover" : "chats")
+    initialTab ?? (location.pathname === "/discover" ? "discover" : (location.pathname === "/newchat" ? "newchat" : "newchat"))
   ); // Tracks which tab is active in the NavRail
   const [isSidebarOpen, setSidebarOpen] = useState(false); // Sidebar visibility
   const [isNewChat, setIsNewChat] = useState(false); //When user starts a new chat
@@ -151,13 +151,26 @@ export default function Dashboard({
         }
       });
       
-    // Fetch Sessions
+    // Fetch Sessions (most recent activity first). If 'updated_at' isn't available,
+    // fall back to created_at to avoid breaking the list.
     supabase
       .from('chat_sessions')
-      .select('id,title,article_context')
+      .select('*,display_name')
       .eq('user_id', session.user.id)
-      .order('created_at', { ascending: false })
-      .then(({ data }) => data && setSessions(data));
+      .order('updated_at', { ascending: false })
+      .then(({ data, error }) => {
+        if (error) {
+          console.warn('Failed to order by updated_at; falling back to created_at', error);
+          supabase
+            .from('chat_sessions')
+            .select('*,display_name')
+            .eq('user_id', session.user.id)
+            .order('created_at', { ascending: false })
+            .then(({ data: d2 }) => d2 && setSessions(d2));
+          return;
+        }
+        data && setSessions(data);
+      });
   }, [session.user.id]);
 
   useEffect(() => {
@@ -248,6 +261,33 @@ export default function Dashboard({
     } else if (newsContext?.sessionId && newsContext.sessionId !== sessionId) {
       setNewsContext(null);
     }
+    // Keep URL in sync for deep-linking
+    if (location.pathname !== `/chats/${sessionId}`) {
+      navigate(`/chats/${sessionId}`);
+    }
+  };
+
+  // Locally promote a session to the top of sidebar ordering.
+  const promoteSessionToTop = (sid: string) => {
+    setSessions(prev => {
+      const idx = prev.findIndex(s => s.id === sid);
+      if (idx <= 0) return prev; // already first or not found
+      const copy = prev.slice();
+      const [item] = copy.splice(idx, 1);
+      copy.unshift(item);
+      return copy;
+    });
+  };
+
+  // When we fetch a fresh list, ensure a specific session stays at the top
+  const withPinnedTop = (list: {id: string; title: string}[], sid?: string | null) => {
+    if (!sid) return list;
+    const idx = list.findIndex(s => s.id === sid);
+    if (idx <= 0) return list;
+    const copy = list.slice();
+    const [item] = copy.splice(idx, 1);
+    copy.unshift(item);
+    return copy;
   };
 
   const handleTabClick = (tab: string) => {
@@ -319,6 +359,10 @@ export default function Dashboard({
     voiceAudioCtxRef.current = null;
     // Finally clear messages after teardown
     setMessages([]);
+    // Navigate to the canonical New Chat route
+    if (location.pathname !== "/newchat") {
+      navigate("/newchat");
+    }
   };
 
   const handleMoveChatToFolder = async (chatId: string, folderId: string) => {
@@ -342,6 +386,37 @@ export default function Dashboard({
       .order("created_at", { ascending: false });
 
     if (allSessions) setSessions(allSessions);
+  };
+
+  const handleDeleteChat = async (chatId: string) => {
+    try {
+      // Attempt to remove folder links first (ignore errors if table doesn't exist or RLS blocks)
+      try {
+        await supabase.from("chat_session_folders").delete().eq("session_id", chatId);
+      } catch {}
+
+      // Delete the chat session (scoped to user for safety)
+      const { error } = await supabase
+        .from("chat_sessions")
+        .delete()
+        .eq("id", chatId)
+        .eq("user_id", session.user.id);
+      if (error) throw error;
+
+      // Update UI state
+      setSessions(prev => prev.filter(s => s.id !== chatId));
+      if (activeSessionId === chatId) {
+        setActiveSessionId(null);
+        setMessages([]);
+        setIsNewChat(true);
+        setActiveTab("newchat");
+        setSidebarOpen(false);
+        if (location.pathname !== "/newchat") navigate("/newchat");
+      }
+    } catch (e) {
+      console.error("Failed to delete chat", e);
+      alert("Unable to delete chat. Please try again.");
+    }
   };
 
   // Reload messages from Supabase for the given session
@@ -371,13 +446,35 @@ export default function Dashboard({
     }
   };
 
+  // Keep component state in sync with /newchat and /chats/:sessionId
+  useEffect(() => {
+    const path = location.pathname;
+    if (path === "/newchat") {
+      setIsNewChat(true);
+      setActiveSessionId(null);
+      setActiveTab("newchat");
+      setSidebarOpen(false);
+      setMessages([]);
+      return;
+    }
+    const match = path.match(/^\/chats\/([a-f0-9\-]+)$/i);
+    if (match) {
+      const sid = match[1];
+      setIsNewChat(false);
+      setActiveSessionId(sid);
+      setActiveTab("chats");
+      setSidebarOpen(true);
+      void refreshActiveSessionMessages(sid);
+    }
+  }, [location.pathname]);
+
 
   const handleSubmit = async (
     text: string,
     options?: { forceNewSession?: boolean; context?: ArticleContext }
   ): Promise<string | null> => {
     const trimmed = text.trim();
-    if (!trimmed || !session?.user?.id) return;
+    if (!trimmed || !session?.user?.id) return null;
     console.log("💬 [Text] route=llamachats/cloud payload=", trimmed);
 
     // 1. Determine Session ID
@@ -408,7 +505,7 @@ export default function Dashboard({
 
       if (error || !newSession) {
         console.error('Failed to create chat session', error);
-        return;
+        return null;
       }
 
       currentSessionId = newSession.id;
@@ -419,7 +516,7 @@ export default function Dashboard({
         .from('chat_sessions')
         .select('id, title, article_context')
         .eq('user_id', session.user.id)
-        .order('created_at', { ascending: false });
+        .order('updated_at', { ascending: false });
 
       if (allSessions) setSessions(allSessions);
     }
@@ -459,6 +556,32 @@ export default function Dashboard({
       content: trimmed,
       display_name: userName // <--- CRITICAL: Sending the name here
     });
+
+    // Immediately promote locally so the UI reflects recency without waiting
+    if (currentSessionId) promoteSessionToTop(currentSessionId);
+
+    // 4b. Bump session activity timestamp so it floats to the top
+    try {
+      await supabase
+        .from('chat_sessions')
+        .update({ updated_at: new Date().toISOString() })
+        .eq('id', currentSessionId);
+      // Refresh sidebar ordering
+      const { data: allSessions } = await supabase
+        .from('chat_sessions')
+        .select('id, title')
+        .eq('user_id', session.user.id)
+        .order('updated_at', { ascending: false });
+      if (allSessions && allSessions.length) {
+        setSessions(withPinnedTop(allSessions, currentSessionId));
+      } else if (currentSessionId) {
+        promoteSessionToTop(currentSessionId);
+      }
+    } catch (e) {
+      console.warn('Failed to update session activity timestamp', e);
+      // As a UI fallback, at least move the session up locally
+      if (currentSessionId) promoteSessionToTop(currentSessionId);
+    }
 
     // If we just created the session, now mark new-chat as false so fetch will include this message
     if (createdSession) setIsNewChat(false);
@@ -515,7 +638,7 @@ export default function Dashboard({
         const errorText = await response.text();
         console.error("❌ AI API error:", response.status, response.statusText, errorText);
         setIsSending(false);
-        return;
+        return null;
       }
 
       const data = await response.json();
@@ -529,7 +652,7 @@ export default function Dashboard({
       if (!replyText) {
         console.warn("⚠️ Empty response from AI. Not saving.");
         setIsSending(false);
-        return;
+        return null;
       }
       
       setIsSending(false);
@@ -821,8 +944,12 @@ export default function Dashboard({
                     .from('chat_sessions')
                     .select('id, title, article_context')
                     .eq('user_id', session.user.id)
-                    .order('created_at', { ascending: false });
-                  if (allSessions) setSessions(allSessions);
+                    .order('updated_at', { ascending: false });
+                  if (allSessions && allSessions.length) {
+                    setSessions(withPinnedTop(allSessions, currentSessionId));
+                  } else if (currentSessionId) {
+                    promoteSessionToTop(currentSessionId);
+                  }
                 } catch {}
               }
             }
@@ -850,6 +977,28 @@ export default function Dashboard({
                   content: transcript,
                   display_name: profile?.username ?? 'User',
                 });
+                // Promote locally right away
+                promoteSessionToTop(currentSessionId);
+                // Bump session activity and refresh list ordering
+                try {
+                  await supabase
+                    .from('chat_sessions')
+                    .update({ updated_at: new Date().toISOString() })
+                    .eq('id', currentSessionId);
+                  const { data: allSessions } = await supabase
+                    .from('chat_sessions')
+                    .select('id, title')
+                    .eq('user_id', session.user.id)
+                    .order('updated_at', { ascending: false });
+                  if (allSessions && allSessions.length) {
+                    setSessions(withPinnedTop(allSessions, currentSessionId));
+                  } else {
+                    promoteSessionToTop(currentSessionId);
+                  }
+                } catch (e) {
+                  console.warn('Failed to update session activity timestamp (voice)', e);
+                  promoteSessionToTop(currentSessionId);
+                }
               } catch (e) {
                 console.warn('Failed to insert user voice chat_message', e);
               }
@@ -1162,11 +1311,25 @@ export default function Dashboard({
   // compute content offset so both the main content and the fixed chatbar
   // can stay in sync when sidebars open/close
   const navRailWidth = 80; // fixed rail width (matches NavRail)
-  const discoverSidebarLeft = 110; // matches .av-settings { left: 110px; }
-  const discoverSidebarWidth = 310; // matches .av-settings { width: 310px; }
+  // Left sidebars configuration (positions must match CSS)
+  const leftOffset = 110; // matches .av-settings/.av-sidebar { left: 110px; }
+  const widths = {
+    discover: 310, // Settings/Discover sidebar width
+    settings: 310,
+    chats: 368,    // Chat sidebar width
+  } as const;
+
   const viewingArticle = location.pathname.startsWith("/discover/news");
-  const discoverOpen = isSidebarOpen && (activeTab === "discover" || viewingArticle);  const contentMarginLeft = discoverOpen
-    ? `${discoverSidebarLeft + discoverSidebarWidth}px`
+  const discoverOpen = isSidebarOpen && (activeTab === "discover" || viewingArticle);
+  const chatsOpen = isSidebarOpen && activeTab === "chats";
+  const settingsOpen = isSidebarOpen && activeTab === "settings";
+
+  const contentMarginLeft = discoverOpen
+    ? `${leftOffset + widths.discover}px`
+    : settingsOpen
+    ? `${leftOffset + widths.settings}px`
+    : chatsOpen
+    ? `${leftOffset + widths.chats}px`
     : `${navRailWidth}px`;
 
   return (
@@ -1195,6 +1358,7 @@ export default function Dashboard({
         onRenameFolder={handleRenameFolder}
         onDeleteFolder={handleDeleteFolder}
         onMoveOutOfFolder={handleMoveOutOfFolder}
+        onDeleteChat={handleDeleteChat}
 
 
       />
@@ -1283,13 +1447,6 @@ export default function Dashboard({
                 !activeSessionId && (
                   <section className="uv-hero">
                     <BlackHole />
-                    <h3 className="orb-caption">
-                      Hi {profile?.username ?? "User"}, say{" "}
-                      <span className="visual-askvox">
-                        {`"${(profile?.wake_word?.trim?.() || "Hey AskVox")}"`}
-                      </span>{" "}
-                      to begin or type below.
-                    </h3>
                   </section>
                 )
               )}
@@ -1340,6 +1497,17 @@ export default function Dashboard({
 
               {!isVoiceMode && (
   <div className="uv-input-container">
+    {!activeSessionId && (
+      <div className="av-chatbar-caption">
+        <h3 className="orb-caption">
+          Hi {profile?.username ?? "User"}, say{" "}
+          <span className="visual-askvox">
+            {`"${(profile?.wake_word?.trim?.() || "Hey AskVox")}"`}
+          </span>{" "}
+          to begin or type below.
+        </h3>
+      </div>
+    )}
     <ChatBar
       onSubmit={handleSubmit}
       disabled={isSending}

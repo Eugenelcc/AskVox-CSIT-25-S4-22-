@@ -1,7 +1,8 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { X } from "lucide-react";
 import "./Quiz.css";
 import type { ChatMessage } from "../../types/database";
+import { supabase } from "../../supabaseClient";
 
 /** A/B/C mode */
 type QuizMode = "A" | "B" | "C";
@@ -20,6 +21,7 @@ type QuizQuestion = {
 type GenerateQuizRes = {
   title: string;
   questions: QuizQuestion[];
+  quiz_id?: string;
 };
 
 // ✅ feedback response type
@@ -116,6 +118,7 @@ export default function Quiz({
   const [quizTitle, setQuizTitle] = useState("");
   const [questions, setQuestions] = useState<QuizQuestion[]>([]);
   const [qIndex, setQIndex] = useState(0);
+  const [quizId, setQuizId] = useState<string | null>(null);
 
   // Which option user clicked (before submit)
   const [selectedIndex, setSelectedIndex] = useState<number | null>(null);
@@ -142,6 +145,15 @@ export default function Quiz({
   const [historyItems, setHistoryItems] = useState<QuizHistoryItem[]>([]);
   const [activeReview, setActiveReview] = useState<QuizHistoryDetail | null>(null);
 
+  // 3s notice banner (replaces alerts/inline prompt)
+  const [notice, setNotice] = useState<string | null>(null);
+  const noticeTimerRef = useRef<number | null>(null);
+  const showNotice = (msg: string) => {
+    setNotice(msg);
+    if (noticeTimerRef.current) window.clearTimeout(noticeTimerRef.current);
+    noticeTimerRef.current = window.setTimeout(() => setNotice(null), 3000);
+  };
+
   // Current question (safe)
   const currentQ = questions[qIndex];
 
@@ -164,6 +176,7 @@ export default function Quiz({
     setQuizTitle("");
     setQuestions([]);
     setQIndex(0);
+    setQuizId(null);
     setSelectedIndex(null);
     setIsSubmitted(false);
     setScore({ correct: 0, wrong: 0 });
@@ -178,6 +191,8 @@ export default function Quiz({
     setHistoryQuery("");
     setHistoryItems([]);
     setActiveReview(null);
+    if (noticeTimerRef.current) window.clearTimeout(noticeTimerRef.current);
+    setNotice(null);
   }, [open]);
 
   // ✅ IMPORTANT: keep early return AFTER all hooks, and NO hooks below it
@@ -206,14 +221,14 @@ export default function Quiz({
       return;
     }
 
-    if (mode === "C" && !sessionId) {
-      alert("Mode C needs a chat session. Open/start a chat first 🙂");
-      return;
+    if (mode === "C") {
+      if (!sessionId) { showNotice("Open/Start a new chat first 🙂"); return; }
+      if (!lastUserPrompt) { showNotice("Open/Start a new chat first 🙂"); return; }
     }
 
-    if (mode === "A" && !lastUserPrompt) {
-      alert("No prompt found yet. Ask something in chat first, then generate quiz.");
-      return;
+    if (mode === "A") {
+      if (!sessionId) { showNotice("Open/Start a new chat first 🙂"); return; }
+      if (!lastUserPrompt) { showNotice("Open/Start a new chat first 🙂"); return; }
     }
 
     try {
@@ -250,6 +265,10 @@ export default function Quiz({
 
       if (!cleaned.length) throw new Error("Quiz API returned invalid question format.");
 
+      // capture quiz id for feedback/attempt storage
+      const qid = typeof data.quiz_id === "string" && data.quiz_id.length ? data.quiz_id : null;
+      setQuizId(qid);
+
       startQuizRun(title, cleaned);
     } catch (e: any) {
       console.error("❌ Quiz generate failed:", e);
@@ -258,6 +277,72 @@ export default function Quiz({
       setIsGenerating(false);
     }
   };
+
+  const handleGenerateRelated = async () => {
+    setGenError(null);
+
+    // Reuse the same validation as handleGenerate based on current mode
+    if (mode === "B" && !topic.trim()) {
+      alert("Please enter a topic for Mode B 🙂");
+      return;
+    }
+    if (mode === "A") {
+      if (!sessionId) { showNotice("Open/Start a new chat first 🙂"); return; }
+      if (!lastUserPrompt) { showNotice("Open/Start a new chat first 🙂"); return; }
+    }
+    if (mode === "C") {
+      if (!sessionId) { showNotice("Open/Start a new chat first 🙂"); return; }
+      if (!lastUserPrompt) { showNotice("Open/Start a new chat first 🙂"); return; }
+    }
+
+    try {
+      setIsGenerating(true);
+
+      const res = await fetch(`${API_BASE}/quiz/generate`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          mode,
+          user_id: userId,
+          session_id: sessionId,
+          topic: mode === "B" ? topic.trim() : null,
+          num_questions: 3,
+          avoid_questions: (questions || []).map((q) => q.q),
+          related: true,
+        }),
+      });
+
+      const data = (await res.json().catch(() => ({}))) as Partial<GenerateQuizRes> & { detail?: string };
+      if (!res.ok) throw new Error(data?.detail || `Quiz API failed (${res.status})`);
+
+      const title = String(data.title || "Quiz");
+      const qs = Array.isArray(data.questions) ? data.questions : [];
+      if (!qs.length) throw new Error("Quiz API returned no questions.");
+
+      const cleaned: QuizQuestion[] = qs
+        .map((q: any, i: number) => ({
+          id: String(q.id || `q${i + 1}`),
+          q: String(q.q || "").trim(),
+          options: Array.isArray(q.options) ? q.options.map(String) : [],
+          answerIndex: typeof q.answerIndex === "number" ? q.answerIndex : 0,
+        }))
+        .filter((q) => q.q && q.options.length === 4 && q.answerIndex >= 0 && q.answerIndex <= 3);
+
+      if (!cleaned.length) throw new Error("Quiz API returned invalid question format.");
+
+      const qid = typeof data.quiz_id === "string" && data.quiz_id.length ? data.quiz_id : null;
+      setQuizId(qid);
+
+      startQuizRun(title, cleaned);
+    } catch (e: any) {
+      console.error("❌ Related quiz generate failed:", e);
+      setGenError(e?.message || "Failed to generate related quiz.");
+    } finally {
+      setIsGenerating(false);
+    }
+  };
+
+  // (no inline flow; using 3s notice instead)
 
   const handleSubmitAnswer = () => {
     if (!currentQ) return;
@@ -289,6 +374,8 @@ export default function Quiz({
           title: quizTitle,
           questions,
           userAnswers: finalAnswers,
+          user_id: userId,
+          quiz_id: quizId,
         }),
       });
 
@@ -370,29 +457,53 @@ export default function Quiz({
     feedback?.recommended?.length ? feedback.recommended : "Generate another quiz to reinforce weak areas.";
 
   // ✅ HISTORY actions (no hooks)
-  const openHistory = () => {
-    const summaries: QuizHistoryItem[] = MOCK_HISTORY.map((d) => ({
-      attemptId: d.attemptId,
-      title: d.title,
-      topic: d.topic ?? null,
-      quizType: d.quizType,
-      scoreCorrect: d.scoreCorrect,
-      total: d.total,
-      createdAt: d.createdAt,
-    }));
+  const openHistory = async () => {
+    // Fetch attempts for this user from Supabase and join basic quiz info
+    const { data, error } = await supabase
+      .from("quiz_attempts")
+      .select("id, created_at, score, quizzes ( id, title, topic, mode )")
+      .eq("user_id", userId)
+      .order("created_at", { ascending: false });
 
-    setHistoryItems(summaries);
+    if (error) {
+      console.warn("Quiz history load failed:", error.message);
+    }
+
+    const attempts = (data ?? []).map((row: any) => {
+      const q = row?.quizzes || {};
+      const created = row?.created_at ? new Date(row.created_at) : null;
+      // Show only date (remove time-of-day)
+      const createdText = created ? created.toLocaleDateString() : "";
+      const total = questions?.length || 3; // fallback until totals are stored
+      return {
+        attemptId: String(row.id),
+        title: String(q.title || "Quiz"),
+        topic: q.topic ?? null,
+        quizType: (q.mode as QuizMode) ?? undefined,
+        scoreCorrect: Number.isFinite(row.score) ? Number(row.score) : 0,
+        total,
+        createdAt: createdText,
+      } as QuizHistoryItem;
+    });
+
+    setHistoryItems(attempts);
     setHistoryQuery("");
     setActiveReview(null);
     setQIndex(0);
     setStage("history");
   };
 
-  const openReview = (attemptId: string) => {
-    const detail = MOCK_HISTORY.find((x) => x.attemptId === attemptId) || null;
-    setActiveReview(detail);
-    setQIndex(0);
-    setStage("review");
+  const openReview = async (attemptId: string) => {
+    try {
+      const res = await fetch(`${API_BASE}/quiz/attempt/${attemptId}`);
+      const detail = (await res.json()) as QuizHistoryDetail;
+      if (!res.ok || !detail?.attemptId) throw new Error("Load review failed");
+      setActiveReview(detail);
+      setQIndex(0);
+      setStage("review");
+    } catch (e) {
+      alert("Unable to load review. Please try again later.");
+    }
   };
 
   // ✅ Filter without useMemo (so no extra hooks)
@@ -563,17 +674,6 @@ export default function Quiz({
               <div className="av-runActions">
                 <button
                   type="button"
-                  className="av-backBtn"
-                  onClick={() => {
-                    setQIndex(0);
-                    setStage("history");
-                  }}
-                >
-                  Back
-                </button>
-
-                <button
-                  type="button"
                   className="av-nextBtn"
                   onClick={() => setQIndex((i) => Math.max(0, i - 1))}
                   disabled={qIndex === 0}
@@ -620,10 +720,82 @@ export default function Quiz({
             </div>
           )}
 
+          {/* ✅ REVIEW FALLBACK: show feedback-only when no per-question answers are available */}
+          {stage === "review" && activeReview && !reviewQ && (
+            <div className="av-runCard">
+              <div className="av-runHeaderCard">
+                <div className="av-runTitle">{activeReview.title}</div>
+
+                <div className="av-runMeta">
+                  <div className="av-runProgress">{activeReview.scoreCorrect}/{activeReview.total}</div>
+                  <div className="av-runScore">
+                    <span className="ok">✅ {activeReview.scoreCorrect}</span>
+                    <span className="bad">❌ {Math.max(0, (activeReview.total || 0) - (activeReview.scoreCorrect || 0))}</span>
+                  </div>
+                </div>
+
+                <div style={{ fontSize: 12, opacity: 0.85, marginTop: 6 }}>
+                  {activeReview.topic ? `Topic: ${activeReview.topic} · ` : ""}
+                  {activeReview.quizType ? `Mode: ${activeReview.quizType} · ` : ""}
+                  {activeReview.createdAt}
+                </div>
+              </div>
+
+              <div className="av-resultCard" style={{ marginTop: 12 }}>
+                <div className="av-resultSmall" style={{ marginBottom: 8, opacity: 0.85 }}>
+                  No detailed answers were stored for this attempt.
+                </div>
+
+                <div className="av-resultLabel">Strengths:</div>
+                <ul className="av-resultList">
+                  {(activeReview.feedback?.strengths || ["(No feedback saved)"]).map((s, i) => (
+                    <li key={i}>{s}</li>
+                  ))}
+                </ul>
+
+                <div className="av-resultLabel" style={{ marginTop: 12 }}>
+                  Weak Areas:
+                </div>
+                <ul className="av-resultList">
+                  {(activeReview.feedback?.weakAreas || []).length ? (
+                    activeReview.feedback!.weakAreas.map((w, i) => <li key={i}>{w}</li>)
+                  ) : (
+                    <li>(No feedback saved)</li>
+                  )}
+                </ul>
+
+                <div className="av-resultLabel" style={{ marginTop: 12 }}>
+                  Recommended:
+                </div>
+                <div className="av-resultSmall">
+                  {activeReview.feedback?.recommended || "(No recommendation saved)"}
+                </div>
+              </div>
+
+              <div className="av-runActions">
+                <button type="button" className="av-backBtn" onClick={() => setStage("history")}>Back</button>
+              </div>
+            </div>
+          )}
+
           {/* ================= CHOOSE SCREEN ================= */}
           {stage === "choose" && (
             <div className="av-chooseCard">
               <div className="av-chooseCardHeader">Choose Your Quiz Type:</div>
+
+              {notice && (
+                <div style={{
+                  margin: "10px 0 14px",
+                  padding: 12,
+                  borderRadius: 10,
+                  background: "rgba(255,149,28,0.12)",
+                  border: "1px solid rgba(255,149,28,0.30)",
+                  color: "#ffd6a0",
+                  fontSize: 13,
+                }} role="alert">
+                  {notice}
+                </div>
+              )}
 
               <button
                 className={`av-choiceRow ${mode === "A" ? "active" : ""}`}
@@ -809,13 +981,10 @@ export default function Quiz({
                   <button
                     type="button"
                     className="av-secondaryBtn"
-                    onClick={() => {
-                      setFeedback(null);
-                      setIsFeedbackLoading(false);
-                      setStage("choose");
-                    }}
+                    onClick={handleGenerateRelated}
+                    disabled={isGenerating}
                   >
-                    New Quiz
+                    {isGenerating ? "Generating..." : "New Quiz"}
                   </button>
 
                   <button type="button" className="av-secondaryBtn" onClick={onClose}>

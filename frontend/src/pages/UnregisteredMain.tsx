@@ -543,11 +543,6 @@ const UnregisteredMain = ({ session }: { session: Session | null }) => {
         {(!hasMessages || isVoiceMode) && (
           <section className="uv-hero">
             <BlackHole isActivated={isBlackHoleActive} />
-            {!isVoiceMode && !hasMessages && (
-              <h3 className="orb-caption">
-                Say <span className="visual-askvox">"Hey AskVox"</span> to begin or type below.
-              </h3>
-            )}
             {isVoiceMode && (
               <h4 className="orb-caption" style={{ fontSize: 22, opacity: 0.75, marginTop: 16 }}>
                 {isRecording || isTranscribing ? "Listening…" : ""}
@@ -565,7 +560,18 @@ const UnregisteredMain = ({ session }: { session: Session | null }) => {
         )}
       </main>
 
-      {!isVoiceMode && (<ChatBar onSubmit={handleSubmit} disabled={isSending} />)}
+      {!isVoiceMode && (
+        <div className="uv-input-container">
+          {!hasMessages && (
+            <div className="av-chatbar-caption">
+              <h3 className="orb-caption">
+                Say <span className="visual-askvox">"Hey AskVox"</span> to begin or type below.
+              </h3>
+            </div>
+          )}
+          <ChatBar onSubmit={handleSubmit} disabled={isSending} />
+        </div>
+      )}
     </div>
   );
 };
