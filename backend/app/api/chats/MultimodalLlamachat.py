@@ -87,7 +87,7 @@ Rules:
 
 - If need_web_sources=false then web_query must be "" (same for image/youtube).
 - Do not invent citations. Only cite if evidence exists.
-- If the user includes a specific year (e.g., 2026), the web_query MUST include that year and "kdrama"/"korean drama" when relevant.
+- If the user includes a specific year (e.g., 2026), the web_query MUST include that year when relevant.
 """
 
 # -----------------------
@@ -192,19 +192,12 @@ def make_fallback_query(message: str, max_len: int = 120) -> str:
     return (q[:max_len] if q else message[:max_len])
 
 def enforce_web_query_constraints(user_message: str, web_q: str) -> str:
-    """
-    Guardrail: don't trust model's web_query completely (Llama 2 planner can hallucinate titles like "Vagabond").
-
-    If user asked for a year (e.g., 2026), enforce that year in web_q.
-    If user is asking about Kdrama, enforce 'kdrama' keyword.
-    """
+    
     msg = (user_message or "").strip()
     q = (web_q or "").strip()
 
     years = extract_years(msg)
-    wants_kdrama = bool(re.search(r"\b(kdrama|k-drama|k drama|korean drama|k-drama)\b", msg, re.I)) or bool(
-        re.search(r"\b(kdrama|korean drama)\b", q, re.I)
-    )
+   
 
     # If model gave nothing, use user message
     if not q:
@@ -215,13 +208,7 @@ def enforce_web_query_constraints(user_message: str, web_q: str) -> str:
         if not any(y in q for y in years):
             q = f"{q} {years[0]}"
 
-    # Enforce topic keyword when it's clearly a kdrama query
-    # (If user said "Kdrama", we ensure query stays in that domain.)
-    if re.search(r"\b(kdrama|k-drama|korean drama)\b", msg, re.I) and not re.search(
-        r"\b(kdrama|k-drama|korean drama)\b", q, re.I
-    ):
-        q = f"{q} kdrama"
-
+     
     q = re.sub(r"\s+", " ", q).strip()
     return q[:120]
 
