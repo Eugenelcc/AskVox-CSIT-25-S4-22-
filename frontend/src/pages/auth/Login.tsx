@@ -8,7 +8,7 @@ import styles from "../cssfiles/Login.module.css";
 import GoogleLogo from "./Google.png";
 import { Eye, EyeOff } from "lucide-react";
 
-type UserRole = "registered" | "paid";
+//type UserRole = "registered" | "paid";
 
 export default function Login() {
   const [email, setEmail] = useState("");
@@ -51,7 +51,7 @@ export default function Login() {
 
     setLoading(true);
 
-    const { data, error } = await supabase.auth.signInWithPassword({
+    const {  error } = await supabase.auth.signInWithPassword({
       email,
       password,
     });
@@ -63,8 +63,8 @@ export default function Login() {
     }
 
     // ✅ Role (placeholder) – later fetch from profiles table / metadata
-    const role: UserRole =
-      (data.user?.user_metadata?.role as UserRole) || "registered";
+    // const role: UserRole =
+    //   (data.user?.user_metadata?.role as UserRole) || "registered";
 
     // Remember me: Supabase persists session by default.
     setLoading(false);
