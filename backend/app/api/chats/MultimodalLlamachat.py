@@ -187,7 +187,7 @@ MODEL_JSON_INSTRUCTION = (
         + "\n\n"
         "- If need_web_sources=false then web_query must be \"\" (same for image/youtube).\n"
         "- Do not invent citations. Only cite if evidence exists.\n"
-        "- If the user includes a specific year (e.g., 2026), the web_query MUST include that year and \"kdrama\"/\"korean drama\" when relevant.\n"
+        "- If the user includes a specific year (e.g., 2026), the web_query MUST include that year when relevant.\n"
 )
 
 # -----------------------
@@ -761,8 +761,23 @@ def build_prompt(
     if safe_evidence:
         p += f"\n{safe_evidence}\n"
 
-    remaining_history_chars = MAX_HISTORY_CHARS
+    # Filter out empty or duplicate history entries
+    filtered_history = []
+    seen = set()
     for h in history:
+        if not h.content or not h.content.strip():
+            continue
+        key = (h.role, h.content.strip())
+        if key in seen:
+            continue
+        seen.add(key)
+        filtered_history.append(h)
+
+    # Only keep the last 2 exchanges (user/assistant pairs) for clarity
+    filtered_history = filtered_history[-4:]
+
+    remaining_history_chars = MAX_HISTORY_CHARS
+    for h in filtered_history:
         role_tag = "USER" if h.role == "user" else "ASSISTANT"
         if remaining_history_chars <= 0:
             break
@@ -775,6 +790,12 @@ def build_prompt(
     p += f"\n[USER] {safe_message}\n[ASSISTANT]"
     if len(p) > MAX_PROMPT_CHARS:
         p = p[:MAX_PROMPT_CHARS] + "..."
+
+    # Debug print for prompt sent to model
+    print("\n==== PROMPT SENT TO MODEL ====".ljust(40, "="), flush=True)
+    print(p[:1200] + ("..." if len(p) > 1200 else ""), flush=True)
+    print("="*40, flush=True)
+
     return p
 
 async def call_cloudrun(prompt: str, timeout: httpx.Timeout) -> str:
