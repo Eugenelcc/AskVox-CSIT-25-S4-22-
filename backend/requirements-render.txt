@@ -1,4 +1,4 @@
-# Google Generative AI
+# --- Google / Gemini ---
 google-ai-generativelanguage==0.6.15
 google-api-core==2.28.1
 google-api-python-client==2.188.0
@@ -7,82 +7,123 @@ google-auth-httplib2==0.3.0
 google-genai==1.58.0
 googleapis-common-protos==1.72.0
 protobuf==4.25.8
+uritemplate==4.2.0
 
-duckduckgo-search>=6.3.5
-alembic==1.17.2
-annotated-types==0.7.0
+# --- Web / API ---
+fastapi==0.122.0
+starlette==0.50.0
+uvicorn==0.38.0
 anyio==4.11.0
-asyncpg==0.31.0
-bcrypt==4.0.1
-beautifulsoup4==4.14.3
-cachetools==6.2.2
+h11==0.16.0
+httpx==0.28.1
+httpcore==1.0.9
+requests==2.32.5
+urllib3==2.6.1
 certifi==2025.11.12
-cffi==2.0.0
 charset-normalizer==3.4.4
-click==8.3.1
-colorama==0.4.6
+idna==3.11
+websockets==15.0.1
+watchfiles==1.1.1
+httptools==0.7.1
+sse-starlette==3.0.3
+starlette-context==0.3.6
+
+# --- HTTP2 stack (you asked to add) ---
+h2==4.3.0
+hyperframe==6.1.0
+hpack==4.1.0
+
+# --- Compression ---
+brotli==1.2.0
+
+# --- Auth / Security ---
 cryptography==46.0.3
-deprecation==2.1.0
-distro==1.9.0
+PyJWT==2.10.1
+python-jose==3.5.0
+bcrypt==4.0.1
+cffi==2.0.0
+pycparser==2.23
+email-validator==2.3.0
 dnspython==2.8.0
 ecdsa==0.19.1
-email-validator==2.3.0
-fake-useragent==2.2.0
-fastapi==0.122.0
-feedparser==6.0.12
-h11==0.16.0
-httpcore==1.0.9
-httplib2==0.31.1
-httptools==0.7.1
-httpx==0.28.1
-idna==3.11
-Jinja2==3.1.6
-lxml==6.0.2
-Mako==1.3.10
-MarkupSafe==3.0.3
-packaging==25.0
-passlib==1.7.4
-postgrest==2.27.1
-proto-plus==1.26.1
-psycopg==3.2.13
-psycopg-binary==3.2.13
-pyasn1==0.6.1
-pyasn1_modules==0.4.2
-pycparser==2.23
-pydantic==2.12.5
-pydantic-settings==2.12.0
-pydantic_core==2.41.5
-PyJWT==2.10.1
-pyparsing==3.3.1
-python-dateutil==2.9.0.post0
-python-dotenv==1.2.1
-python-jose==3.5.0
-python-multipart==0.0.20
-PyYAML==6.0.3
-rapidfuzz==3.9.7
-realtime==2.27.1
-regex==2025.11.3
-requests==2.32.5
-rich==14.2.0
 rsa==4.9.1
-six==1.17.0
-sniffio==1.3.1
-soupsieve==2.8.1
-SQLAlchemy==2.0.44
-sse-starlette==3.0.3
-starlette==0.50.0
-starlette-context==0.3.6
-storage3==2.27.1
-stripe==14.1.0
+passlib==1.7.4
+
+# --- Supabase client stack (you asked to include these) ---
 supabase==2.27.1
 supabase-auth==2.27.1
 supabase-functions==2.27.1
-typing_extensions==4.15.0
+postgrest==2.27.1
+realtime==2.27.1
+storage3==2.27.1
+
+# --- Database / ORM ---
+SQLAlchemy==2.0.44
+alembic==1.17.2
+asyncpg==0.31.0
+psycopg==3.2.13
+psycopg-binary==3.2.13
+
+# --- Payments (you asked to include) ---
+stripe==14.1.0
+
+# --- Parsing / Content / Feeds ---
+beautifulsoup4==4.14.3
+soupsieve==2.8.1
+lxml==6.0.2
+feedparser==6.0.12
+sgmllib3k==1.0.0
+fake-useragent==2.2.0
+duckduckgo-search>=6.3.5
+
+# --- Search / Matching / Utility libs you requested ---
+regex==2025.11.3
+rapidfuzz==3.9.7
+mmh3==5.2.0
+pyroaring==1.0.3
+sortedcontainers==2.4.0
+threadpoolctl==3.6.0
+fsspec==2025.12.0
+propcache==0.4.1
+primp==0.15.0
+
+# --- Formatting / Markdown you requested ---
+markdown-it-py==4.0.0
+Pygments==2.19.2
+StrEnum==0.4.15
+strictyaml==1.7.3
+
+# --- Data / Misc ---
+pyiceberg==0.10.0
+python-dotenv==1.2.1
+python-dateutil==2.9.0.post0
+PyYAML==6.0.3
+packaging==25.0
+cachetools==6.2.2
+click==8.3.1
+colorama==0.4.6
+deprecation==2.1.0
+distro==1.9.0
+Jinja2==3.1.6
+Mako==1.3.10
+MarkupSafe==3.0.3
+proto-plus==1.26.1
+pyasn1==0.6.1
+pyasn1_modules==0.4.2
+pyparsing==3.3.1
+six==1.17.0
+sniffio==1.3.1
 tzdata==2025.2
-urllib3==2.6.1
-uvicorn==0.38.0
-watchfiles==1.1.1
-websockets==15.0.1
 wheel==0.45.1
 
+# --- Pydantic ---
+annotated-types==0.7.0
+pydantic==2.12.5
+pydantic-settings==2.12.0
+pydantic_core==2.41.5
+
+# --- Uploads / Forms ---
+python-multipart==0.0.20
+
+# --- Optional: keep if you actually use it ---
 numpy==2.3.5
