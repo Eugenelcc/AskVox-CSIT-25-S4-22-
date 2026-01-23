@@ -59,6 +59,7 @@ python-dotenv==1.2.1
 python-jose==3.5.0
 python-multipart==0.0.20
 PyYAML==6.0.3
+rapidfuzz==3.9.7
 realtime==2.27.1
 regex==2025.11.3
 requests==2.32.5
