@@ -1,6 +1,6 @@
 import { type FC } from "react";
 import { useNavigate } from "react-router-dom";
-import { supabase } from "../../supabaseClient";
+//import { supabase } from "../../supabaseClient";
 import type { Session } from "@supabase/supabase-js";
 import "./UnregisteredTopBar.css";
 

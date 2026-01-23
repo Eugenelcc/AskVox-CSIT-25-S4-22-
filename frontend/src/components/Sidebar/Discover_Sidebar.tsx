@@ -1,7 +1,7 @@
-import React from 'react';
+//import React from 'react';
 import "./cssfiles/Settings_Sidebar.css";
 import { PanelLeftClose } from "lucide-react";
-import type { UiCategory } from '../../services/newsApi'; // Optional: import shared type if you want strict safety
+//import type { UiCategory } from '../../services/newsApi'; // Optional: import shared type if you want strict safety
 
 // These keys must match the keys in CATEGORY_MAP in newsApi.ts
 type DiscoverKey =

@@ -77,7 +77,7 @@ export default function AdminDashboard() {
     const total = Math.max(flagDist.mis + flagDist.harm + flagDist.out, 1);
     const a = Math.round((flagDist.mis/total)*360);
     const b = Math.round((flagDist.harm/total)*360);
-    const c = 360 - a - b;
+    //const c = 360 - a - b;
     return { background: `conic-gradient(#ff951c 0 ${a}deg, #6a2da8 ${a}deg ${a+b}deg, #e5b312 ${a+b}deg 360deg)` };
   }, [flagDist]);
 

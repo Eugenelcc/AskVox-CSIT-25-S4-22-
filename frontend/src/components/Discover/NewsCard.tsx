@@ -1,6 +1,6 @@
 import React from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Heart, Clock } from 'lucide-react'; 
+//import { Heart, Clock } from 'lucide-react'; 
 import './DiscoverNews.css';
 
 export interface NewsCardProps {
@@ -37,12 +37,12 @@ const getFaviconUrl = (link?: string, domainUrl?: string) => {
     return domain ? `https://www.google.com/s2/favicons?domain=${domain}&sz=32` : '';
 };
 
-const formatTime = (mins: number) => {
-    if (isNaN(mins) || mins === 0) return 'Just now'; // Handle NaN or 0
-    if (mins < 60) return `${mins}m ago`;
-    const hours = Math.floor(mins / 60);
-    return `${hours}h ago`;
-};
+// const formatTime = (mins: number) => {
+//     if (isNaN(mins) || mins === 0) return 'Just now'; // Handle NaN or 0
+//     if (mins < 60) return `${mins}m ago`;
+//     const hours = Math.floor(mins / 60);
+//     return `${hours}h ago`;
+// };
 
 // --- 2. Sub-Component (Footer) ---
 
@@ -54,7 +54,7 @@ interface CardFooterProps {
     all_sources?: NewsCardProps['all_sources'];
 }
 
-const CardFooter: React.FC<CardFooterProps> = ({ url, source, releasedMinutes, bookmarked, all_sources }) => {
+const CardFooter: React.FC<CardFooterProps> = ({  source, all_sources }) => {
     const isCluster = all_sources && all_sources.length > 1;
 
     return (

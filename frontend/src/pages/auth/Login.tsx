@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState, type FormEvent } from "react";
+import { useEffect, useState, type FormEvent } from "react";
 import { supabase } from "../../supabaseClient";
 import { Link, useLocation, useNavigate } from "react-router-dom";
 import Background from "../../components/background/background";
@@ -35,7 +35,7 @@ export default function Login() {
     }
   }, [location.search]);
 
-  const routeByRole = (_role: UserRole) => {
+  const routeByRole = () => {
     // Land everyone on New Chat for now (non-admin path)
     navigate("/newchat");
   };
@@ -68,7 +68,7 @@ export default function Login() {
 
     // Remember me: Supabase persists session by default.
     setLoading(false);
-    routeByRole(role);
+    routeByRole();
   };
 
   const handleGoogleLogin = async () => {

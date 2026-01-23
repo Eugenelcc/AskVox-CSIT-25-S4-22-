@@ -1,6 +1,6 @@
 import React, { useEffect, useMemo, useState, useCallback, useRef } from 'react';
 import './DiscoverNews.css';
-import { Globe, TrendingUp, ChevronDown, RefreshCw, MapPin } from 'lucide-react'; 
+import { Globe, TrendingUp, ChevronDown, RefreshCw } from 'lucide-react'; 
 import NewsCard from './NewsCard';
 import RightWidgetPanel from './RightWidgetPanel';
 import type { WeatherSummary, Standing, MatchItem } from './RightWidgetPanel';
@@ -73,7 +73,7 @@ export interface DiscoverViewProps {
     feedCount?: number;
 }
 
-const DiscoverView: React.FC<DiscoverViewProps> = ({ withNavOffset, category, feedCount = 2 }) => {
+const DiscoverView: React.FC<DiscoverViewProps> = ({ withNavOffset, category }) => {
     const [trend, setTrend] = useState<'Trending' | 'Latest'>('Trending');
     
     // 🟢 CHANGE: Country State

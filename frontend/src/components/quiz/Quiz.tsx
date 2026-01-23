@@ -58,43 +58,43 @@ type QuizHistoryDetail = {
 const API_BASE = "http://localhost:8000";
 
 // ✅ UI-only mock history (replace later with real DB)
-const MOCK_HISTORY: QuizHistoryDetail[] = [
-  {
-    attemptId: "a1",
-    title: "Quiz: Dwarf Planets",
-    topic: "Planets",
-    quizType: "B",
-    createdAt: "Just now",
-    questions: [
-      {
-        id: "q1",
-        q: "What is a dwarf planet?",
-        options: ["A small star", "A minor planet", "A gas giant", "A comet"],
-        answerIndex: 1,
-      },
-      {
-        id: "q2",
-        q: "Which is a dwarf planet?",
-        options: ["Earth", "Jupiter", "Pluto", "Mars"],
-        answerIndex: 2,
-      },
-      {
-        id: "q3",
-        q: "Dwarf planets have not ____.",
-        options: ["an orbit", "cleared orbit", "gravity", "moons"],
-        answerIndex: 1,
-      },
-    ],
-    userAnswers: [1, 2, 0],
-    feedback: {
-      strengths: ["Understands dwarf planet definition", "Identifies known dwarf planets"],
-      weakAreas: ["Distinguishing orbit-clearing rule", "Planet vs dwarf planet criteria"],
-      recommended: "Review the orbit-clearing criterion, then retry a dwarf-planet quiz.",
-    },
-    scoreCorrect: 2,
-    total: 3,
-  },
-];
+// const MOCK_HISTORY: QuizHistoryDetail[] = [
+//   {
+//     attemptId: "a1",
+//     title: "Quiz: Dwarf Planets",
+//     topic: "Planets",
+//     quizType: "B",
+//     createdAt: "Just now",
+//     questions: [
+//       {
+//         id: "q1",
+//         q: "What is a dwarf planet?",
+//         options: ["A small star", "A minor planet", "A gas giant", "A comet"],
+//         answerIndex: 1,
+//       },
+//       {
+//         id: "q2",
+//         q: "Which is a dwarf planet?",
+//         options: ["Earth", "Jupiter", "Pluto", "Mars"],
+//         answerIndex: 2,
+//       },
+//       {
+//         id: "q3",
+//         q: "Dwarf planets have not ____.",
+//         options: ["an orbit", "cleared orbit", "gravity", "moons"],
+//         answerIndex: 1,
+//       },
+//     ],
+//     userAnswers: [1, 2, 0],
+//     feedback: {
+//       strengths: ["Understands dwarf planet definition", "Identifies known dwarf planets"],
+//       weakAreas: ["Distinguishing orbit-clearing rule", "Planet vs dwarf planet criteria"],
+//       recommended: "Review the orbit-clearing criterion, then retry a dwarf-planet quiz.",
+//     },
+//     scoreCorrect: 2,
+//     total: 3,
+//   },
+// ];
 
 export default function Quiz({
   open,
