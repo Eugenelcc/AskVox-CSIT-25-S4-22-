@@ -74,7 +74,8 @@ lxml==6.0.2
 feedparser==6.0.12
 sgmllib3k==1.0.0
 fake-useragent==2.2.0
-duckduckgo-search>=6.3.5
+duckduckgo-search==6.3.5
+ddgs
 
 # --- Search / Matching / Utility libs you requested ---
 regex==2025.11.3
