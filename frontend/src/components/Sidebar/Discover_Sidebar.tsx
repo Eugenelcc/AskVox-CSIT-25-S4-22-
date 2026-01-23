@@ -20,22 +20,20 @@ type DiscoverKey =
 interface DiscoverSidebarProps {
   isOpen: boolean;
   activeKey?: string | null; // Changed to string to be more flexible
-  onSelect?: (key: string) => void;
   onCategorySelect?: (key: string) => void;
   onClose: () => void;
 }
 
+
 export default function DiscoverSidebar({
   isOpen,
   activeKey = null,
-  onSelect,
   onCategorySelect,
   onClose,
 }: DiscoverSidebarProps) {
   if (!isOpen) return null;
 
   const pick = (k: DiscoverKey) => {
-    onSelect?.(k);
     onCategorySelect?.(k);
   };
 

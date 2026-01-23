@@ -76,6 +76,7 @@ export default function Dashboard({
   const location = useLocation();
 
   const [messages, setMessages] = useState<ChatMessage[]>([]);
+  const API_BASE_URL = import.meta.env.VITE_API_URL || "http://localhost:8000";
   const [isSending, setIsSending] = useState(false);
   const [profile, setProfile] = useState<UserProfile | null>(null);
   const [isQuizOpen, setIsQuizOpen] = useState(false);
@@ -587,7 +588,6 @@ export default function Dashboard({
     if (createdSession) setIsNewChat(false);
 
     try {
-      const API_BASE_URL = import.meta.env.VITE_API_URL || "http://localhost:8000";
       const activeContext = options?.context?.title
         ? options.context
         : (newsContext && newsContext.sessionId === currentSessionId
@@ -784,7 +784,7 @@ export default function Dashboard({
       ttsActiveRef.current = true;
       setIsTtsPlaying(true);
       // Request MP3 audio from backend
-      const res = await fetch("http://localhost:8000/tts/google", {
+      const res = await fetch(`${API_BASE_URL}/tts/google`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ text: safeText, language_code: "en-US" }),
@@ -898,7 +898,7 @@ export default function Dashboard({
           const formData = new FormData();
           formData.append("file", audioBlob, "utterance.webm");
 
-          const sttRes = await fetch("http://localhost:8000/stt/", { method: "POST", body: formData });
+          const sttRes = await fetch(`${API_BASE_URL}/stt/`, { method: "POST", body: formData });
           if (!sttRes.ok) { console.error("STT request failed"); return; }
           const sttData = await sttRes.json();
           const transcript: string = sttData.text ?? "";
@@ -1021,7 +1021,7 @@ export default function Dashboard({
 
             // Send to Sealion (server should route to SeaLion model), pass query linkage
             console.log("🌊 [VoiceMode] route=sealionchats payload=", transcript);
-            const sealionRes = await fetch("http://localhost:8000/geminichats/", {
+            const sealionRes = await fetch(`${API_BASE_URL}/geminichats/`, {
               method: "POST",
               headers: { "Content-Type": "application/json" },
               body: JSON.stringify({
@@ -1375,7 +1375,7 @@ export default function Dashboard({
         onCategorySelect={(c) => {
           setDiscoverCategory(c);
           setActiveTab("discover");
-          setSidebarOpen(false);
+          // ❌ DO NOT close sidebar here
           if (location.pathname !== "/discover") navigate("/discover");
         }}
       />

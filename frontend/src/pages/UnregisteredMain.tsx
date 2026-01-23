@@ -18,6 +18,7 @@ const LLAMA_ID = 212020 as const;
 
 // ✅ 2. Update Component to accept 'session' prop
 const UnregisteredMain = ({ session }: { session: Session | null }) => {
+  const API_BASE_URL = import.meta.env.VITE_API_URL || "http://localhost:8000";
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [isSending, setIsSending] = useState(false);
   const [guestSessionId, setGuestSessionId] = useState<string | null>(null);
@@ -39,7 +40,7 @@ const UnregisteredMain = ({ session }: { session: Session | null }) => {
 
   const postLog = (text: string, kind: string) => {
     try {
-      fetch('http://localhost:8000/voice/log', {
+      fetch(`${API_BASE_URL}/voice/log`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ text, kind }),
@@ -152,7 +153,7 @@ const UnregisteredMain = ({ session }: { session: Session | null }) => {
     // 3. Call the backend
     try {
       const streamId = `llama-${Date.now()}`;
-      const resp = await fetch("http://localhost:8000/llamachats/cloud", {
+      const resp = await fetch(`${API_BASE_URL}/llamachats/cloud_plus`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -260,7 +261,7 @@ const UnregisteredMain = ({ session }: { session: Session | null }) => {
       // Mark TTS active BEFORE stopping recorder to avoid re-arm race in onstop
       ttsActiveRef.current = true;
       setIsTtsPlaying(true);
-      const res = await fetch("http://localhost:8000/tts/google", {
+      const res = await fetch(`${API_BASE_URL}/tts/google`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ text: safeText, language_code: "en-US" }),
@@ -355,7 +356,7 @@ const UnregisteredMain = ({ session }: { session: Session | null }) => {
           setIsTranscribing(true);
           const formData = new FormData();
           formData.append("file", audioBlob, "utterance.webm");
-          const sttRes = await fetch("http://localhost:8000/stt/", { method: "POST", body: formData });
+          const sttRes = await fetch(`${API_BASE_URL}/stt/`, { method: "POST", body: formData });
           if (!sttRes.ok) { return; }
           const sttData = await sttRes.json();
           const transcript: string = sttData.text ?? "";
@@ -411,7 +412,7 @@ const UnregisteredMain = ({ session }: { session: Session | null }) => {
                 });
               } catch {}
             }
-            const sealionRes = await fetch("http://localhost:8000/geminichats/", {
+            const sealionRes = await fetch(`${API_BASE_URL}/geminichats/`, {
               method: "POST",
               headers: { "Content-Type": "application/json" },
               body: JSON.stringify({
