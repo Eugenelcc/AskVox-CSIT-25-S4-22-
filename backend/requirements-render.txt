@@ -1,7 +1,17 @@
-# Core
+# Core web framework
 fastapi==0.122.0
 uvicorn==0.38.0
-python-dotenv==1.2.1
+starlette==0.50.0
+
+# Async & HTTP
+anyio==4.11.0
+httpx==0.28.1
+
+# Database
+SQLAlchemy==2.0.44
+alembic==1.17.2
+asyncpg==0.31.0
+psycopg[binary]==3.2.13
 
 # Auth & Security
 passlib==1.7.4
@@ -9,25 +19,29 @@ bcrypt==4.0.1
 python-jose==3.5.0
 email-validator==2.3.0
 
-# Database
-asyncpg==0.31.0
-psycopg[binary]==3.2.13
-SQLAlchemy==2.0.44
-alembic==1.17.2
-
 # Supabase
 supabase==2.27.1
 
-# Web & API
-httpx==0.28.1
+# Web utilities
 requests==2.32.5
 beautifulsoup4==4.14.3
 feedparser==6.0.12
+fake-useragent==2.2.0
 
 # Search
 duckduckgo-search>=6.3.5
-fake-useragent==2.2.0
 
-# Utils
+# Google Generative AI
+google-generativeai==0.9.0  # or latest compatible
+google-auth==2.47.0
+google-api-core==2.28.1
+protobuf==4.25.8
+
+# Config & validation
+pydantic==2.12.5
+pydantic-settings==2.12.0
+python-dotenv==1.2.1
+
+# Utilities
 cachetools==6.2.2
 diskcache==5.6.3
