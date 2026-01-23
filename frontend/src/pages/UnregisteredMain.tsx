@@ -153,7 +153,7 @@ const UnregisteredMain = ({ session }: { session: Session | null }) => {
     // 3. Call the backend
     try {
       const streamId = `llama-${Date.now()}`;
-      const resp = await fetch(`${API_BASE_URL}/llamachats/cloud_plus`, {
+      const resp = await fetch(`${API_BASE_URL}/llamachats-multi/cloud_plus`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
