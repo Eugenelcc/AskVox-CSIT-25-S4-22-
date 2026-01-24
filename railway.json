@@ -1,0 +1,19 @@
+{
+  "$schema": "https://railway.app/railway.schema.json",
+  "build": {
+    "builder": "NIX_PACKS"
+  },
+  "services": [
+    {
+      "name": "backend",
+      "rootDirectory": "backend",
+      "startCommand": "python -m uvicorn app.main:app --host 0.0.0.0 --port $PORT"
+    },
+    {
+      "name": "frontend",
+      "rootDirectory": "frontend",
+      "buildCommand": "npm run build",
+      "outputDirectory": "dist"
+    }
+  ]
+}
