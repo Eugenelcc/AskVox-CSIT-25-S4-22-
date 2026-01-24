@@ -170,7 +170,7 @@ export default function PaymentBilling({ session }: { session: Session }) {
       const token = sess?.access_token as string | undefined;
       if (!token) throw new Error("Not authenticated");
 
-      const resp = await fetch("http://localhost:8000/billing/subscription", {
+      const resp = await fetch(`${import.meta.env.VITE_API_URL}/billing/subscription`, {
         method: "DELETE",
         headers: { Authorization: `Bearer ${token}` },
       });
@@ -339,7 +339,7 @@ export default function PaymentBilling({ session }: { session: Session }) {
                             const sess = (await supabase.auth.getSession()).data.session;
                             const token = sess?.access_token as string | undefined;
                             if (!token) throw new Error("Not authenticated");
-                            const resp = await fetch("http://localhost:8000/billing/card", {
+                            const resp = await fetch(`${import.meta.env.VITE_API_URL}/billing/card`, {
                               method: "DELETE",
                               headers: { Authorization: `Bearer ${token}` },
                             });

@@ -55,7 +55,7 @@ type QuizHistoryDetail = {
   total: number;
 };
 
-const API_BASE = "http://localhost:8000";
+const API_BASE = import.meta.env.VITE_API_URL;
 
 // ✅ UI-only mock history (replace later with real DB)
 // const MOCK_HISTORY: QuizHistoryDetail[] = [

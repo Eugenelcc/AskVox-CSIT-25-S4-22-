@@ -30,7 +30,7 @@ function InnerForm({ onSaved }: { onSaved?: (card: any) => void }) {
       const token = s.session?.access_token as string | undefined;
       if (!token) throw new Error("Not authenticated");
 
-      const resp = await fetch("http://localhost:8000/billing/stripe/attach-payment-method", {
+      const resp = await fetch(`${import.meta.env.VITE_API_URL}/billing/stripe/attach-payment-method`, {
         method: "POST",
         headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
         body: JSON.stringify({ payment_method_id: pm.id }),

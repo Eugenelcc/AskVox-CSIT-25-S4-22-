@@ -70,7 +70,7 @@ export default function DeleteAccount({ session }: { session: Session }) {
       const { data: sess } = await supabase.auth.getSession();
       const access = sess.session?.access_token;
       if (!access) throw new Error("Missing session token");
-      const res = await fetch("http://localhost:8000/auth/delete-account-supabase", {
+      const res = await fetch(`${import.meta.env.VITE_API_URL}/auth/delete-account-supabase`, {
         method: "POST",
         headers: { Authorization: `Bearer ${access}` },
       });

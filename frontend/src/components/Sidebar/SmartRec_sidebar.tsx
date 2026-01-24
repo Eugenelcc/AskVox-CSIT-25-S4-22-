@@ -5,7 +5,7 @@ import { RotateCw } from "lucide-react";
 type TopicItem = { id: string; topic: string };
 type DomainCard = { domain: string; topics: TopicItem[] };
 
-const API_BASE = "http://localhost:8000";
+const API_BASE = import.meta.env.VITE_API_URL;
 
 export default function SmartRecPanel({
   userId,

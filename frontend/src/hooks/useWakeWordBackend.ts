@@ -41,7 +41,7 @@ export function useWakeWordBackend({
 
   const postLog = (text: string, kind: string) => {
     try {
-      fetch('http://localhost:8000/voice/log', {
+      fetch(`${import.meta.env.VITE_API_URL}/voice/log`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ text, kind }),
@@ -75,7 +75,7 @@ export function useWakeWordBackend({
       const token = sessionRes?.session?.access_token;
       const headers: Record<string, string> = { 'Content-Type': 'application/octet-stream' };
       if (token) headers['Authorization'] = `Bearer ${token}`;
-      const resp = await fetch(`http://localhost:8000/wake/transcribe_pcm?sr=${sr}`, {
+      const resp = await fetch(`${import.meta.env.VITE_API_URL}/wake/transcribe_pcm?sr=${sr}`, {
         method: 'POST',
         headers,
         body: merged.buffer,

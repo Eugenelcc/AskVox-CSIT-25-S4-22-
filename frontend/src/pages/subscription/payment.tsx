@@ -92,7 +92,7 @@ function CardBrandIcon({ brand }: { brand: Brand }) {
         const token = s.session?.access_token as string | undefined;
         if (!token) throw new Error("Not authenticated");
         const body = { plan_type: cycle ?? "monthly", subscription_type: subscriptionType, amount, payment_method_id: pmRes.paymentMethod.id };
-        const resp = await fetch("http://localhost:8000/billing/checkout", { method: "POST", headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` }, body: JSON.stringify(body) });
+        const resp = await fetch(`${import.meta.env.VITE_API_URL}/billing/checkout`, { method: "POST", headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` }, body: JSON.stringify(body) });
         if (!resp.ok) throw new Error(await resp.text());
         onSuccess();
       } catch (e: any) {
@@ -220,7 +220,7 @@ export default function Payment() {
         return; // prevent double-submit
       }
 
-      const resp = await fetch("http://localhost:8000/billing/checkout", {
+      const resp = await fetch(`${import.meta.env.VITE_API_URL}/billing/checkout`, {
         method: "POST",
         headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
         body: JSON.stringify(body),
