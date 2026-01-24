@@ -1,5 +1,6 @@
 from fastapi import FastAPI, Depends, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import text
 from app.db.session import get_db
@@ -63,23 +64,21 @@ app.include_router(quiz_router)
 
 # --- HEALTH CHECKS ---
 
-@app.get("/health")
+@app.api_route("/health", methods=["GET", "HEAD"])
 async def health(db: AsyncSession = Depends(get_db)):
     """
     Checks if the Backend is running and if the Database is accessible.
     """
     status = {"backend": "online", "database": "unknown"}
-    
+
     try:
-        # We use the existing SQLAlchemy session to check connection
-        # This is better than importing the Supabase client just for this one check
         await db.execute(text("SELECT 1"))
         status["database"] = "online"
     except Exception as e:
         status["database"] = "offline"
         status["error"] = str(e)
-        
-    return status
+
+    return JSONResponse(content=status)
 
 @app.get("/db-check")
 async def db_check(db: AsyncSession = Depends(get_db)):
