@@ -128,3 +128,6 @@ python-multipart==0.0.20
 
 # --- Optional: keep if you actually use it ---
 numpy==2.3.5
+
+
+openai-whisper==20231117
