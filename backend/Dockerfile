@@ -5,13 +5,13 @@ WORKDIR /app
 ENV PYTHONDONTWRITEBYTECODE=1
 ENV PYTHONUNBUFFERED=1
 
-COPY requirements.txt /app/requirements.txt
-RUN pip install --no-cache-dir --upgrade pip && pip install --no-cache-dir -r /app/requirements.txt
+COPY requirements-render.txt /app/requirements-render.txt
+RUN pip install --no-cache-dir --upgrade pip && pip install --no-cache-dir -r /app/requirements-render.txt
 
 COPY . /app
 
 # Make entrypoint executable
-RUN chmod +x /app/entrypoint.sh
+#RUN chmod +x /app/entrypoint.sh
 
 EXPOSE 8000
 
