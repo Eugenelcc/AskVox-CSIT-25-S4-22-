@@ -17,6 +17,7 @@ from app.services.wake_stt import router as wake_router
 from app.services.voice_logs import router as voice_logs_router
 from app.services.smartrec import router as smartrec_router
 from app.api.accounts.billing import router as billing_router
+from app.api.watermark import router as watermark_router
 
 app = FastAPI(title="AskVox API")
 
@@ -50,6 +51,7 @@ app.include_router(wake_router)
 app.include_router(voice_logs_router)
 app.include_router(smartrec_router)
 app.include_router(billing_router)
+app.include_router(watermark_router)
 
 # --- HEALTH CHECKS ---
 

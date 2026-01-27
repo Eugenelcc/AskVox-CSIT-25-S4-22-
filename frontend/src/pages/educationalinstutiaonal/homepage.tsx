@@ -35,6 +35,12 @@ const EducationalHomepage = () => {
   const [previewText, setPreviewText] = useState("")
   const [previewImageUrl, setPreviewImageUrl] = useState<string | null>(null)
 
+  // AI detection results
+  const [aiPercentage, setAiPercentage] = useState(80)
+  const [humanPercentage, setHumanPercentage] = useState(20)
+  const [analyzing, setAnalyzing] = useState(false)
+  const [analysisDetails, setAnalysisDetails] = useState<{ cyrillic_count: number; zero_width_count: number; thin_spaces_count: number; total_markers: number; text_length: number } | null>(null)
+
   // ✅ ADD: user profile state
   const [userRole, setUserRole] = useState<string | null>(null)
   const [userName, setUserName] = useState<string | null>(null)
@@ -112,6 +118,41 @@ const EducationalHomepage = () => {
     } catch (err) {
       console.error(err)
       alert("File upload failed")
+    }
+  }
+
+  const handleAnalyze = async () => {
+    if (!text.trim()) return
+
+    setAnalyzing(true)
+    try {
+      const res = await fetch("http://localhost:8000/watermark/analyze", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ text: text }),
+      })
+
+      if (!res.ok) {
+        console.error("Analysis failed")
+        // Use default values on error
+        setAiPercentage(20)
+        setHumanPercentage(80)
+        setAnalysisDetails(null)
+      } else {
+        const data = await res.json()
+        setAiPercentage(data.ai_percentage)
+        setHumanPercentage(data.human_percentage)
+        setAnalysisDetails(data.details ?? null)
+      }
+    } catch (err) {
+      console.error(err)
+      // Use default values on error
+      setAiPercentage(20)
+      setHumanPercentage(80)
+      setAnalysisDetails(null)
+    } finally {
+      setAnalyzing(false)
+      setShowResults(true)
     }
   }
 
@@ -225,10 +266,10 @@ const EducationalHomepage = () => {
 
               <button
                 className={styles.submitBtn}
-                onClick={() => setShowResults(true)}
-                disabled={!text.trim()}
+                onClick={handleAnalyze}
+                disabled={!text.trim() || analyzing}
               >
-                Submit for Analysis
+                {analyzing ? "Analyzing..." : "Submit for Analysis"}
               </button>
             </div>
           </section>
@@ -244,6 +285,17 @@ const EducationalHomepage = () => {
 
               <div className={styles.complete}>● Analysis Complete</div>
 
+              {analysisDetails && (
+                <div className={styles.detailsBox}>
+                  <div>Markers found:</div>
+                  <div>Cyrillic: {analysisDetails.cyrillic_count}</div>
+                  <div>Zero-width: {analysisDetails.zero_width_count}</div>
+                  <div>Thin spaces: {analysisDetails.thin_spaces_count}</div>
+                  <div>Total markers: {analysisDetails.total_markers}</div>
+                  <div>Text length: {analysisDetails.text_length}</div>
+                </div>
+              )}
+
               <button
                 className={styles.backBtn}
                 onClick={() => setShowResults(false)}
@@ -253,20 +305,26 @@ const EducationalHomepage = () => {
             </div>
 
             <div className={styles.resultCard}>
-              <div className={styles.score}>80%</div>
+              <div className={styles.score}>{aiPercentage}%</div>
               <p className={styles.scoreLabel}>of text is likely AI</p>
 
               <div className={styles.barChart}>
                 <div className={styles.barGroup}>
-                  <div className={styles.barAI} style={{ height: "158px" }}>
-                    <span className={styles.barValue}>80%</span>
+                  <div 
+                    className={styles.barAI} 
+                    style={{ height: `${Math.max(aiPercentage * 2, 20)}px` }}
+                  >
+                    <span className={styles.barValue}>{aiPercentage}%</span>
                   </div>
                   <span className={styles.barLabel}>AI-Generated</span>
                 </div>
 
                 <div className={styles.barGroup}>
-                  <div className={styles.barHuman} style={{ height: "43px" }}>
-                    <span className={styles.barValue}>20%</span>
+                  <div 
+                    className={styles.barHuman} 
+                    style={{ height: `${Math.max(humanPercentage * 2, 40)}px` }}
+                  >
+                    <span className={styles.barValue}>{humanPercentage}%</span>
                   </div>
                   <span className={styles.barLabel}>Human Written</span>
                 </div>
