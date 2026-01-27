@@ -36,6 +36,9 @@ const UnregisteredMain = ({ session }: { session: Session | null }) => {
   const ttsActiveRef = useRef(false);
   const ttsSanitizeRef = useRef<((t: string) => string) | null>(null);
   const voiceGuestSessionIdRef = useRef<string | null>(null);
+  const [uploadedFile, setUploadedFile] = useState<File | null>(null)
+  const [extractedText, setExtractedText] = useState<string>("")
+
 
   const postLog = (text: string, kind: string) => {
     try {
@@ -79,14 +82,19 @@ const UnregisteredMain = ({ session }: { session: Session | null }) => {
 
 
   const handleSubmit = async (text: string) => {
-    const trimmed = text.trim();
-    if (!trimmed) return;
+          const combinedText = `
+      ${text.trim()}
+
+      ${extractedText ? "Document content:\n" + extractedText : ""}
+      `.trim()
+
+    if (!combinedText) return;
 
     // 1. Create user object
     const userMsg: ChatMessage = {
       id: `user-${Date.now()}`,
       senderId: USER_ID,
-      content: trimmed,
+      content: combinedText,
       createdAt: new Date().toISOString(),
     };
 
@@ -96,7 +104,7 @@ const UnregisteredMain = ({ session }: { session: Session | null }) => {
     // Ensure guest session id for linking rows
     let currentSessionId: string;
     try {
-      currentSessionId = await ensureGuestSession(trimmed);
+      currentSessionId = await ensureGuestSession(combinedText);
     } catch (e) {
       console.error(e);
       const errorMsg: ChatMessage = {
@@ -125,7 +133,7 @@ const UnregisteredMain = ({ session }: { session: Session | null }) => {
         session_id: currentSessionId,
         user_id: null,
         input_mode: 'text',
-        transcribed_text: trimmed,
+        transcribed_text: combinedText,
         detected_domain: 'general'
       });
     } catch {}
@@ -136,7 +144,7 @@ const UnregisteredMain = ({ session }: { session: Session | null }) => {
         session_id: currentSessionId,
         user_id: null,
         role: 'user',
-        content: trimmed,
+        content: combinedText,
         display_name: 'Guest'
       });
     } 
@@ -156,7 +164,7 @@ const UnregisteredMain = ({ session }: { session: Session | null }) => {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          message: trimmed,
+          message: combinedText,
           history: historyPayload,
           query_id: queryId,
           session_id: currentSessionId,
@@ -498,6 +506,31 @@ const UnregisteredMain = ({ session }: { session: Session | null }) => {
     void speakWithGoogleTTS("AskVox is listening", true);
   };
 
+  const handleFileUpload = async (file: File) => {
+    setUploadedFile(file)
+
+    const formData = new FormData()
+    formData.append("file", file)
+
+    try {
+      const res = await fetch("http://localhost:5000/extract-text", {
+        method: "POST",
+        body: formData,
+      })
+
+      if (!res.ok) {
+        alert("Failed to extract text")
+        return
+      }
+
+      const data = await res.json()
+      setExtractedText(data.text || "")
+    } catch (err) {
+      console.error(err)
+      alert("File upload failed")
+    }
+  }
+
   const exitVoiceMode = () => {
     voiceModeRef.current = false;
     setIsVoiceMode(false);
@@ -541,7 +574,7 @@ const UnregisteredMain = ({ session }: { session: Session | null }) => {
 
       <main className="uv-main">
         {(!hasMessages || isVoiceMode) && (
-          <section className="uv-hero">
+          <section className={`uv-hero ${uploadedFile ? "uv-hero--has-file" : ""}`}>
             <BlackHole isActivated={isBlackHoleActive} />
             {!isVoiceMode && !hasMessages && (
               <h3 className="orb-caption">
@@ -565,7 +598,13 @@ const UnregisteredMain = ({ session }: { session: Session | null }) => {
         )}
       </main>
 
-      {!isVoiceMode && (<ChatBar onSubmit={handleSubmit} disabled={isSending} />)}
+      {!isVoiceMode && (<ChatBar
+  onSubmit={handleSubmit}
+  onFileUpload={handleFileUpload}
+  uploadedFile={uploadedFile}
+  disabled={isSending}
+/>
+)}
     </div>
   );
 };

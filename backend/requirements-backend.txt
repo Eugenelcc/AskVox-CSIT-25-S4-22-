@@ -1,0 +1,6 @@
+flask
+flask-cors
+pymupdf
+python-docx
+pillow
+pytesseract

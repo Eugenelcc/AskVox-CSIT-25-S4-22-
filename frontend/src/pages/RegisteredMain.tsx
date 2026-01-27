@@ -48,6 +48,8 @@ export default function Dashboard({ session, paid }: { session: Session; paid?: 
   const ttsActiveRef = useRef(false);
   const ttsSanitizeRef = useRef<((t: string) => string) | null>(null);
   const voiceSessionIdRef = useRef<string | null>(null);
+  const [uploadedFile, setUploadedFile] = useState<File | null>(null);
+  const [extractedText, setExtractedText] = useState<string>("");
   
   // Sidebar & Navigation State
   const [sessions, setSessions] = useState<{id: string, title: string}[]>([]); // all chats the user has created, shown in the sidebar
@@ -86,6 +88,37 @@ export default function Dashboard({ session, paid }: { session: Session; paid?: 
 
   const handleSettingsSelect = (key: SettingsKey) => {
     setActiveSettingsKey(key);
+  };
+
+  const handleFileUpload = async (file: File | null) => {
+    if (!file) {
+      setUploadedFile(null);
+      setExtractedText("");
+      return;
+    }
+
+    setUploadedFile(file);
+
+    const formData = new FormData();
+    formData.append("file", file);
+
+    try {
+      const res = await fetch("http://localhost:5000/extract-text", {
+        method: "POST",
+        body: formData,
+      });
+
+      if (!res.ok) {
+        alert("Failed to extract text");
+        return;
+      }
+
+      const data = await res.json();
+      setExtractedText(data.text || "");
+    } catch (err) {
+      console.error(err);
+      alert("File upload failed");
+    }
   };
 
   // --- Data Fetching ---
@@ -273,9 +306,14 @@ export default function Dashboard({ session, paid }: { session: Session; paid?: 
 
 
   const handleSubmit = async (text: string) => {
-    const trimmed = text.trim();
-    if (!trimmed || !session?.user?.id) return;
-    console.log("💬 [Text] route=llamachats/cloud payload=", trimmed);
+    const combinedText = `
+      ${text.trim()}
+
+      ${extractedText ? "Document content:\n" + extractedText : ""}
+      `.trim();
+    
+    if (!combinedText || !session?.user?.id) return;
+    console.log("💬 [Text] route=llamachats/cloud payload=", combinedText);
 
     // 1. Determine Session ID
     let currentSessionId = activeSessionId;
@@ -288,7 +326,7 @@ export default function Dashboard({ session, paid }: { session: Session; paid?: 
         .from('chat_sessions')
         .insert({
           user_id: session.user.id,
-          title: trimmed.slice(0, 30) + '...',
+          title: combinedText.slice(0, 30) + '...',
         })
         .select()
         .single();
@@ -319,7 +357,7 @@ export default function Dashboard({ session, paid }: { session: Session; paid?: 
     setMessages(prev => [...prev, { 
       id: `temp-${Date.now()}`, 
       senderId: session.user.id, 
-      content: trimmed, 
+      content: combinedText, 
       createdAt: new Date().toISOString(),
       displayName: userName 
     }]);
@@ -1038,7 +1076,7 @@ export default function Dashboard({ session, paid }: { session: Session; paid?: 
                 </section>
               ) : (
                 !activeSessionId && (
-                  <section className="uv-hero">
+                  <section className={`uv-hero ${uploadedFile ? "uv-hero--has-file" : ""}`}>
                     <BlackHole />
                     <h3 className="orb-caption">
                       Hi {profile?.username ?? "User"}, say{" "}
@@ -1058,7 +1096,12 @@ export default function Dashboard({ session, paid }: { session: Session; paid?: 
 
               {!isVoiceMode && (
                 <div className="uv-input-container">
-                  <ChatBar onSubmit={handleSubmit} disabled={isSending} />
+                  <ChatBar
+                    onSubmit={handleSubmit}
+                    onFileUpload={handleFileUpload}
+                    uploadedFile={uploadedFile}
+                    disabled={isSending}
+                  />
                 </div>
               )}
             </>

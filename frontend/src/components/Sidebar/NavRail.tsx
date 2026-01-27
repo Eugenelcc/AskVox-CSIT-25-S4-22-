@@ -1,5 +1,6 @@
+import checkerIcon from "../../assets/educational/checker.png";
 import { useEffect, useState } from "react";
-import { supabase } from "../../supabaseClient"; 
+import { supabase } from "../../supabaseClient";
 import askvoxLogo from "../TopBars/AskVox.png";
 import chatsIcon from "./chat.png";
 import discoverIcon from "./news.png";
@@ -12,10 +13,8 @@ interface NavRailProps {
   activeTab: string;
   onTabClick: (tab: string) => void;
   onOpenSidebar?: (tab: string) => void;
-
-  // ✅ Add these so NavRail can display the avatar
-  // Store this as a STORAGE PATH for private bucket, e.g. "defaults/default.png" or "userId/avatar.png"
   avatarPath?: string | null;
+  mode?: "default" | "educational";
 }
 
 type NavItem = {
@@ -32,7 +31,13 @@ const ITEMS: NavItem[] = [
   { key: "smartrec", label: "SmartRec", icon: smartrecIcon, top: 424 },
 ];
 
-export default function NavRail({ activeTab, onTabClick, onOpenSidebar, avatarPath }: NavRailProps) {
+export default function NavRail({
+  activeTab,
+  onTabClick,
+  onOpenSidebar,
+  avatarPath,
+  mode = "default",
+}: NavRailProps) {
   const [avatarSrc, setAvatarSrc] = useState<string>("");
 
   const handleClick = (tab: string) => {
@@ -40,14 +45,12 @@ export default function NavRail({ activeTab, onTabClick, onOpenSidebar, avatarPa
     onOpenSidebar?.(tab);
   };
 
-  // ✅ Private bucket: convert stored path -> signed URL for display
+  // Load avatar (unchanged)
   useEffect(() => {
     let cancelled = false;
 
-
     const loadAvatar = async () => {
       if (!avatarPath) {
-        // Fallback: use OAuth-provided avatar from current auth user
         try {
           const { data } = await supabase.auth.getUser();
           const meta: any = data?.user?.user_metadata || {};
@@ -65,22 +68,8 @@ export default function NavRail({ activeTab, onTabClick, onOpenSidebar, avatarPa
             ident0.image ||
             "";
 
-          if (googleUrl) {
-            if (/^https?:\/\//i.test(googleUrl)) {
-              setAvatarSrc(googleUrl);
-              return;
-            }
-            const { data: signed, error } = await supabase.storage
-              .from("avatars")
-              .createSignedUrl(googleUrl, 60 * 60 * 24 * 7);
-            if (!cancelled) {
-              if (error) {
-                console.error("Failed to sign metadata avatar URL:", error.message);
-                setAvatarSrc("");
-              } else {
-                setAvatarSrc(signed?.signedUrl ?? "");
-              }
-            }
+          if (googleUrl && /^https?:\/\//i.test(googleUrl)) {
+            setAvatarSrc(googleUrl);
             return;
           }
         } catch {}
@@ -95,21 +84,14 @@ export default function NavRail({ activeTab, onTabClick, onOpenSidebar, avatarPa
 
       const { data, error } = await supabase.storage
         .from("avatars")
-        .createSignedUrl(avatarPath, 60 * 60 * 24 * 7); // 7 days
+        .createSignedUrl(avatarPath, 60 * 60 * 24 * 7);
 
-      if (cancelled) return;
-
-      if (error) {
-        console.error("Failed to create signed avatar URL:", error.message);
-        setAvatarSrc("");
-        return;
+      if (!cancelled && !error) {
+        setAvatarSrc(data?.signedUrl ?? "");
       }
-      
-      setAvatarSrc(data?.signedUrl ?? "");
     };
 
     loadAvatar();
-
     return () => {
       cancelled = true;
     };
@@ -118,37 +100,56 @@ export default function NavRail({ activeTab, onTabClick, onOpenSidebar, avatarPa
   return (
     <div className="av-rail">
       {/* LOGO */}
-      <button className="av-rail__logoBtn" type="button" onClick={() => handleClick("reguserhome")}>
+      <button
+        className="av-rail__logoBtn"
+        type="button"
+        onClick={() => handleClick("reguserhome")}
+      >
         <img className="av-rail__logo" src={askvoxLogo} alt="AskVox" />
       </button>
 
-      {/* NAV ITEMS */}
-      {ITEMS.map((it) => {
-        const isActive = activeTab === it.key;
-        return (
-          <button
-            key={it.key}
-            type="button"
-            className={`av-rail__item ${isActive ? "is-active" : ""}`}
-            style={{ top: it.top }}
-            onClick={() => handleClick(it.key)}
-            aria-current={isActive ? "page" : undefined}
-          >
-            <span className="av-rail__iconWrap">
-              <img className="av-rail__icon" src={it.icon} alt="" />
-            </span>
-            <span className="av-rail__label">{it.label}</span>
-          </button>
-        );
-      })}
+      {/* 🔒 EDUCATIONAL MODE — ONLY CHECKER */}
+      {mode === "educational" && (
+        <button
+          type="button"
+          className="av-rail__item is-active"
+          style={{ top: 148 }}
+          aria-current="page"
+        >
+          <span className="av-rail__iconWrap">
+            <img className="av-rail__icon" src={checkerIcon} alt="Checker" />
+          </span>
+          <span className="av-rail__label">Checker</span>
+        </button>
+      )}
 
-      {/* ✅ PROFILE + SETTINGS (bottom) */}
+      {/* DEFAULT MODE — NORMAL NAV */}
+      {mode !== "educational" &&
+        ITEMS.map((it) => {
+          const isActive = activeTab === it.key;
+          return (
+            <button
+              key={it.key}
+              type="button"
+              className={`av-rail__item ${isActive ? "is-active" : ""}`}
+              style={{ top: it.top }}
+              onClick={() => handleClick(it.key)}
+              aria-current={isActive ? "page" : undefined}
+            >
+              <span className="av-rail__iconWrap">
+                <img className="av-rail__icon" src={it.icon} alt="" />
+              </span>
+              <span className="av-rail__label">{it.label}</span>
+            </button>
+          );
+        })}
+
+      {/* PROFILE + SETTINGS */}
       <button
         type="button"
         className="av-rail__profileBtn"
         onClick={() => handleClick("settings")}
         aria-label="Profile settings"
-        title="Settings"
       >
         <span className="av-rail__profileRing">
           {avatarSrc ? (
@@ -156,8 +157,6 @@ export default function NavRail({ activeTab, onTabClick, onOpenSidebar, avatarPa
               className="av-rail__profileImg"
               src={avatarSrc}
               alt="Profile"
-              referrerPolicy="no-referrer"
-              crossOrigin="anonymous"
               onError={() => setAvatarSrc("")}
             />
           ) : (
@@ -165,7 +164,7 @@ export default function NavRail({ activeTab, onTabClick, onOpenSidebar, avatarPa
           )}
         </span>
 
-        <span className="av-rail__profileGear" aria-hidden="true">
+        <span className="av-rail__profileGear">
           <Settings size={18} />
         </span>
       </button>

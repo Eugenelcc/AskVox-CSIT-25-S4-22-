@@ -18,6 +18,11 @@
   
     pointer-events: none; /* orb handles clicks */
   }
+
+  /* Reduce hero height when file is present */
+  .uv-hero--has-file {
+    min-height: calc(100vh - 280px);
+  }
   
   .uv-hero > * {
     pointer-events: auto; /* allow orb to still be clickable */
