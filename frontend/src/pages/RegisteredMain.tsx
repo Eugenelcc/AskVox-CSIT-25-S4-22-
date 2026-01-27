@@ -1217,6 +1217,33 @@ export default function Dashboard({
     await loadFolders();
   };
 
+  const handleRenameChat = async (chatId: string) => {
+  const sess = sessions.find((s) => s.id === chatId);
+  const next = window.prompt("Rename chat:", sess?.title ?? "");
+  if (!next?.trim()) return;
+
+  const { error } = await supabase
+    .from("chat_sessions")
+    .update({ title: next.trim(), updated_at: new Date().toISOString() })
+    .eq("id", chatId)
+    .eq("user_id", session.user.id);
+
+  if (error) {
+    console.error("Failed to rename chat", error);
+    return;
+  }
+
+  // refresh list
+  const { data: allSessions } = await supabase
+    .from("chat_sessions")
+    .select("id, title, article_context")
+    .eq("user_id", session.user.id)
+    .order("updated_at", { ascending: false });
+
+  if (allSessions) setSessions(allSessions);
+};
+
+
   const handleDeleteFolder = async (folderId: string) => {
     const ok = window.confirm("Delete this folder? Chats will NOT be deleted.");
     if (!ok) return;
@@ -1345,6 +1372,7 @@ export default function Dashboard({
 
 
       <Sidebar
+        paid={paid}
         sessions={standaloneSessions}
         folders={folders}
         activeId={activeSessionId}
@@ -1356,9 +1384,14 @@ export default function Dashboard({
         onCreateFolder={handleCreateFolder}
         onCreateFolderAndMoveChat={handleCreateFolderAndMoveChat}
         onRenameFolder={handleRenameFolder}
+        onRenameChat={handleRenameChat}
         onDeleteFolder={handleDeleteFolder}
         onMoveOutOfFolder={handleMoveOutOfFolder}
         onDeleteChat={handleDeleteChat}
+
+         // ✅ add these so paid customise can save (you can implement later)
+        onSaveFolderStyle={(folderId, style) => console.log("save folder style", folderId, style)}
+        onSaveChatStyle={(chatId, style) => console.log("save chat style", chatId, style)}
 
 
       />
