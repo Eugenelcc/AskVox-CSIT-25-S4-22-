@@ -76,7 +76,6 @@ export default function Dashboard({
   const location = useLocation();
 
   const [messages, setMessages] = useState<ChatMessage[]>([]);
-  const API_BASE_URL = import.meta.env.VITE_API_URL || "http://localhost:8000";
   const [isSending, setIsSending] = useState(false);
   const [profile, setProfile] = useState<UserProfile | null>(null);
   const [isQuizOpen, setIsQuizOpen] = useState(false);
@@ -588,6 +587,7 @@ export default function Dashboard({
     if (createdSession) setIsNewChat(false);
 
     try {
+      const API_BASE_URL = import.meta.env.VITE_API_URL || "http://localhost:8000";
       const activeContext = options?.context?.title
         ? options.context
         : (newsContext && newsContext.sessionId === currentSessionId
@@ -623,7 +623,7 @@ export default function Dashboard({
       const llamaStart = performance.now();
       console.time("llama_request_ms");
       // 5. Call AI API
-      const response = await fetch(`${API_BASE_URL}/llamachats-multi/cloud_plus`, { //MultiModel llamachat.py
+      const response = await fetch(`${API_BASE_URL}/llamachats/cloud_plus`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(llamaPayload)
@@ -784,7 +784,7 @@ export default function Dashboard({
       ttsActiveRef.current = true;
       setIsTtsPlaying(true);
       // Request MP3 audio from backend
-      const res = await fetch(`${API_BASE_URL}/tts/google`, {
+      const res = await fetch("http://localhost:8000/tts/google", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ text: safeText, language_code: "en-US" }),
@@ -898,7 +898,7 @@ export default function Dashboard({
           const formData = new FormData();
           formData.append("file", audioBlob, "utterance.webm");
 
-          const sttRes = await fetch(`${API_BASE_URL}/stt/`, { method: "POST", body: formData });
+          const sttRes = await fetch("http://localhost:8000/stt/", { method: "POST", body: formData });
           if (!sttRes.ok) { console.error("STT request failed"); return; }
           const sttData = await sttRes.json();
           const transcript: string = sttData.text ?? "";
@@ -1021,7 +1021,7 @@ export default function Dashboard({
 
             // Send to Sealion (server should route to SeaLion model), pass query linkage
             console.log("🌊 [VoiceMode] route=sealionchats payload=", transcript);
-            const sealionRes = await fetch(`${API_BASE_URL}/geminichats/`, {
+            const sealionRes = await fetch("http://localhost:8000/geminichats/", {
               method: "POST",
               headers: { "Content-Type": "application/json" },
               body: JSON.stringify({
@@ -1375,7 +1375,7 @@ export default function Dashboard({
         onCategorySelect={(c) => {
           setDiscoverCategory(c);
           setActiveTab("discover");
-          // ❌ DO NOT close sidebar here
+          setSidebarOpen(false);
           if (location.pathname !== "/discover") navigate("/discover");
         }}
       />

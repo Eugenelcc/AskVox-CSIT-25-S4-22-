@@ -148,6 +148,7 @@ MAX_MESSAGE_CHARS = 800
 # -----------------------
 FORMAT_INSTRUCTION = (
     "Always format your answer clearly.\n"
+    "- Start with at most 1 short sentence introduction.\n"
     "- When giving multiple suggestions, use a numbered list with ONE item per line.\n"
     "- Avoid giant wall-of-text paragraphs.\n"
 )
@@ -161,7 +162,7 @@ CITATIONS RULES (VERY IMPORTANT):
 """
 
 MODEL_JSON_INSTRUCTION = (
-    "When appropriate, respond using a VALID JSON object matching the schema below.\n\n"
+        "Return a VALID JSON object using the schema below.\n\n"
         "CRITICAL RULES:\n"
         "- Do NOT rewrite, summarize, shorten, or rephrase the answer.\n"
         "- Preserve ALL tone, emojis, formatting, markdown, lists, and wording exactly.\n"
@@ -416,7 +417,16 @@ def normalize_markdown_spacing(text: str) -> str:
     text = re.sub(r"([^\n])\n\n([A-Z])", r"\1\n\2", text)
     return text.strip()
 
-    
+def enforce_compact_list(text: str) -> str:
+    lines = [l.strip() for l in text.splitlines() if l.strip()]
+    out = []
+    i = 0
+    while i < len(lines):
+        title = lines[i]
+        desc = lines[i + 1] if i + 1 < len(lines) else ""
+        out.append(f"- **{title}** – {desc}")
+        i += 2
+    return "\n".join(out)
 
 # -----------------------
 # PLACEHOLDER: Moderation
@@ -652,24 +662,17 @@ def extract_json(text: str) -> Dict[str, Any]:
         return json.loads(text)
     except Exception:
         pass
-    # Try to find the first balanced JSON object in the text
-    s = str(text)
-    n = len(s)
-    for i in range(n):
-        if s[i] == '{':
-            depth = 0
-            for j in range(i, n):
-                if s[j] == '{':
-                    depth += 1
-                elif s[j] == '}':
-                    depth -= 1
-                    if depth == 0:
-                        candidate = s[i:j+1]
-                        try:
-                            return json.loads(candidate)
-                        except Exception:
-                            break
-    return {}
+
+    # ✅ more robust: first "{" to last "}"
+    start = text.find("{")
+    end = text.rfind("}")
+    if start == -1 or end == -1 or end <= start:
+        return {}
+    candidate = text[start:end+1]
+    try:
+        return json.loads(candidate)
+    except Exception:
+        return {}
 
 def safe_wrap_json(raw_text: str) -> Dict[str, Any]:
     rt = (raw_text or "").strip()
@@ -702,8 +705,6 @@ def cleanup_model_text(text: str) -> str:
         out = re.sub(pat, "", out, flags=re.MULTILINE)
     # Remove inline citation tokens like [[cite:1]] (sources will be shown separately)
     out = re.sub(r"\[\[\s*cite\s*:\s*\d+\s*\]\]", "", out, flags=re.IGNORECASE)
-    # Strip leaked special tokens (e.g., <|eot_id|>, <|start_header_id|>)
-    out = re.sub(r"<\|.*?\|>", "", out)
     # Remove [USER] and [ASSISTANT] tags (model echoes)
     out = re.sub(r"^\s*\[(USER|ASSISTANT)\]\s*", "", out, flags=re.MULTILINE)
     # Remove trailing [SOURCES] section entirely (frontend shows clickable sources separately)
@@ -738,7 +739,6 @@ def build_prompt(
     rag_block: str = "",
     web_evidence_block: str = "",
     article_block: str = "",
-    chat_mode: bool = False,
 ) -> str:
     def _truncate(text: str, limit: int) -> str:
         if not text:
@@ -752,41 +752,16 @@ def build_prompt(
     safe_rag = _truncate(rag_block, MAX_RAG_CHARS)
     safe_evidence = _truncate(web_evidence_block, MAX_EVIDENCE_CHARS)
 
-    # LLaMA-3.3 Instruct chat headers
-    if chat_mode:
-        p = (
-            "<|begin_of_text|>"
-            "<|start_header_id|>system<|end_header_id|>\n"
-            "You are AskVox, a friendly, knowledgeable AI assistant. "
-            "Provide clear, detailed, and helpful responses with examples when useful.\n"
-            "<|eot_id|>"
-            "<|start_header_id|>user<|end_header_id|>\n"
-            f"{safe_message}<|eot_id|>"
-            "<|start_header_id|>assistant<|end_header_id|>\n"
-        )
-        if len(p) > MAX_PROMPT_CHARS:
-            p = p[:MAX_PROMPT_CHARS] + "..."
-        print("\n==== PROMPT SENT TO MODEL ====".ljust(40, "="), flush=True)
-        print(p[:1200] + ("..." if len(p) > 1200 else ""), flush=True)
-        print("="*40, flush=True)
-        return p
-
-    # Structured mode with JSON instruction and optional context blocks
-    p = (
-        "<|begin_of_text|>"
-        "<|start_header_id|>system<|end_header_id|>\n"
-    )
-    p += MODEL_JSON_INSTRUCTION
+    p = f"[SYSTEM]\n{MODEL_JSON_INSTRUCTION}\n"
     if safe_article:
-        p += "\nUse the provided ARTICLE_CONTEXT as the primary source for the user's question.\n"
+        p += "\n[INSTRUCTION] Use the provided ARTICLE_CONTEXT as the primary source for the user's question.\n"
         p += f"\n{safe_article}\n"
     if safe_rag:
         p += f"\n{safe_rag}\n"
     if safe_evidence:
         p += f"\n{safe_evidence}\n"
-    p += "<|eot_id|>"
 
-    # Filter out empty or duplicate history entries (keep last 2 exchanges)
+    # Filter out empty or duplicate history entries
     filtered_history = []
     seen = set()
     for h in history:
@@ -797,28 +772,22 @@ def build_prompt(
             continue
         seen.add(key)
         filtered_history.append(h)
+
+    # Only keep the last 2 exchanges (user/assistant pairs) for clarity
     filtered_history = filtered_history[-4:]
 
     remaining_history_chars = MAX_HISTORY_CHARS
     for h in filtered_history:
-        role = "user" if h.role == "user" else "assistant"
+        role_tag = "USER" if h.role == "user" else "ASSISTANT"
         if remaining_history_chars <= 0:
             break
         content = _truncate(h.content, 260)
         if len(content) > remaining_history_chars:
             content = _truncate(content, max(0, remaining_history_chars))
         remaining_history_chars -= len(content)
-        p += (
-            f"<|start_header_id|>{role}<|end_header_id|>\n"
-            f"{content}<|eot_id|>"
-        )
+        p += f"\n[{role_tag}] {content}\n"
 
-    p += (
-        "<|start_header_id|>user<|end_header_id|>\n"
-        f"{safe_message}<|eot_id|>"
-        "<|start_header_id|>assistant<|end_header_id|>\n"
-    )
-
+    p += f"\n[USER] {safe_message}\n[ASSISTANT]"
     if len(p) > MAX_PROMPT_CHARS:
         p = p[:MAX_PROMPT_CHARS] + "..."
 
@@ -918,7 +887,7 @@ async def call_runpod_job_prompt(prompt: str) -> str:
         raise HTTPException(status_code=500, detail="RUNPOD_API_KEY missing")
 
     headers = {RUNPOD_AUTH_HEADER or "Authorization": f"Bearer {RUNPOD_API_KEY}"}
-    payload = {"input": {"prompt": prompt, "stop": ["<|eot_id|>"]}}
+    payload = {"input": {"prompt": prompt}}
 
     try:
         print(f"🚀 Submitting RunPod job: {RUNPOD_RUN_ENDPOINT}", flush=True)
@@ -1198,37 +1167,18 @@ async def generate_cloud_structured(
 
     timeout = httpx.Timeout(connect=10.0, read=300.0, write=10.0, pool=10.0)
     trimmed_history = history[-max_history:] if max_history and max_history > 0 else []
-    user_flags = keyword_router(message)
-    chat_flag = not user_flags.get("want_web", False)
-
 
     # ✅ Draft answer first (no tools yet)
     if RUNPOD_RUN_ENDPOINT:
         raw = await call_runpod_job_prompt(
-            build_prompt(
-                message,
-                trimmed_history,
-                rag_block=rag_block,
-                article_block=article_block,
-                chat_mode=chat_flag,
-            )
+            build_prompt(message, trimmed_history, rag_block=rag_block, article_block=article_block)
         )
     else:
         raw = await call_cloudrun(
-            build_prompt(
-                message,
-                trimmed_history,
-                rag_block=rag_block,
-                article_block=article_block,
-                chat_mode=chat_flag,
-            ),
+            build_prompt(message, trimmed_history, rag_block=rag_block, article_block=article_block),
             timeout=timeout,
         )
-    if not chat_flag:
-        plan = extract_json(raw)
-    else:
-        plan = {}
-
+    plan = extract_json(raw)
 
     # ✅ Non-destructive fallback: wrap raw text into JSON without rewriting content
     if not plan or "answer_markdown" not in plan or not (plan.get("answer_markdown") or "").strip():
@@ -1267,7 +1217,7 @@ async def generate_cloud_structured(
     # ✅ Gate web sources for smalltalk/identity queries
     sources: List[SourceItem] = []
     evidence_chunks: List[Dict[str, str]] = []
-    skip_web = chat_flag
+    skip_web = is_smalltalk_or_identity(message)
     if skip_web:
         need_web = False
         plan["need_web_sources"] = False
@@ -1340,7 +1290,6 @@ async def generate_cloud_structured(
                         rag_block=rag_block,
                         web_evidence_block=web_evidence_block,
                         article_block=article_block,
-                        chat_mode=False,
                     )
                 )
             else:
@@ -1351,7 +1300,6 @@ async def generate_cloud_structured(
                         rag_block=rag_block,
                         web_evidence_block=web_evidence_block,
                         article_block=article_block,
-                        chat_mode=False,
                     ),
                     timeout=timeout,
                 )
@@ -1432,6 +1380,12 @@ async def generate_cloud_structured(
     answer_md = cleanup_model_text(answer_md)
     answer_md = strip_meta_prompts(answer_md)
     answer_md = normalize_markdown_spacing(answer_md)
+    if (
+        "-" not in answer_md
+        and "*" not in answer_md
+        and not re.search(r"\bDay\s+\d+\b", answer_md)
+    ):
+        answer_md = enforce_compact_list(answer_md)
 
     return AssistantPayload(
         answer_markdown=answer_md,
