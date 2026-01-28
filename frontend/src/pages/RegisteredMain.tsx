@@ -397,6 +397,7 @@ export default function Dashboard({
   const { error } = await supabase
     .from("chat_sessions")
     .update({ title: next.trim(), updated_at: new Date().toISOString() })
+    .eq("id", chatId)
     .eq("user_id", session.user.id);
 
   if (error) {
@@ -405,6 +406,7 @@ export default function Dashboard({
   }
 
   // refresh list
+  const { data: allSessions } = await supabase
     .from("chat_sessions")
     .select("id, title, article_context")
     .eq("user_id", session.user.id)
