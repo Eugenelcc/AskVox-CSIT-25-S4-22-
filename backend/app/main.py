@@ -32,7 +32,6 @@ origins = [
     "http://localhost:5174",
     "http://localhost:3000",
     "https://askvox-csit-25-s4-22-1.onrender.com",
-    # "https://askvox-frontend.vercel.app"  <-- Add your production URL later
 ]
 
 app.add_middleware(
