@@ -1,5 +1,5 @@
-# Build stage
-FROM node:20-alpine AS build
+# Stage 1: Build frontend
+FROM node:20-alpine as build
 
 WORKDIR /app
 
@@ -7,23 +7,24 @@ WORKDIR /app
 COPY package.json package-lock.json* ./
 RUN if [ -f package-lock.json ]; then npm ci; else npm install; fi
 
-# Copy source
+# Copy rest of the application
 COPY . .
 
 # Build the app
 RUN npm run build
 
-# Production stage
+# Stage 2: Serve with nginx
 FROM nginx:1.27-alpine
 
-# Remove default nginx static assets
+# Remove default nginx files
 RUN rm -rf /usr/share/nginx/html/*
 
-# Copy built assets
+# Copy built files from build stage
 COPY --from=build /app/dist /usr/share/nginx/html
 
-# Expose port
+# Copy custom nginx config if you have one
+# COPY nginx.conf /etc/nginx/conf.d/default.conf
+
 EXPOSE 80
 
-# Start nginx
 CMD ["nginx", "-g", "daemon off;"]
