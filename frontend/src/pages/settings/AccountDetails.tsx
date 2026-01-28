@@ -12,6 +12,7 @@ type Profile = {
   gender: string | null;
   dob: string | null;
   avatar_url: string | null; // URL or storage path
+  learning_preference?: string | null;
 };
 
 export default function AccountDetails({ session }: { session: Session }) {
@@ -21,7 +22,7 @@ export default function AccountDetails({ session }: { session: Session }) {
   const [profile, setProfile] = useState<Profile | null>(null);
   const [avatarSrc, setAvatarSrc] = useState<string>("");
 
-  // ✅ Profile Name Modal (ONLY)
+  // Profile Name modal
   const [openNameModal, setOpenNameModal] = useState(false);
   const [draftName, setDraftName] = useState("");
   const [savingName, setSavingName] = useState(false);
@@ -33,22 +34,31 @@ export default function AccountDetails({ session }: { session: Session }) {
   const [savingGender, setSavingGender] = useState(false);
   const [genderError, setGenderError] = useState<string | null>(null);
 
+  // DOB modal
   const [openDobModal, setOpenDobModal] = useState(false);
-  const [draftDob, setDraftDob] = useState<string>(""); // store as "YYYY-MM-DD"
+  const [draftDob, setDraftDob] = useState<string>(""); // YYYY-MM-DD
   const [savingDob, setSavingDob] = useState(false);
   const [dobError, setDobError] = useState<string | null>(null);
 
+  // Learning Preference editing handled via onboarding page UI
 
   // Load profile
   useEffect(() => {
     const load = async () => {
-      const { data, error } = await supabase.from("profiles").select("*").eq("id", userId).single();
+      const { data, error } = await supabase
+        .from("profiles")
+        .select("*")
+        .eq("id", userId)
+        .single();
+
       if (error) {
         console.error("Failed to load profile:", error.message);
         return;
       }
-      setProfile(data);
+
+      setProfile(data as Profile);
     };
+
     load();
   }, [userId]);
 
@@ -63,14 +73,17 @@ export default function AccountDetails({ session }: { session: Session }) {
         return;
       }
 
-      // google / http url
+      // http/https URL
       if (/^https?:\/\//i.test(v)) {
         setAvatarSrc(v);
         return;
       }
 
       // storage path in private bucket
-      const { data, error } = await supabase.storage.from("avatars").createSignedUrl(v, 60 * 60 * 24 * 7);
+      const { data, error } = await supabase.storage
+        .from("avatars")
+        .createSignedUrl(v, 60 * 60 * 24 * 7);
+
       if (cancelled) return;
 
       if (error) {
@@ -115,7 +128,10 @@ export default function AccountDetails({ session }: { session: Session }) {
     setSavingName(true);
     setNameError(null);
 
-    const { error } = await supabase.from("profiles").update({ username: v }).eq("id", profile.id);
+    const { error } = await supabase
+      .from("profiles")
+      .update({ username: v })
+      .eq("id", profile.id);
 
     if (error) {
       setNameError(error.message);
@@ -123,93 +139,90 @@ export default function AccountDetails({ session }: { session: Session }) {
       return;
     }
 
-    // update UI
     setProfile((prev) => (prev ? { ...prev, username: v } : prev));
-
     setSavingName(false);
     setOpenNameModal(false);
   };
 
-    const openGender = () => {
-        setGenderError(null);
-        setDraftGender(profile?.gender ?? "");
-        setOpenGenderModal(true);
-    };
-    
-    const saveGender = async () => {
-        if (!profile?.id) return;
-    
-        const v = (draftGender || "").trim();
-        if (!v) {
-        setGenderError("Please choose a gender.");
-        return;
-        }
-    
-        setSavingGender(true);
-        setGenderError(null);
-    
-        const { error } = await supabase
-        .from("profiles")
-        .update({ gender: v })
-        .eq("id", profile.id);
-    
-        if (error) {
-        setGenderError(error.message);
-        setSavingGender(false);
-        return;
-        }
-    
-        setProfile((prev) => (prev ? { ...prev, gender: v } : prev));
-        setSavingGender(false);
-        setOpenGenderModal(false);
-    };
+  const openGender = () => {
+    setGenderError(null);
+    setDraftGender(profile?.gender ?? "");
+    setOpenGenderModal(true);
+  };
 
-    const openDob = () => {
-        setDobError(null);
-        setDraftDob(profile?.dob ?? ""); // profile.dob should already be YYYY-MM-DD
-        setOpenDobModal(true);
-      };
-      
-      const saveDob = async () => {
-        if (!profile?.id) return;
-      
-        const v = (draftDob || "").trim();
-        if (!v) {
-          setDobError("Please choose your date of birth.");
-          return;
-        }
-      
-        setSavingDob(true);
-        setDobError(null);
-      
-        const { error } = await supabase
-          .from("profiles")
-          .update({ dob: v })
-          .eq("id", profile.id);
-      
-        if (error) {
-          setDobError(error.message);
-          setSavingDob(false);
-          return;
-        }
-      
-        setProfile((prev) => (prev ? { ...prev, dob: v } : prev));
-        setSavingDob(false);
-        setOpenDobModal(false);
-      };
-      
-  
+  const saveGender = async () => {
+    if (!profile?.id) return;
 
-  
-  
+    const v = (draftGender || "").trim();
+    if (!v) {
+      setGenderError("Please choose a gender.");
+      return;
+    }
 
+    setSavingGender(true);
+    setGenderError(null);
+
+    const { error } = await supabase
+      .from("profiles")
+      .update({ gender: v })
+      .eq("id", profile.id);
+
+    if (error) {
+      setGenderError(error.message);
+      setSavingGender(false);
+      return;
+    }
+
+    setProfile((prev) => (prev ? { ...prev, gender: v } : prev));
+    setSavingGender(false);
+    setOpenGenderModal(false);
+  };
+
+  const openDob = () => {
+    setDobError(null);
+    setDraftDob(profile?.dob ?? "");
+    setOpenDobModal(true);
+  };
+
+  const saveDob = async () => {
+    if (!profile?.id) return;
+
+    const v = (draftDob || "").trim();
+    if (!v) {
+      setDobError("Please choose your date of birth.");
+      return;
+    }
+
+    setSavingDob(true);
+    setDobError(null);
+
+    const { error } = await supabase
+      .from("profiles")
+      .update({ dob: v })
+      .eq("id", profile.id);
+
+    if (error) {
+      setDobError(error.message);
+      setSavingDob(false);
+      return;
+    }
+
+    setProfile((prev) => (prev ? { ...prev, dob: v } : prev));
+    setSavingDob(false);
+    setOpenDobModal(false);
+  };
+
+  // Open full-page preference selector (shared UI)
+  const openPref = () => {
+    navigate("/onboarding/preferences");
+  };
 
   return (
     <div className="acc-wrap">
       <div className="acc-card">
         <div className="acc-head">
           <div className="acc-titleRow">
-            <div className="acc-title">Account</div>
+            <div className="acc-title">Account Settings</div>
           </div>
         </div>
 
@@ -312,9 +325,23 @@ export default function AccountDetails({ session }: { session: Session }) {
                 <Pencil size={18} />
             </button>
           </div>
+
+          <div className="acc-row">
+            <div className="acc-label">Learning Preference:</div>
+            <div className="acc-value">{(profile?.learning_preference ?? "leisure").toLowerCase()}</div>
+            <button
+              className="acc-editBtn"
+              type="button"
+              onClick={openPref}
+              aria-label="Edit learning preference"
+              title="Edit learning preference"
+            >
+              <Pencil size={18} />
+            </button>
+          </div>
         </div>
 
-        {/* ✅ MODAL IS INSIDE ACCOUNT CARD (Figma overlay) */}
+        {/* Modals inside account card */}
         {openNameModal && (
           <div
             className="acc-modalOverlay"
@@ -355,114 +382,118 @@ export default function AccountDetails({ session }: { session: Session }) {
             </div>
           </div>
         )}
+
         {openGenderModal && (
-            <div
-                className="acc-modalOverlay"
-                role="dialog"
-                aria-modal="true"
-                aria-label="Edit Gender"
-            >
-                <div className="acc-modal">
-                <button
-                    className="acc-modalClose"
-                    type="button"
-                    onClick={() => setOpenGenderModal(false)}
-                    aria-label="Close"
-                    title="Close"
-                >
-                    ×
-                </button>
+          <div
+            className="acc-modalOverlay"
+            role="dialog"
+            aria-modal="true"
+            aria-label="Edit Gender"
+          >
+            <div className="acc-modal">
+              <button
+                className="acc-modalClose"
+                type="button"
+                onClick={() => setOpenGenderModal(false)}
+                aria-label="Close"
+                title="Close"
+              >
+                ×
+              </button>
 
-                <div className="acc-modalTitle">Choose your gender</div>
+              <div className="acc-modalTitle">Choose your gender</div>
 
-                <div className="acc-radioGroup">
-                    <label className="acc-radio">
-                    <input
-                        type="radio"
-                        name="gender"
-                        value="female"
-                        checked={draftGender === "female"}
-                        onChange={(e) => setDraftGender(e.target.value)}
-                    />
-                    <span className="acc-radioLabel">Female</span>
-                    </label>
+              <div className="acc-radioGroup">
+                <label className="acc-radio">
+                  <input
+                    type="radio"
+                    name="gender"
+                    value="female"
+                    checked={draftGender === "female"}
+                    onChange={(e) => setDraftGender(e.target.value)}
+                  />
+                  <span className="acc-radioLabel">Female</span>
+                </label>
 
-                    <label className="acc-radio">
-                    <input
-                        type="radio"
-                        name="gender"
-                        value="male"
-                        checked={draftGender === "male"}
-                        onChange={(e) => setDraftGender(e.target.value)}
-                    />
-                    <span className="acc-radioLabel">Male</span>
-                    </label>
+                <label className="acc-radio">
+                  <input
+                    type="radio"
+                    name="gender"
+                    value="male"
+                    checked={draftGender === "male"}
+                    onChange={(e) => setDraftGender(e.target.value)}
+                  />
+                  <span className="acc-radioLabel">Male</span>
+                </label>
 
-                    <label className="acc-radio">
-                    <input
-                        type="radio"
-                        name="gender"
-                        value="other"
-                        checked={draftGender === "other"}
-                        onChange={(e) => setDraftGender(e.target.value)}
-                    />
-                    <span className="acc-radioLabel">Rather not say</span>
-                    </label>
-                </div>
+                <label className="acc-radio">
+                  <input
+                    type="radio"
+                    name="gender"
+                    value="other"
+                    checked={draftGender === "other"}
+                    onChange={(e) => setDraftGender(e.target.value)}
+                  />
+                  <span className="acc-radioLabel">Rather not say</span>
+                </label>
+              </div>
 
-                {genderError && <div className="acc-modalError">{genderError}</div>}
+              {genderError && <div className="acc-modalError">{genderError}</div>}
 
-                <button
-                    className="acc-modalSave"
-                    type="button"
-                    onClick={saveGender}
-                    disabled={savingGender}
-                >
-                    {savingGender ? "Saving..." : "Save"}
-                </button>
+              <button
+                className="acc-modalSave"
+                type="button"
+                onClick={saveGender}
+                disabled={savingGender}
+              >
+                {savingGender ? "Saving..." : "Save"}
+              </button>
             </div>
+          </div>
+        )}
+
+        {openDobModal && (
+          <div
+            className="acc-modalOverlay"
+            role="dialog"
+            aria-modal="true"
+            aria-label="Edit Date of Birth"
+          >
+            <div className="acc-modal">
+              <button
+                className="acc-modalClose"
+                type="button"
+                onClick={() => setOpenDobModal(false)}
+                aria-label="Close"
+                title="Close"
+              >
+                ×
+              </button>
+
+              <div className="acc-modalTitle">Choose your Date of Birth:</div>
+
+              <input
+                className="acc-dateInput"
+                type="date"
+                value={draftDob}
+                onChange={(e) => setDraftDob(e.target.value)}
+              />
+
+              {dobError && <div className="acc-modalError">{dobError}</div>}
+
+              <button
+                className="acc-modalSave"
+                type="button"
+                onClick={saveDob}
+                disabled={savingDob}
+              >
+                {savingDob ? "Saving..." : "Save"}
+              </button>
             </div>
-            )}
-            {openDobModal && (
-                <div
-                    className="acc-modalOverlay"
-                    role="dialog"
-                    aria-modal="true"
-                    aria-label="Edit Date of Birth"
-                >
-                    <div className="acc-modal">
-                    <button
-                        className="acc-modalClose"
-                        type="button"
-                        onClick={() => setOpenDobModal(false)}
-                        aria-label="Close"
-                        title="Close"
-                    >
-                        ×
-                    </button>
+          </div>
+        )}
 
-                    <div className="acc-modalTitle">Choose your Date of Birth:</div>
-
-                    <input
-                        className="acc-dateInput"
-                        type="date"
-                        value={draftDob}
-                        onChange={(e) => setDraftDob(e.target.value)}
-                    />
-
-                    {dobError && <div className="acc-modalError">{dobError}</div>}
-
-                    <button
-                        className="acc-modalSave"
-                        type="button"
-                        onClick={saveDob}
-                        disabled={savingDob}
-                    >
-                        {savingDob ? "Saving..." : "Save"}
-                    </button>
-                    </div>
-                </div>
-            )}
+        {/* Preference editing now uses the full-page onboarding UI */}
       </div>
     </div>
   );

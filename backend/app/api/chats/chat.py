@@ -175,7 +175,7 @@ async def chat(req: ChatRequest):
             "Prefer": "return=representation",
         }
         async with httpx.AsyncClient() as client:
-            # Insert into responses (backend-only)
+            # Insert into responses (backend-only) with schema fallback + status checks
             if req.query_id:
                 try:
                     payload = {
@@ -183,11 +183,35 @@ async def chat(req: ChatRequest):
                         "response_text": answer,
                         "model_used": f"gemini:{GEMINI_MODEL}",
                     }
-                    await client.post(f"{SUPABASE_URL}/rest/v1/responses", headers=headers, json=payload)
+                    r = await client.post(
+                        f"{SUPABASE_URL}/rest/v1/responses",
+                        headers=headers,
+                        json=payload,
+                    )
+                    if r.status_code >= 400:
+                        # Fallback to alt schema using 'content'
+                        alt_payload = {
+                            "query_id": req.query_id,
+                            "content": answer,
+                            "model_used": f"gemini:{GEMINI_MODEL}",
+                        }
+                        r2 = await client.post(
+                            f"{SUPABASE_URL}/rest/v1/responses",
+                            headers=headers,
+                            json=alt_payload,
+                        )
+                        if r2.status_code >= 400:
+                            print(
+                                f"⚠️ Failed to insert response into Supabase: primary {r.status_code} {r.text[:300]} | alt {r2.status_code} {r2.text[:300]}"
+                            )
+                        else:
+                            print("✅ Inserted response (alt schema)")
+                    else:
+                        print("✅ Inserted response")
                 except Exception as e:
                     print(f"⚠️ Failed to insert response into Supabase: {e}")
 
-            # Optionally mirror assistant message in chat_messages
+            # Optionally mirror assistant message in chat_messages (log failures)
             if req.session_id:
                 try:
                     payload = {
@@ -198,7 +222,15 @@ async def chat(req: ChatRequest):
                         "display_name": "AskVox",
                     }
 
-                    await client.post(f"{SUPABASE_URL}/rest/v1/chat_messages", headers=headers, json=payload)
+                    rc = await client.post(
+                        f"{SUPABASE_URL}/rest/v1/chat_messages",
+                        headers=headers,
+                        json=payload,
+                    )
+                    if rc.status_code >= 400:
+                        print(
+                            f"⚠️ Failed to insert assistant chat_message: {rc.status_code} {rc.text[:300]}"
+                        )
                 except Exception as e:
                     print(f"⚠️ Failed to insert assistant chat_message: {e}")
 

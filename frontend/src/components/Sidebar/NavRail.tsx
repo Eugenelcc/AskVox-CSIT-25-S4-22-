@@ -2,10 +2,10 @@ import checkerIcon from "../../assets/educational/checker.png";
 import { useEffect, useState } from "react";
 import { supabase } from "../../supabaseClient";
 import askvoxLogo from "../TopBars/AskVox.png";
-import chatsIcon from "./chat.png";
-import discoverIcon from "./news.png";
-import smartrecIcon from "./rec.png";
-import newChatIcon from "./newchat.png";
+import chatsIcon from "./iconsFile/chat.png";
+import discoverIcon from "./iconsFile/news.png";
+import smartrecIcon from "./iconsFile/rec.png";
+import newChatIcon from "./iconsFile/newchat.png";
 import { Settings } from "lucide-react";
 import "./cssfiles/NavRail.css";
 

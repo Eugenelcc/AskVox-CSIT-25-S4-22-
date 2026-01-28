@@ -1,12 +1,14 @@
-import { useState, type FormEvent } from "react";
+import { useEffect, useState, type FormEvent } from "react";
 import { supabase } from "../../supabaseClient";
-import { Link, useNavigate } from "react-router-dom";
+import { Link, useLocation, useNavigate } from "react-router-dom";
 import Background from "../../components/background/background";
 import AskVoxLogo from "../../components/TopBars/AskVox.png";
 import styles from "../cssfiles/Login.module.css";
 
 import GoogleLogo from "./Google.png";
 import { Eye, EyeOff } from "lucide-react";
+
+//type UserRole = "registered" | "paid";
 
 export default function Login() {
   const [email, setEmail] = useState("");
@@ -19,6 +21,24 @@ export default function Login() {
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
 
   const navigate = useNavigate();
+  const location = useLocation();
+
+  // Display error coming from OAuth callback (e.g., account not found)
+  useEffect(() => {
+    const p = new URLSearchParams(location.search);
+    const err = p.get("err");
+    if (err === "account_not_found") {
+      setErrorMsg("Account does not exist for the selected Google account. Please sign up first.");
+    }
+    else if (err === "complete_signup_first") {
+      setErrorMsg("Please complete sign up with Google first, then sign in.");
+    }
+  }, [location.search]);
+
+  const routeByRole = () => {
+    // Land everyone on New Chat for now (non-admin path)
+    navigate("/newchat");
+  };
 
   const handleLogin = async (e: FormEvent) => {
     e.preventDefault();
@@ -31,7 +51,7 @@ export default function Login() {
 
     setLoading(true);
 
-    const { data, error } = await supabase.auth.signInWithPassword({
+    const {  error } = await supabase.auth.signInWithPassword({
       email,
       password,
     });
@@ -42,46 +62,29 @@ export default function Login() {
       return;
     }
 
-    // ✅ FETCH ROLE FROM profiles TABLE
-    const { data: profile, error: profileError } = await supabase
-      .from("profiles")
-      .select("role")
-      .eq("id", data.user.id)
-      .single();
+    // ✅ Role (placeholder) – later fetch from profiles table / metadata
+    // const role: UserRole =
+    //   (data.user?.user_metadata?.role as UserRole) || "registered";
 
-    if (profileError) {
-      console.error(profileError);
-      setErrorMsg("Failed to load user profile.");
-      setLoading(false);
-      return;
-    }
-
+    // Remember me: Supabase persists session by default.
     setLoading(false);
-
-    // ✅ ROLE-BASED REDIRECT
-    if (profile.role === "educational_user") {
-      navigate("/educationalinstutiaonal/homepage");
-    } else {
-      navigate("/reguserhome");
-    }
+    routeByRole();
   };
 
   const handleGoogleLogin = async () => {
     setErrorMsg(null);
-
     const { error } = await supabase.auth.signInWithOAuth({
       provider: "google",
       options: {
-        // ✅ redirect back to login so role routing still applies
-        redirectTo: `${window.location.origin}/login`,
+        redirectTo: `${window.location.origin}/auth/oauth-callback?intent=login`,
+        queryParams: { prompt: "select_account" },
       },
     });
-
     if (error) setErrorMsg(error.message);
   };
 
   const handleCancel = () => {
-    navigate("/");
+    navigate("/"); 
   };
 
   return (
@@ -90,6 +93,7 @@ export default function Login() {
 
       <div className={styles.loginContainer}>
         <div className={styles.loginForm}>
+          {/* Cancel / Close */}
           <button
             type="button"
             className={styles.closeBtn}
@@ -136,6 +140,8 @@ export default function Login() {
 
             <div>
               <label className={styles.label}>Password:</label>
+
+              {/* ✅ password field same size as email + icon inside */}
               <div className={styles.passwordField}>
                 <input
                   type={showPass ? "text" : "password"}
@@ -150,6 +156,7 @@ export default function Login() {
                   type="button"
                   className={styles.passwordToggle}
                   onClick={() => setShowPass((v) => !v)}
+                  aria-label={showPass ? "Hide password" : "Show password"}
                 >
                   {showPass ? <EyeOff size={22} /> : <Eye size={22} />}
                 </button>

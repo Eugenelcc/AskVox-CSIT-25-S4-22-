@@ -1,56 +1,42 @@
-import {
-  type FC,
-  type FormEvent,
-  type KeyboardEvent,
-  useState,
-  useRef,
-  useEffect,
-} from "react";
+import { type FC, type FormEvent, type KeyboardEvent, useState, useRef, useEffect,} from "react";
 import { Paperclip, Mic, BookOpen, Send } from "lucide-react";
 import "./ChatBar.css";
 
 interface ChatBarProps {
   onSubmit?: (text: string) => void;
-
-  // ✅ ADD
-  onFileUpload?: (file: File | null) => void;
-  // ✅ ADD
-  uploadedFile?: File | null;
-
+  onAttachClick?: () => void;
+  
   onMicClick?: () => void;
   onQuizClick?: () => void;
   disabled?: boolean;
+  wakeWord?: string;
 }
 
 const MAX_TEXTAREA_HEIGHT = 160;
 
 const ChatBar: FC<ChatBarProps> = ({
   onSubmit,
-  onFileUpload,
-  uploadedFile, // ✅ ADD
+  onAttachClick,
   onMicClick,
   onQuizClick,
   disabled,
+  wakeWord,
 }) => {
   const [value, setValue] = useState("");
   const textareaRef = useRef<HTMLTextAreaElement | null>(null);
-  const [previewUrl, setPreviewUrl] = useState<string | null>(null);
 
-  // ✅ ADD
-  const fileInputRef = useRef<HTMLInputElement | null>(null);
-
-  // recording and STT
+  // recording and STT 
   const [isRecording, setIsRecording] = useState(false);
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
   const audioChunksRef = useRef<BlobPart[]>([]);
   const [isTranscribing, setIsTranscribing] = useState(false);
-
+  // guard to avoid submitting the same text twice in quick succession
   const lastSubmittedRef = useRef<{ text: string; ts: number } | null>(null);
 
   const sendMessage = () => {
     const trimmed = value.trim();
     if (!trimmed || disabled) return;
-
+    // prevent duplicate submissions of the same text within 3s
     const now = Date.now();
     if (
       lastSubmittedRef.current &&
@@ -59,7 +45,6 @@ const ChatBar: FC<ChatBarProps> = ({
     ) {
       return;
     }
-
     lastSubmittedRef.current = { text: trimmed, ts: now };
     onSubmit?.(trimmed);
     setValue("");
@@ -71,6 +56,7 @@ const ChatBar: FC<ChatBarProps> = ({
   };
 
   const handleKeyDown = (e: KeyboardEvent<HTMLTextAreaElement>) => {
+    // Enter is send and then Shift+Enter is a new line
     if (e.key === "Enter" && !e.shiftKey) {
       e.preventDefault();
       sendMessage();
@@ -91,167 +77,154 @@ const ChatBar: FC<ChatBarProps> = ({
     autoResize();
   }, [value]);
 
-  // Build image preview URL for image uploads
-  useEffect(() => {
-    if (!uploadedFile) {
-      setPreviewUrl(null);
-      return;
+  //  start/stop recording 
+  const startRecording = async () => {
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      const recorder = new MediaRecorder(stream);
+      audioChunksRef.current = [];
+
+      recorder.ondataavailable = (event) => {
+        if (event.data.size > 0) {
+          audioChunksRef.current.push(event.data);
+        }
+      };
+
+      recorder.onstop = async () => {
+        //stop all track
+        stream.getTracks().forEach((track) => track.stop());
+        const audioBlob = new Blob(audioChunksRef.current, {
+          type: "audio/webm",
+        });
+
+        
+        //send to the backend stt endpoint
+        try {
+          setIsTranscribing(true);
+          const formData = new FormData();
+          formData.append("file", audioBlob, "recording.webm");
+
+          //const res = await fetch("http://localhost:8000/gstt/transcribe", {   //Google STT endpoint
+          const res = await fetch("http://localhost:8000/stt/", {   //Assembly STT endpoint
+            method: "POST",
+            body: formData,
+          });
+
+          if (!res.ok) {
+            console.error("STT request failed");
+            return;
+          }
+
+          const data = await res.json();
+          const transcript = data.text ?? "";
+
+          if (transcript) {
+            console.log("🎤 [ChatBar STT] transcript:", transcript);
+          }
+
+          if (transcript) {
+            // Instead of auto-sending, place the transcript into the input
+            const current = textareaRef.current?.value ?? "";
+            const finalText = current ? `${current.trim()} ${transcript}` : transcript;
+            setValue(finalText);
+            // Focus textarea so user can review/edit then press Send
+            try { textareaRef.current?.focus(); } catch {}
+          }
+        } catch (err) {
+          console.error("Error calling STT endpoint", err);
+        } finally {
+          setIsTranscribing(false);
+        }
+      };
+
+      mediaRecorderRef.current = recorder;
+      recorder.start();
+      setIsRecording(true);
+    } catch (err) {
+      console.error("Error accessing microphone", err);
+      setIsRecording(false);
     }
+  };
 
-    const ext = uploadedFile.name.split(".").pop()?.toLowerCase();
-    const isImage =
-      uploadedFile.type.startsWith("image/") ||
-      ext === "png" ||
-      ext === "jpg" ||
-      ext === "jpeg" ||
-      ext === "webp" ||
-      ext === "gif" ||
-      ext === "heic";
-
-    if (!isImage) {
-      setPreviewUrl(null);
-      return;
+  const stopRecording = () => {
+    const recorder = mediaRecorderRef.current;
+    if (recorder && recorder.state !== "inactive") {
+      recorder.stop();
     }
+    mediaRecorderRef.current = null;
+    setIsRecording(false);
+  };
 
-    const url = URL.createObjectURL(uploadedFile);
-    setPreviewUrl(url);
-    return () => {
-      URL.revokeObjectURL(url);
-    };
-  }, [uploadedFile]);
-
-  // 🎤 Mic logic unchanged
   const handleMicClickInternal = () => {
     if (disabled) return;
+
+    
     onMicClick?.();
+
+    if (!isRecording) {
+      void startRecording();
+    } else {
+      stopRecording();
+    }
   };
 
   const isMicActive = isRecording || isTranscribing;
 
   return (
     <div className="av-chatbar-wrapper">
-      <form
-        className={`av-chatbar ${uploadedFile ? "has-file" : ""}`}
-        onSubmit={handleSubmit}
-      >
-        {/* ===== FILE PREVIEW (INSIDE CHATBAR, NOT FLOATING) ===== */}
-        {uploadedFile && (
-          (() => {
-            const ext = uploadedFile.name.split(".").pop()?.toLowerCase();
-            const isImage =
-              uploadedFile.type.startsWith("image/") ||
-              ext === "png" ||
-              ext === "jpg" ||
-              ext === "jpeg" ||
-              ext === "webp" ||
-              ext === "gif" ||
-              ext === "heic";
+      <form className="av-chatbar" onSubmit={handleSubmit}>
+        <button
+          type="button"
+          className="av-icon-button"
+          onClick={onAttachClick}
+          disabled={disabled}
+          aria-label="Attach"
+        >
+          <Paperclip className="av-icon" />
+        </button>
 
-            if (isImage && previewUrl) {
-              return (
-                <div className="av-file-chip av-file-chip--image">
-                  <div className="av-file-thumb">
-                    <img src={previewUrl} alt={uploadedFile.name} />
-                    <button
-                      type="button"
-                      className="av-file-remove av-file-remove--overlay"
-                      onClick={() => onFileUpload?.(null)}
-                      aria-label="Remove file"
-                    >
-                      ✕
-                    </button>
-                  </div>
-                </div>
-              );
-            }
+        <textarea
+          ref={textareaRef}
+          className="av-input"
+          placeholder={`Enter text here or say "${wakeWord ?? 'Hey AskVox'}"...`}
+          value={value}
+          onChange={(e) => setValue(e.target.value)}
+          onKeyDown={handleKeyDown}
+          disabled={disabled}
+          rows={1}
+        />
 
-            return (
-              <div className="av-file-chip">
-                <div
-                  className={`av-file-icon av-file-icon--${ext}`}
-                >
-                  {ext?.toUpperCase()}
-                </div>
+        <div className="av-toolbar-right">
+          <button
+            type="button"
+            className={`av-icon-button ${
+              isMicActive ? "av-mic-pulsing" : ""
+            }`}
+            onClick={handleMicClickInternal}
+            disabled={disabled}
+            aria-label={isMicActive ? "Stop voice input" : "Voice input"}
+          >
+            <Mic className="av-icon" />
+          </button>
 
-                <div className="av-file-text">
-                  <div className="av-file-name">{uploadedFile.name}</div>
-                  <div className="av-file-type">{ext?.toUpperCase()}</div>
-                </div>
-
-                <div
-                  className="av-file-remove"
-                  onClick={() => onFileUpload?.(null)}
-                >
-                  ✕
-                </div>
-              </div>
-            );
-          })()
-        )}
-
-        {/* ===== INPUT ROW ===== */}
-        <div className="av-input-row">
           <button
             type="button"
             className="av-icon-button"
+            onClick={onQuizClick}
             disabled={disabled}
-            onClick={() => fileInputRef.current?.click()}
+            aria-label="Quiz"
           >
-            <Paperclip className="av-icon" />
+            <BookOpen className="av-icon" />
           </button>
 
-          <input
-            ref={fileInputRef}
-            type="file"
-            hidden
-            accept=".pdf,.docx,.png,.jpg,.jpeg,.webp,.gif,.heic,image/*"
-            onChange={(e) => {
-              const file = e.target.files?.[0];
-              if (file) onFileUpload?.(file);
-              e.target.value = "";
-            }}
-          />
-
-          <textarea
-            ref={textareaRef}
-            className="av-input"
-            placeholder='Say "Hey AskVox" to begin or type below.'
-            value={value}
-            onChange={(e) => setValue(e.target.value)}
-            onKeyDown={handleKeyDown}
-            disabled={disabled}
-            rows={1}
-          />
-
-          <div className="av-toolbar-right">
-            <button
-              type="button"
-              className={`av-icon-button ${
-                isMicActive ? "av-mic-pulsing" : ""
-              }`}
-              onClick={handleMicClickInternal}
-              disabled={disabled}
-            >
-              <Mic className="av-icon" />
-            </button>
-
-            <button
-              type="button"
-              className="av-icon-button"
-              onClick={onQuizClick}
-              disabled={disabled}
-            >
-              <BookOpen className="av-icon" />
-            </button>
-
-            <button
-              type="submit"
-              className="av-send-button"
-              disabled={disabled || !value.trim()}
-            >
-              <Send className="av-icon" />
-            </button>
-          </div>
+          <button
+            type="submit"
+            className="av-send-button"
+            disabled={disabled || !value.trim()}
+            aria-label="Send"
+          >
+            <Send className="av-icon" />
+          </button>
         </div>
       </form>
     </div>

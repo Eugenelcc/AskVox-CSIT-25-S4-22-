@@ -18,6 +18,7 @@ const LLAMA_ID = 212020 as const;
 
 // ✅ 2. Update Component to accept 'session' prop
 const UnregisteredMain = ({ session }: { session: Session | null }) => {
+  const API_BASE_URL = import.meta.env.VITE_API_URL || "http://localhost:8000";
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [isSending, setIsSending] = useState(false);
   const [guestSessionId, setGuestSessionId] = useState<string | null>(null);
@@ -36,13 +37,10 @@ const UnregisteredMain = ({ session }: { session: Session | null }) => {
   const ttsActiveRef = useRef(false);
   const ttsSanitizeRef = useRef<((t: string) => string) | null>(null);
   const voiceGuestSessionIdRef = useRef<string | null>(null);
-  const [uploadedFile, setUploadedFile] = useState<File | null>(null)
-  const [extractedText, setExtractedText] = useState<string>("")
-
 
   const postLog = (text: string, kind: string) => {
     try {
-      fetch('http://localhost:8000/voice/log', {
+      fetch(`${API_BASE_URL}/voice/log`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ text, kind }),
@@ -82,19 +80,14 @@ const UnregisteredMain = ({ session }: { session: Session | null }) => {
 
 
   const handleSubmit = async (text: string) => {
-          const combinedText = `
-      ${text.trim()}
-
-      ${extractedText ? "Document content:\n" + extractedText : ""}
-      `.trim()
-
-    if (!combinedText) return;
+    const trimmed = text.trim();
+    if (!trimmed) return;
 
     // 1. Create user object
     const userMsg: ChatMessage = {
       id: `user-${Date.now()}`,
       senderId: USER_ID,
-      content: combinedText,
+      content: trimmed,
       createdAt: new Date().toISOString(),
     };
 
@@ -104,7 +97,7 @@ const UnregisteredMain = ({ session }: { session: Session | null }) => {
     // Ensure guest session id for linking rows
     let currentSessionId: string;
     try {
-      currentSessionId = await ensureGuestSession(combinedText);
+      currentSessionId = await ensureGuestSession(trimmed);
     } catch (e) {
       console.error(e);
       const errorMsg: ChatMessage = {
@@ -133,7 +126,7 @@ const UnregisteredMain = ({ session }: { session: Session | null }) => {
         session_id: currentSessionId,
         user_id: null,
         input_mode: 'text',
-        transcribed_text: combinedText,
+        transcribed_text: trimmed,
         detected_domain: 'general'
       });
     } catch {}
@@ -144,7 +137,7 @@ const UnregisteredMain = ({ session }: { session: Session | null }) => {
         session_id: currentSessionId,
         user_id: null,
         role: 'user',
-        content: combinedText,
+        content: trimmed,
         display_name: 'Guest'
       });
     } 
@@ -160,11 +153,11 @@ const UnregisteredMain = ({ session }: { session: Session | null }) => {
     // 3. Call the backend
     try {
       const streamId = `llama-${Date.now()}`;
-      const resp = await fetch("http://localhost:8000/llamachats/cloud", {
+      const resp = await fetch(`${API_BASE_URL}/llamachats-multi/cloud_plus`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          message: combinedText,
+          message: trimmed,
           history: historyPayload,
           query_id: queryId,
           session_id: currentSessionId,
@@ -268,7 +261,7 @@ const UnregisteredMain = ({ session }: { session: Session | null }) => {
       // Mark TTS active BEFORE stopping recorder to avoid re-arm race in onstop
       ttsActiveRef.current = true;
       setIsTtsPlaying(true);
-      const res = await fetch("http://localhost:8000/tts/google", {
+      const res = await fetch(`${API_BASE_URL}/tts/google`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ text: safeText, language_code: "en-US" }),
@@ -363,7 +356,7 @@ const UnregisteredMain = ({ session }: { session: Session | null }) => {
           setIsTranscribing(true);
           const formData = new FormData();
           formData.append("file", audioBlob, "utterance.webm");
-          const sttRes = await fetch("http://localhost:8000/stt/", { method: "POST", body: formData });
+          const sttRes = await fetch(`${API_BASE_URL}/stt/`, { method: "POST", body: formData });
           if (!sttRes.ok) { return; }
           const sttData = await sttRes.json();
           const transcript: string = sttData.text ?? "";
@@ -419,7 +412,7 @@ const UnregisteredMain = ({ session }: { session: Session | null }) => {
                 });
               } catch {}
             }
-            const sealionRes = await fetch("http://localhost:8000/geminichats/", {
+            const sealionRes = await fetch(`${API_BASE_URL}/geminichats/`, {
               method: "POST",
               headers: { "Content-Type": "application/json" },
               body: JSON.stringify({
@@ -506,31 +499,6 @@ const UnregisteredMain = ({ session }: { session: Session | null }) => {
     void speakWithGoogleTTS("AskVox is listening", true);
   };
 
-  const handleFileUpload = async (file: File) => {
-    setUploadedFile(file)
-
-    const formData = new FormData()
-    formData.append("file", file)
-
-    try {
-      const res = await fetch("http://localhost:5000/extract-text", {
-        method: "POST",
-        body: formData,
-      })
-
-      if (!res.ok) {
-        alert("Failed to extract text")
-        return
-      }
-
-      const data = await res.json()
-      setExtractedText(data.text || "")
-    } catch (err) {
-      console.error(err)
-      alert("File upload failed")
-    }
-  }
-
   const exitVoiceMode = () => {
     voiceModeRef.current = false;
     setIsVoiceMode(false);
@@ -574,13 +542,8 @@ const UnregisteredMain = ({ session }: { session: Session | null }) => {
 
       <main className="uv-main">
         {(!hasMessages || isVoiceMode) && (
-          <section className={`uv-hero ${uploadedFile ? "uv-hero--has-file" : ""}`}>
+          <section className="uv-hero">
             <BlackHole isActivated={isBlackHoleActive} />
-            {!isVoiceMode && !hasMessages && (
-              <h3 className="orb-caption">
-                Say <span className="visual-askvox">"Hey AskVox"</span> to begin or type below.
-              </h3>
-            )}
             {isVoiceMode && (
               <h4 className="orb-caption" style={{ fontSize: 22, opacity: 0.75, marginTop: 16 }}>
                 {isRecording || isTranscribing ? "Listening…" : ""}
@@ -598,13 +561,18 @@ const UnregisteredMain = ({ session }: { session: Session | null }) => {
         )}
       </main>
 
-      {!isVoiceMode && (<ChatBar
-  onSubmit={handleSubmit}
-  onFileUpload={handleFileUpload}
-  uploadedFile={uploadedFile}
-  disabled={isSending}
-/>
-)}
+      {!isVoiceMode && (
+        <div className="uv-input-container">
+          {!hasMessages && (
+            <div className="av-chatbar-caption">
+              <h3 className="orb-caption">
+                Say <span className="visual-askvox">"Hey AskVox"</span> to begin or type below.
+              </h3>
+            </div>
+          )}
+          <ChatBar onSubmit={handleSubmit} disabled={isSending} />
+        </div>
+      )}
     </div>
   );
 };

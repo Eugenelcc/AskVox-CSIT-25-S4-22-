@@ -1,4 +1,5 @@
 import { useState, useEffect, useMemo, useRef } from "react";
+import { useLocation, useNavigate } from "react-router-dom";
 import { supabase } from "../supabaseClient";
 import type { Session } from "@supabase/supabase-js";
 
@@ -15,23 +16,70 @@ import NavRail from "../components/Sidebar/NavRail";
 import "./cssfiles/registerMain.css";
 import { useWakeWordBackend } from "../hooks/useWakeWordBackend";
 import SettingsSidebar from "../components/Sidebar/Settings_Sidebar";
+import DiscoverSidebar from "../components/Sidebar/Discover_Sidebar";
 import SmartRecPanel from "../components/Sidebar/SmartRec_sidebar";
+import Quiz from "../components/quiz/Quiz";
+
+import { DiscoverView } from "../components/Discover/DiscoverView";
+import NewsContent from "../components/Discover/NewsContent/NewsContent";
+
 
 // Types
 import type { ChatMessage, DatabaseMessage, UserProfile } from "../types/database"; 
 import AccountDetails from './settings/AccountDetails';
 import DeleteAccount from './settings/DeleteAccount';
 import PaymentBilling from './settings/PaymentBilling';
+import WakeWord from './settings/WakeWord';
 
 
 // Constants 
 const LLAMA_ID = 212020; 
 type SettingsKey = "account" | "billing" | "delete" | "wakeword";
+type ArticleContext = {
+  title: string;
+  url?: string;
+  imageUrl?: string;
+  description?: string;
+  cached_content?: string;
+  cached_at?: string;
+  source_type?: string;
+  publishedAt?: string;
+  releasedMinutes?: number;
+  all_sources?: { title: string; url: string; source: string; domain_url?: string }[];
+};
+type NewsContext = {
+  sessionId: string | null;
+  title: string;
+  imageUrl?: string;
+  description?: string;
+  publishedAt?: string;
+  releasedMinutes?: number;
+  all_sources?: { title: string; url: string; source: string; domain_url?: string }[];
+  path: string;
+  slug: string;
+  url?: string;
+};
 
-export default function Dashboard({ session, paid }: { session: Session; paid?: boolean }) {
+
+//---Quiz---//
+
+export default function Dashboard({
+  session,
+  paid,
+  initialTab,
+}: {
+  session: Session;
+  paid?: boolean;
+  initialTab?: string;
+}) {
+  const navigate = useNavigate();
+  const location = useLocation();
+
   const [messages, setMessages] = useState<ChatMessage[]>([]);
+  const API_BASE_URL = import.meta.env.VITE_API_URL || "http://localhost:8000";
   const [isSending, setIsSending] = useState(false);
   const [profile, setProfile] = useState<UserProfile | null>(null);
+  const [isQuizOpen, setIsQuizOpen] = useState(false);
   const [isVoiceMode, setIsVoiceMode] = useState(false);
   // Voice capture (reuse ChatBar approach)
   const [isRecording, setIsRecording] = useState(false);
@@ -48,15 +96,16 @@ export default function Dashboard({ session, paid }: { session: Session; paid?: 
   const ttsActiveRef = useRef(false);
   const ttsSanitizeRef = useRef<((t: string) => string) | null>(null);
   const voiceSessionIdRef = useRef<string | null>(null);
-  const [uploadedFile, setUploadedFile] = useState<File | null>(null);
-  const [extractedText, setExtractedText] = useState<string>("");
   
   // Sidebar & Navigation State
-  const [sessions, setSessions] = useState<{id: string, title: string}[]>([]); // all chats the user has created, shown in the sidebar
+  const [sessions, setSessions] = useState<{id: string, title: string, article_context?: ArticleContext | null}[]>([]); // all chats the user has created, shown in the sidebar
   const [activeSessionId, setActiveSessionId] = useState<string | null>(null); // currently selected chat session
-  const [activeTab, setActiveTab] = useState('chats'); // Tracks which tab is active in the NavRail
+  const [activeTab, setActiveTab] = useState<string>(
+    initialTab ?? (location.pathname === "/discover" ? "discover" : (location.pathname === "/newchat" ? "newchat" : "newchat"))
+  ); // Tracks which tab is active in the NavRail
   const [isSidebarOpen, setSidebarOpen] = useState(false); // Sidebar visibility
   const [isNewChat, setIsNewChat] = useState(false); //When user starts a new chat
+  const [newsContext, setNewsContext] = useState<NewsContext | null>(null);
   // Stores chat folders
   const [folders, setFolders] = useState<{
     id: string;   
@@ -90,37 +139,6 @@ export default function Dashboard({ session, paid }: { session: Session; paid?: 
     setActiveSettingsKey(key);
   };
 
-  const handleFileUpload = async (file: File | null) => {
-    if (!file) {
-      setUploadedFile(null);
-      setExtractedText("");
-      return;
-    }
-
-    setUploadedFile(file);
-
-    const formData = new FormData();
-    formData.append("file", file);
-
-    try {
-      const res = await fetch("http://localhost:5000/extract-text", {
-        method: "POST",
-        body: formData,
-      });
-
-      if (!res.ok) {
-        alert("Failed to extract text");
-        return;
-      }
-
-      const data = await res.json();
-      setExtractedText(data.text || "");
-    } catch (err) {
-      console.error(err);
-      alert("File upload failed");
-    }
-  };
-
   // --- Data Fetching ---
   useEffect(() => {
     if (!session?.user?.id) return;
@@ -134,9 +152,26 @@ export default function Dashboard({ session, paid }: { session: Session; paid?: 
         }
       });
       
-    // Fetch Sessions
-    supabase.from('chat_sessions').select('*,display_name').eq('user_id', session.user.id).order('created_at', { ascending: false })
-      .then(({ data }) => data && setSessions(data));
+    // Fetch Sessions (most recent activity first). If 'updated_at' isn't available,
+    // fall back to created_at to avoid breaking the list.
+    supabase
+      .from('chat_sessions')
+      .select('*,display_name')
+      .eq('user_id', session.user.id)
+      .order('updated_at', { ascending: false })
+      .then(({ data, error }) => {
+        if (error) {
+          console.warn('Failed to order by updated_at; falling back to created_at', error);
+          supabase
+            .from('chat_sessions')
+            .select('*,display_name')
+            .eq('user_id', session.user.id)
+            .order('created_at', { ascending: false })
+            .then(({ data: d2 }) => d2 && setSessions(d2));
+          return;
+        }
+        data && setSessions(data);
+      });
   }, [session.user.id]);
 
   useEffect(() => {
@@ -150,12 +185,13 @@ export default function Dashboard({ session, paid }: { session: Session; paid?: 
           senderId: msg.role === "user" ? session.user.id : LLAMA_ID, 
           content: msg.content, 
           createdAt: msg.created_at,
-          displayName: msg.display_name // Mapping the name from DB to UI
+          displayName: msg.display_name, // Mapping the name from DB to UI
+          meta: msg.meta ?? null,
         })));
       }
     };
     fetchMessages();
-  }, [activeSessionId, isNewChat, session.user.id]); 
+  }, [activeSessionId, isNewChat, session?.user?.id]);
 
   const loadFolders = async () => {
     if (!session?.user?.id) return;
@@ -204,9 +240,80 @@ export default function Dashboard({ session, paid }: { session: Session; paid?: 
     setActiveSessionId(sessionId);
     setMessages([]);
     setIsNewChat(false);
+    const sess = sessions.find((s) => s.id === sessionId);
+    const articleCtx = sess?.article_context;
+    if (articleCtx?.title) {
+      const slug = articleCtx.title
+        .toLowerCase()
+        .replace(/[^a-z0-9]+/g, '-')
+        .replace(/(^-|-$)/g, '') || 'article';
+      setNewsContext({
+        sessionId,
+        title: articleCtx.title,
+        imageUrl: articleCtx.imageUrl,
+        description: articleCtx.description,
+        publishedAt: articleCtx.publishedAt,
+        releasedMinutes: articleCtx.releasedMinutes,
+        all_sources: articleCtx.all_sources,
+        url: articleCtx.url,
+        slug,
+        path: "/discover/news",
+      });
+    } else if (newsContext?.sessionId && newsContext.sessionId !== sessionId) {
+      setNewsContext(null);
+    }
+    // Keep URL in sync for deep-linking
+    if (location.pathname !== `/chats/${sessionId}`) {
+      navigate(`/chats/${sessionId}`);
+    }
+  };
+
+  // Locally promote a session to the top of sidebar ordering.
+  const promoteSessionToTop = (sid: string) => {
+    setSessions(prev => {
+      const idx = prev.findIndex(s => s.id === sid);
+      if (idx <= 0) return prev; // already first or not found
+      const copy = prev.slice();
+      const [item] = copy.splice(idx, 1);
+      copy.unshift(item);
+      return copy;
+    });
+  };
+
+  // When we fetch a fresh list, ensure a specific session stays at the top
+  const withPinnedTop = (list: {id: string; title: string}[], sid?: string | null) => {
+    if (!sid) return list;
+    const idx = list.findIndex(s => s.id === sid);
+    if (idx <= 0) return list;
+    const copy = list.slice();
+    const [item] = copy.splice(idx, 1);
+    copy.unshift(item);
+    return copy;
   };
 
   const handleTabClick = (tab: string) => {
+    // Keep URL in sync for Discover
+    if (tab === "discover") {
+      setActiveTab("discover");
+      setSidebarOpen(true);
+     if (!location.pathname.startsWith("/discover")) {
+         navigate("/discover");
+      }
+      return;
+    }
+
+    // Leaving the discover route: return to the appropriate home route
+    if (location.pathname === "/discover") {
+      navigate(paid ? "/paiduserhome" : "/reguserhome");
+    }
+
+    // Logo click in NavRail passes "reguserhome" — treat it as home/chats
+    if (tab === "reguserhome") {
+      setActiveTab("chats");
+      setSidebarOpen(false);
+      return;
+    }
+
     if (tab === 'newchat') {
       // Enter new chat mode, close sidebar, highlight New Chat on the rail
       handleNewChat();
@@ -216,7 +323,7 @@ export default function Dashboard({ session, paid }: { session: Session; paid?: 
     }
     setActiveTab(tab);
     if (tab === "settings") setActiveSettingsKey(null);
-    setSidebarOpen(tab === "chats" || tab === "settings" || tab === "smartrec");
+    setSidebarOpen(tab === "chats" || tab === "settings" || tab === "smartrec"|| tab === "discover");
   };
 
 
@@ -253,6 +360,10 @@ export default function Dashboard({ session, paid }: { session: Session; paid?: 
     voiceAudioCtxRef.current = null;
     // Finally clear messages after teardown
     setMessages([]);
+    // Navigate to the canonical New Chat route
+    if (location.pathname !== "/newchat") {
+      navigate("/newchat");
+    }
   };
 
   const handleMoveChatToFolder = async (chatId: string, folderId: string) => {
@@ -271,11 +382,42 @@ export default function Dashboard({ session, paid }: { session: Session; paid?: 
 
     const { data: allSessions } = await supabase
       .from("chat_sessions")
-      .select("id, title")
+      .select("id, title, article_context")
       .eq("user_id", session.user.id)
       .order("created_at", { ascending: false });
 
     if (allSessions) setSessions(allSessions);
+  };
+
+  const handleDeleteChat = async (chatId: string) => {
+    try {
+      // Attempt to remove folder links first (ignore errors if table doesn't exist or RLS blocks)
+      try {
+        await supabase.from("chat_session_folders").delete().eq("session_id", chatId);
+      } catch {}
+
+      // Delete the chat session (scoped to user for safety)
+      const { error } = await supabase
+        .from("chat_sessions")
+        .delete()
+        .eq("id", chatId)
+        .eq("user_id", session.user.id);
+      if (error) throw error;
+
+      // Update UI state
+      setSessions(prev => prev.filter(s => s.id !== chatId));
+      if (activeSessionId === chatId) {
+        setActiveSessionId(null);
+        setMessages([]);
+        setIsNewChat(true);
+        setActiveTab("newchat");
+        setSidebarOpen(false);
+        if (location.pathname !== "/newchat") navigate("/newchat");
+      }
+    } catch (e) {
+      console.error("Failed to delete chat", e);
+      alert("Unable to delete chat. Please try again.");
+    }
   };
 
   // Reload messages from Supabase for the given session
@@ -296,6 +438,7 @@ export default function Dashboard({ session, paid }: { session: Session; paid?: 
             content: msg.content,
             createdAt: msg.created_at,
             displayName: msg.display_name,
+            meta: msg.meta ?? null,
           }))
         );
       }
@@ -304,19 +447,39 @@ export default function Dashboard({ session, paid }: { session: Session; paid?: 
     }
   };
 
+  // Keep component state in sync with /newchat and /chats/:sessionId
+  useEffect(() => {
+    const path = location.pathname;
+    if (path === "/newchat") {
+      setIsNewChat(true);
+      setActiveSessionId(null);
+      setActiveTab("newchat");
+      setSidebarOpen(false);
+      setMessages([]);
+      return;
+    }
+    const match = path.match(/^\/chats\/([a-f0-9\-]+)$/i);
+    if (match) {
+      const sid = match[1];
+      setIsNewChat(false);
+      setActiveSessionId(sid);
+      setActiveTab("chats");
+      setSidebarOpen(true);
+      void refreshActiveSessionMessages(sid);
+    }
+  }, [location.pathname]);
 
-  const handleSubmit = async (text: string) => {
-    const combinedText = `
-      ${text.trim()}
 
-      ${extractedText ? "Document content:\n" + extractedText : ""}
-      `.trim();
-    
-    if (!combinedText || !session?.user?.id) return;
-    console.log("💬 [Text] route=llamachats/cloud payload=", combinedText);
+  const handleSubmit = async (
+    text: string,
+    options?: { forceNewSession?: boolean; context?: ArticleContext }
+  ): Promise<string | null> => {
+    const trimmed = text.trim();
+    if (!trimmed || !session?.user?.id) return null;
+    console.log("💬 [Text] route=llamachats/cloud payload=", trimmed);
 
     // 1. Determine Session ID
-    let currentSessionId = activeSessionId;
+    let currentSessionId = options?.forceNewSession ? null : activeSessionId;
     const createdSession = !currentSessionId;
     if (!currentSessionId) {
       // Block initial fetch until we finish first-write
@@ -326,14 +489,24 @@ export default function Dashboard({ session, paid }: { session: Session; paid?: 
         .from('chat_sessions')
         .insert({
           user_id: session.user.id,
-          title: combinedText.slice(0, 30) + '...',
+          title: options?.context?.title
+            ? options.context.title.slice(0, 60)
+            : trimmed.slice(0, 30) + '...',
+          article_context: options?.context?.title
+            ? {
+                ...options.context,
+                source_type: "news_article",
+                cached_content: options.context.description || "",
+                cached_at: new Date().toISOString(),
+              }
+            : null,
         })
         .select()
         .single();
 
       if (error || !newSession) {
         console.error('Failed to create chat session', error);
-        return;
+        return null;
       }
 
       currentSessionId = newSession.id;
@@ -342,9 +515,9 @@ export default function Dashboard({ session, paid }: { session: Session; paid?: 
       // ✅ Refresh sidebar sessions from DB
       const { data: allSessions } = await supabase
         .from('chat_sessions')
-        .select('id, title')
+        .select('id, title, article_context')
         .eq('user_id', session.user.id)
-        .order('created_at', { ascending: false });
+        .order('updated_at', { ascending: false });
 
       if (allSessions) setSessions(allSessions);
     }
@@ -357,7 +530,7 @@ export default function Dashboard({ session, paid }: { session: Session; paid?: 
     setMessages(prev => [...prev, { 
       id: `temp-${Date.now()}`, 
       senderId: session.user.id, 
-      content: combinedText, 
+      content: trimmed, 
       createdAt: new Date().toISOString(),
       displayName: userName 
     }]);
@@ -385,41 +558,101 @@ export default function Dashboard({ session, paid }: { session: Session; paid?: 
       display_name: userName // <--- CRITICAL: Sending the name here
     });
 
+    // Immediately promote locally so the UI reflects recency without waiting
+    if (currentSessionId) promoteSessionToTop(currentSessionId);
+
+    // 4b. Bump session activity timestamp so it floats to the top
+    try {
+      await supabase
+        .from('chat_sessions')
+        .update({ updated_at: new Date().toISOString() })
+        .eq('id', currentSessionId);
+      // Refresh sidebar ordering
+      const { data: allSessions } = await supabase
+        .from('chat_sessions')
+        .select('id, title')
+        .eq('user_id', session.user.id)
+        .order('updated_at', { ascending: false });
+      if (allSessions && allSessions.length) {
+        setSessions(withPinnedTop(allSessions, currentSessionId));
+      } else if (currentSessionId) {
+        promoteSessionToTop(currentSessionId);
+      }
+    } catch (e) {
+      console.warn('Failed to update session activity timestamp', e);
+      // As a UI fallback, at least move the session up locally
+      if (currentSessionId) promoteSessionToTop(currentSessionId);
+    }
+
     // If we just created the session, now mark new-chat as false so fetch will include this message
     if (createdSession) setIsNewChat(false);
 
     try {
+      const activeContext = options?.context?.title
+        ? options.context
+        : (newsContext && newsContext.sessionId === currentSessionId
+          ? {
+              title: newsContext.title,
+              url: newsContext.url,
+              imageUrl: newsContext.imageUrl,
+              description: newsContext.description,
+              publishedAt: newsContext.publishedAt,
+              releasedMinutes: newsContext.releasedMinutes,
+              all_sources: newsContext.all_sources,
+            }
+          : undefined);
+      const modelMessage = activeContext?.title
+        ? `Regarding the article "${activeContext.title}", ${trimmed}`
+        : trimmed;
+      const llamaPayload = {
+        message: modelMessage,
+        history: [
+          ...messages.map(m => ({
+            role: m.senderId === session.user.id ? "user" : "assistant",
+            content: m.content,
+          })),
+          { role: "user", content: modelMessage },
+        ],
+        query_id: queryId,
+        session_id: currentSessionId,
+        user_id: session.user.id,
+        article_title: activeContext?.title || null,
+        article_url: activeContext?.url || null,
+      };
+      console.log("🧪 [LLAMA] payload:", llamaPayload);
+      const llamaStart = performance.now();
+      console.time("llama_request_ms");
       // 5. Call AI API
-      const response = await fetch("http://localhost:8000/llamachats/cloud", {
+      const response = await fetch(`${API_BASE_URL}/llamachats-multi/cloud_plus`, { //MultiModel llamachat.py
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          message: trimmed,
-          history: [
-            ...messages.map(m => ({
-              role: m.senderId === session.user.id ? "user" : "assistant",
-              content: m.content,
-            })),
-            { role: "user", content: trimmed },
-          ],
-          query_id: queryId,         
-          session_id: currentSessionId,
-          user_id: session.user.id,
-        })
+        body: JSON.stringify(llamaPayload)
       });
 
+      const llamaEnd = performance.now();
+      console.timeEnd("llama_request_ms");
+      console.log("🧪 [LLAMA] status:", response.status, "elapsed_ms:", Math.round(llamaEnd - llamaStart));
+
       
+      if (!response.ok) {
+        const errorText = await response.text();
+        console.error("❌ AI API error:", response.status, response.statusText, errorText);
+        setIsSending(false);
+        return null;
+      }
+
       const data = await response.json();
       console.log("🤖 AI Response Data:", data); // Debug Log
 
       // Handle different API response formats
       const replyText = data.answer || data.response || data.reply || ""; 
+      const meta = data.payload || null;
 
       // Guard against empty responses (Prevents the "Dots" issue)
       if (!replyText) {
         console.warn("⚠️ Empty response from AI. Not saving.");
         setIsSending(false);
-        return;
+        return null;
       }
       
       setIsSending(false);
@@ -431,17 +664,83 @@ export default function Dashboard({ session, paid }: { session: Session; paid?: 
         senderId: LLAMA_ID, 
         content: replyText, 
         createdAt: new Date().toISOString(),
-        displayName: "AskVox"
+        displayName: "AskVox",
+        meta,
       }]);
 
     } catch (err) { 
        console.error("❌ Error sending message:", err);
        setIsSending(false); 
     }
+    return currentSessionId;
+  };
+
+  const handleNewsQuestion = async (
+    question: string,
+    article: {
+      title: string;
+      imageUrl?: string;
+      description?: string;
+      publishedAt?: string;
+      releasedMinutes?: number;
+      all_sources?: { title: string; url: string; source: string; domain_url?: string }[];
+      url?: string;
+      slug: string;
+      path: string;
+    }
+  ) => {
+    setActiveTab("chats");
+    setSidebarOpen(true);
+    if (location.pathname.startsWith("/discover")) {
+      navigate(paid ? "/paiduserhome" : "/reguserhome");
+    }
+    setActiveSessionId(null);
+    setIsNewChat(true);
+
+    setNewsContext({
+      sessionId: null,
+      title: article.title,
+      imageUrl: article.imageUrl,
+      description: article.description,
+      publishedAt: article.publishedAt,
+      releasedMinutes: article.releasedMinutes,
+      all_sources: article.all_sources,
+      url: article.url,
+      slug: article.slug,
+      path: article.path,
+    });
+
+    const sessionId = await handleSubmit(question, {
+      forceNewSession: true,
+      context: {
+        title: article.title,
+        url: article.url,
+        imageUrl: article.imageUrl,
+        description: article.description,
+        publishedAt: article.publishedAt,
+        releasedMinutes: article.releasedMinutes,
+        all_sources: article.all_sources,
+      },
+    });
+
+    setNewsContext({
+      sessionId: sessionId ?? null,
+      title: article.title,
+      imageUrl: article.imageUrl,
+      description: article.description,
+      publishedAt: article.publishedAt,
+      releasedMinutes: article.releasedMinutes,
+      all_sources: article.all_sources,
+      url: article.url,
+      slug: article.slug,
+      path: article.path,
+    });
   };
 
   const showSidebar = isSidebarOpen && activeTab === 'chats';
   const showSmartRec = isSidebarOpen && activeTab === "smartrec";
+  const showDiscover = isSidebarOpen && activeTab === "discover";
+  const [discoverCategory, setDiscoverCategory] = useState<string | null>(null);
   const isBlackHoleActive = isVoiceMode && (isRecording || isTranscribing || isTtsPlaying);
 
   // ---- Voice Mode (wake -> voice-only flow) ----
@@ -485,7 +784,7 @@ export default function Dashboard({ session, paid }: { session: Session; paid?: 
       ttsActiveRef.current = true;
       setIsTtsPlaying(true);
       // Request MP3 audio from backend
-      const res = await fetch("http://localhost:8000/tts/google", {
+      const res = await fetch(`${API_BASE_URL}/tts/google`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ text: safeText, language_code: "en-US" }),
@@ -599,7 +898,7 @@ export default function Dashboard({ session, paid }: { session: Session; paid?: 
           const formData = new FormData();
           formData.append("file", audioBlob, "utterance.webm");
 
-          const sttRes = await fetch("http://localhost:8000/stt/", { method: "POST", body: formData });
+          const sttRes = await fetch(`${API_BASE_URL}/stt/`, { method: "POST", body: formData });
           if (!sttRes.ok) { console.error("STT request failed"); return; }
           const sttData = await sttRes.json();
           const transcript: string = sttData.text ?? "";
@@ -643,10 +942,14 @@ export default function Dashboard({ session, paid }: { session: Session; paid?: 
                 try {
                   const { data: allSessions } = await supabase
                     .from('chat_sessions')
-                    .select('id, title')
+                    .select('id, title, article_context')
                     .eq('user_id', session.user.id)
-                    .order('created_at', { ascending: false });
-                  if (allSessions) setSessions(allSessions);
+                    .order('updated_at', { ascending: false });
+                  if (allSessions && allSessions.length) {
+                    setSessions(withPinnedTop(allSessions, currentSessionId));
+                  } else if (currentSessionId) {
+                    promoteSessionToTop(currentSessionId);
+                  }
                 } catch {}
               }
             }
@@ -674,6 +977,28 @@ export default function Dashboard({ session, paid }: { session: Session; paid?: 
                   content: transcript,
                   display_name: profile?.username ?? 'User',
                 });
+                // Promote locally right away
+                promoteSessionToTop(currentSessionId);
+                // Bump session activity and refresh list ordering
+                try {
+                  await supabase
+                    .from('chat_sessions')
+                    .update({ updated_at: new Date().toISOString() })
+                    .eq('id', currentSessionId);
+                  const { data: allSessions } = await supabase
+                    .from('chat_sessions')
+                    .select('id, title')
+                    .eq('user_id', session.user.id)
+                    .order('updated_at', { ascending: false });
+                  if (allSessions && allSessions.length) {
+                    setSessions(withPinnedTop(allSessions, currentSessionId));
+                  } else {
+                    promoteSessionToTop(currentSessionId);
+                  }
+                } catch (e) {
+                  console.warn('Failed to update session activity timestamp (voice)', e);
+                  promoteSessionToTop(currentSessionId);
+                }
               } catch (e) {
                 console.warn('Failed to insert user voice chat_message', e);
               }
@@ -696,7 +1021,7 @@ export default function Dashboard({ session, paid }: { session: Session; paid?: 
 
             // Send to Sealion (server should route to SeaLion model), pass query linkage
             console.log("🌊 [VoiceMode] route=sealionchats payload=", transcript);
-            const sealionRes = await fetch("http://localhost:8000/geminichats/", {
+            const sealionRes = await fetch(`${API_BASE_URL}/geminichats/`, {
               method: "POST",
               headers: { "Content-Type": "application/json" },
               body: JSON.stringify({
@@ -892,6 +1217,33 @@ export default function Dashboard({ session, paid }: { session: Session; paid?: 
     await loadFolders();
   };
 
+  const handleRenameChat = async (chatId: string) => {
+  const sess = sessions.find((s) => s.id === chatId);
+  const next = window.prompt("Rename chat:", sess?.title ?? "");
+  if (!next?.trim()) return;
+
+  const { error } = await supabase
+    .from("chat_sessions")
+    .update({ title: next.trim(), updated_at: new Date().toISOString() })
+    .eq("id", chatId)
+    .eq("user_id", session.user.id);
+
+  if (error) {
+    console.error("Failed to rename chat", error);
+    return;
+  }
+
+  // refresh list
+  const { data: allSessions } = await supabase
+    .from("chat_sessions")
+    .select("id, title, article_context")
+    .eq("user_id", session.user.id)
+    .order("updated_at", { ascending: false });
+
+  if (allSessions) setSessions(allSessions);
+};
+
+
   const handleDeleteFolder = async (folderId: string) => {
     const ok = window.confirm("Delete this folder? Chats will NOT be deleted.");
     if (!ok) return;
@@ -983,19 +1335,44 @@ export default function Dashboard({ session, paid }: { session: Session; paid?: 
   
   
 
+  // compute content offset so both the main content and the fixed chatbar
+  // can stay in sync when sidebars open/close
+  const navRailWidth = 80; // fixed rail width (matches NavRail)
+  // Left sidebars configuration (positions must match CSS)
+  const leftOffset = 110; // matches .av-settings/.av-sidebar { left: 110px; }
+  const widths = {
+    discover: 310, // Settings/Discover sidebar width
+    settings: 310,
+    chats: 368,    // Chat sidebar width
+  } as const;
+
+  const viewingArticle = location.pathname.startsWith("/discover/news");
+  const discoverOpen = isSidebarOpen && (activeTab === "discover" || viewingArticle);
+  const chatsOpen = isSidebarOpen && activeTab === "chats";
+  const settingsOpen = isSidebarOpen && activeTab === "settings";
+
+  const contentMarginLeft = discoverOpen
+    ? `${leftOffset + widths.discover}px`
+    : settingsOpen
+    ? `${leftOffset + widths.settings}px`
+    : chatsOpen
+    ? `${leftOffset + widths.chats}px`
+    : `${navRailWidth}px`;
+
   return (
-    <div className="uv-root" style={{ display: 'flex', overflowX: 'hidden' }}>
+    <div className="uv-root" style={{ display: 'flex', overflowX: 'hidden', ['--content-offset' as any]: contentMarginLeft }}>
       <Background />
       
       <NavRail
         activeTab={activeTab}
         onTabClick={handleTabClick}
-        onOpenSidebar={(tab) => setSidebarOpen(tab === "chats" || tab === "settings" || tab === "smartrec")}
+        onOpenSidebar={(tab) => setSidebarOpen(tab === "chats" || tab === "settings" || tab === "smartrec" || tab === "discover")}
         avatarPath={profile?.avatar_url ?? "defaults/default.png"}
       />
 
 
       <Sidebar
+        paid={paid}
         sessions={standaloneSessions}
         folders={folders}
         activeId={activeSessionId}
@@ -1007,8 +1384,14 @@ export default function Dashboard({ session, paid }: { session: Session; paid?: 
         onCreateFolder={handleCreateFolder}
         onCreateFolderAndMoveChat={handleCreateFolderAndMoveChat}
         onRenameFolder={handleRenameFolder}
+        onRenameChat={handleRenameChat}
         onDeleteFolder={handleDeleteFolder}
         onMoveOutOfFolder={handleMoveOutOfFolder}
+        onDeleteChat={handleDeleteChat}
+
+         // ✅ add these so paid customise can save (you can implement later)
+        onSaveFolderStyle={(folderId, style) => console.log("save folder style", folderId, style)}
+        onSaveChatStyle={(chatId, style) => console.log("save chat style", chatId, style)}
 
 
       />
@@ -1018,6 +1401,16 @@ export default function Dashboard({ session, paid }: { session: Session; paid?: 
         activeKey={activeSettingsKey}
         onSelect={handleSettingsSelect}
         onClose={() => setSidebarOpen(false)}
+      />
+      <DiscoverSidebar
+        isOpen={showDiscover}
+        onClose={() => setSidebarOpen(false)}
+        onCategorySelect={(c) => {
+          setDiscoverCategory(c);
+          setActiveTab("discover");
+          // ❌ DO NOT close sidebar here
+          if (location.pathname !== "/discover") navigate("/discover");
+        }}
       />
       {/* ✅ SmartRec sidebar overlay */}
       {showSmartRec && (
@@ -1035,14 +1428,15 @@ export default function Dashboard({ session, paid }: { session: Session; paid?: 
       )}
 
 
-      <div style={{ 
-        flex: 1, 
-        marginLeft: '80px', 
-        position: 'relative',
-        width: '100%',
-        display: 'flex',
-        flexDirection: 'column'
-      }}>
+      <div style={{
+            flex: 1,
+            marginLeft: contentMarginLeft,
+            transition: 'margin-left 250ms ease',
+            position: 'relative',
+            width: '100%',
+            display: 'flex',
+            flexDirection: 'column'
+          }}>
         
         {paid ? <PaidTopBar session={session} /> : <RegisteredTopBar session={session} />}
 
@@ -1055,10 +1449,18 @@ export default function Dashboard({ session, paid }: { session: Session; paid?: 
               <DeleteAccount session={session} />
             ) : activeSettingsKey === "billing" ? (
               <PaymentBilling session={session} />
+            ) : activeSettingsKey === "wakeword" ? (
+              <WakeWord session={session} />
             ) : (
               <></>
             )
 
+          ) : activeTab === "discover" ? (
+            location.pathname.startsWith("/discover/news") ? (
+              <NewsContent sidebarOpen={discoverOpen} onAskQuestion={handleNewsQuestion} />
+            ) : (
+              <DiscoverView withNavOffset={false} category={discoverCategory} />
+            )
           ) : (
             <>
               {/* Voice mode: show minimal listening UI */}
@@ -1076,12 +1478,8 @@ export default function Dashboard({ session, paid }: { session: Session; paid?: 
                 </section>
               ) : (
                 !activeSessionId && (
-                  <section className={`uv-hero ${uploadedFile ? "uv-hero--has-file" : ""}`}>
+                  <section className="uv-hero">
                     <BlackHole />
-                    <h3 className="orb-caption">
-                      Hi {profile?.username ?? "User"}, say{" "}
-                      <span className="visual-askvox">"Hey AskVox"</span> to begin or type below.
-                    </h3>
                   </section>
                 )
               )}
@@ -1089,21 +1487,78 @@ export default function Dashboard({ session, paid }: { session: Session; paid?: 
               {activeSessionId && !isNewChat && !isVoiceMode && (
                 <div className="uv-chat-scroll-outer">
                   <div className="uv-chat-area">
+                    {newsContext && (!newsContext.sessionId || newsContext.sessionId === activeSessionId) && (
+                      <div className="uv-news-context-card">
+                        {newsContext.imageUrl && (
+                          <img
+                            src={newsContext.imageUrl}
+                            alt={newsContext.title}
+                            className="uv-news-context-image"
+                          />
+                        )}
+                        <div className="uv-news-context-body">
+                          <div className="uv-news-context-title">{newsContext.title}</div>
+                          <button
+                            className="uv-news-context-link"
+                            onClick={() => {
+                              setActiveTab("discover");
+                              setSidebarOpen(true);
+                              navigate(`/discover/news/${newsContext.slug}`, {
+                                state: {
+                                  article: {
+                                    title: newsContext.title,
+                                    imageUrl: newsContext.imageUrl,
+                                    description: newsContext.description,
+                                    publishedAt: newsContext.publishedAt,
+                                    releasedMinutes: newsContext.releasedMinutes,
+                                    all_sources: newsContext.all_sources,
+                                    url: newsContext.url,
+                                  },
+                                },
+                              });
+                            }}
+                          >
+                            Click here to go back to the news
+                          </button>
+                        </div>
+                      </div>
+                    )}
                     <ChatMessages messages={messages} isLoading={isSending} />
                   </div>
                 </div>
               )}
 
               {!isVoiceMode && (
-                <div className="uv-input-container">
-                  <ChatBar
-                    onSubmit={handleSubmit}
-                    onFileUpload={handleFileUpload}
-                    uploadedFile={uploadedFile}
-                    disabled={isSending}
-                  />
-                </div>
-              )}
+  <div className="uv-input-container">
+    {!activeSessionId && (
+      <div className="av-chatbar-caption">
+        <h3 className="orb-caption">
+          Hi {profile?.username ?? "User"}, say{" "}
+          <span className="visual-askvox">
+            {`"${(profile?.wake_word?.trim?.() || "Hey AskVox")}"`}
+          </span>{" "}
+          to begin or type below.
+        </h3>
+      </div>
+    )}
+    <ChatBar
+      onSubmit={handleSubmit}
+      disabled={isSending}
+      onQuizClick={() => setIsQuizOpen(true)}
+    />
+
+   <Quiz
+  open={isQuizOpen}
+  onClose={() => setIsQuizOpen(false)}
+  userId={session.user.id}
+  sessionId={activeSessionId}
+  messages={messages}
+/>
+
+
+  </div>
+)}
+
             </>
           )}
         </main>

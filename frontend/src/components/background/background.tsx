@@ -38,6 +38,8 @@ const AskVoxStarBackground: React.FC = () => {
           position: fixed;
           inset: 0;
           overflow: hidden;
+          pointer-events: none; /* ensure background never blocks clicks */
+          z-index: 0;
         }
 
         .star {
@@ -49,6 +51,7 @@ const AskVoxStarBackground: React.FC = () => {
           box-shadow: 0 0 6px #ffae4a, 0 0 12px rgba(255,150,50,0.7);
           opacity: 0.7;
           animation: twinkle 2.4s ease-in-out infinite alternate;
+          pointer-events: none;
         }
 
         @keyframes twinkle {
@@ -67,6 +70,7 @@ const AskVoxStarBackground: React.FC = () => {
           
 
           animation: shoot 40s ease-out infinite;
+          pointer-events: none;
         }
 
         @keyframes shoot {

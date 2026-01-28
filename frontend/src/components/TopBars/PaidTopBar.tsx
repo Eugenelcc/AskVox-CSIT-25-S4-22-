@@ -1,6 +1,6 @@
 import { type FC } from "react";
 import { useNavigate } from "react-router-dom";
-import { supabase } from "../../supabaseClient";
+//import { supabase } from "../../supabaseClient";
 import type { Session } from "@supabase/supabase-js";
 import "./UnregisteredTopBar.css";
 
@@ -12,14 +12,8 @@ const PaidTopBar: FC<PaidTopBarProps> = ({ session }) => {
   const navigate = useNavigate();
 
   const handleLogout = async () => {
-    try {
-      const { error } = await supabase.auth.signOut({ scope: "global" });
-      if (error) {
-        console.error("Error logging out:", error);
-      }
-    } finally {
-      navigate("/logout-success", { replace: true });
-    }
+    // Navigate first to avoid route-guard redirection to /login for OAuth users
+    navigate("/logout-success", { replace: true });
   };
 
   return (

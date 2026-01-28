@@ -1,0 +1,417 @@
+/* --- PAGE LAYOUT --- */
+.nc-page {
+    /* Match RegisteredMain.tsx sidebar width */
+    --nc-sidebar-width: 300px;
+    --nc-side-gap: 24px;
+
+    display: flex;
+    column-gap: var(--nc-side-gap);
+    min-height: 100vh;
+    background-color: #000000;
+    color: #ffffff;
+    font-family: 'ABeeZee', system-ui, sans-serif;
+    overflow-x: hidden;
+    padding-left: 8px; 
+}
+
+/* --- MAIN CONTENT --- */
+.nc-main {
+    flex: 1;
+    position: relative;
+    padding: 32px 60px 160px; /* Bottom padding protects text from Chat Bar */
+    width: 100%;
+    max-width: none;
+    margin: 0; 
+    
+    /* SCROLL FIXES */
+    height: 100vh; 
+    overflow-y: auto; 
+    box-sizing: border-box; 
+    
+    /* 🟢 ANIMATION: Smooth padding transition if needed */
+    transition: padding 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+/* --- CHAT BAR (Fixed Bottom) --- */
+.nc-chat-wrapper {
+    position: fixed;
+    bottom: 32px;
+    
+    /* 1. DEFAULT (Sidebar Open): Start after Sidebar (300px) + Rail (80px) = 380px */
+    left: 380px; 
+    right: 0;
+    
+    display: flex;
+    justify-content: center;
+    z-index: 50;
+    pointer-events: none;
+    
+    /* 2. PADDING FIX: Match the padding of .nc-main (60px) */
+    padding: 0 60px; 
+    box-sizing: border-box;
+
+    /* 🟢 ANIMATION: Smooth slide when sidebar closes */
+    transition: left 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+/* 🟢 STATE: Sidebar Closed Override */
+.nc-main.nc-sidebar-closed .nc-chat-wrapper {
+    /* When sidebar is closed, only account for the 80px Nav Rail */
+    left: 80px;
+}
+
+.nc-chat-bar {
+    pointer-events: auto;
+    width: 100%;
+    
+    /* 3. WIDTH SYNC: Match the Article's max-width container */
+    max-width: 1120px; 
+    
+    background: #1B1A1A;
+    border: 1px solid #FF951C;
+    border-radius: 100px; 
+    padding: 8px 12px 8px 24px;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    box-shadow: 0 10px 40px rgba(0,0,0,0.5);
+}
+
+/* --- ARTICLE STYLES --- */
+.nc-article-container {
+    max-width: 1120px; 
+    margin: 0 auto;  
+}
+
+.nc-extended-content p {
+    font-size: 18px;
+    line-height: 1.8; /* Better readability */
+    color: rgba(255, 255, 255, 0.7);
+    
+    /* 🟢 READABILITY FIX: Constrain width and center */
+    max-width: 800px; 
+    margin: 0 auto 24px auto; 
+}
+
+/* ... Keep existing helper classes ... */
+.nc-headline {
+    font-size: 42px;
+    line-height: 1.2;
+    margin-bottom: 16px;
+    background: linear-gradient(90deg, #FF951C 0%, #E06C00 100%);
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+    background-clip: text;
+}
+
+.nc-summary {
+    font-size: 18px;
+    line-height: 1.6;
+    color: rgba(255, 255, 255, 0.9);
+    margin-bottom: 32px;
+}
+
+.nc-hero-image-wrapper {
+    margin-top: 20px;
+    border-radius: 16px;
+    overflow: hidden;
+}
+
+.nc-hero-image {
+    width: 100%;
+    height: auto;
+    display: block;
+}
+
+/* Skeleton Loading Animation */
+@keyframes shimmer {
+  0% { background-position: -200% 0; }
+  100% { background-position: 200% 0; }
+}
+
+.nc-skeleton-line {
+  height: 18px;
+  margin-bottom: 15px;
+  background: linear-gradient(90deg, #1a1a1a 25%, #2a2a2a 50%, #1a1a1a 75%);
+  background-size: 200% 100%;
+  animation: shimmer 1.5s infinite;
+  border-radius: 4px;
+}
+
+/* --- Rest of button/icon styles from previous version --- */
+.nc-back-btn {
+    background: transparent;
+    border: none;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    color: #FF951C;
+    cursor: pointer;
+    margin-bottom: 32px;
+    font-size: 14px;
+}
+
+
+/* The main container for AI text */
+.ai-content {
+    font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif; /* Clean font */
+    color: #E0E0E0;
+    line-height: 1.75;
+    font-size: 1.05rem;
+}
+
+/* Headers (e.g. "Key Developments") */
+.ai-content h3 {
+    font-size: 1.3rem;
+    font-weight: 700;
+    color: #FFFFFF;
+    margin-top: 40px;
+    margin-bottom: 20px;
+    letter-spacing: -0.02em;
+    border-left: 3px solid #FF951C; /* Orange accent line */
+    padding-left: 12px;
+}
+
+/* Sub-headers */
+.ai-content h4 {
+    font-size: 1.1rem;
+    font-weight: 600;
+    color: #FF951C;
+    margin-top: 24px;
+    margin-bottom: 12px;
+}
+
+/* Paragraphs */
+.ai-content p {
+    margin-bottom: 24px;
+    color: #D1D1D1;
+}
+
+/* Bullet Lists */
+.ai-content ul {
+    margin-bottom: 24px;
+    padding-left: 24px;
+    list-style-type: none; /* Remove default dots */
+}
+
+.ai-content li {
+    position: relative;
+    margin-bottom: 14px;
+    padding-left: 4px;
+}
+
+/* Custom orange bullet point */
+.ai-content li::before {
+    content: "•";
+    color: #FF951C;
+    font-weight: bold;
+    display: inline-block;
+    width: 1em;
+    margin-left: -1em;
+}
+
+/* Strong/Bold Text */
+.ai-content strong {
+    color: #fff;
+    font-weight: 700;
+}
+
+/* --- THE CITATION PILL [1] --- */
+.citation-pill {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    
+    background-color: #2A2A2A;
+    color: #FF951C;
+    font-size: 0.75rem;
+    font-weight: 700;
+    font-family: monospace; /* Gives it a techy feel */
+    
+    min-width: 20px;
+    height: 20px;
+    border-radius: 50%; /* Circle or Pill */
+    padding: 0 6px;
+    
+    margin-left: 6px;
+    vertical-align: super; /* Slightly raised */
+    border: 1px solid #333;
+    cursor: pointer;
+    transition: all 0.2s ease;
+}
+
+.citation-pill:hover {
+    background-color: #FF951C;
+    color: #000;
+    transform: scale(1.1);
+    border-color: #FF951C;
+}
+
+
+.nc-meta-row { display: flex; align-items: center; gap: 16px; margin-bottom: 32px; }
+.nc-time { color: rgba(255, 255, 255, 0.4); font-size: 14px; }
+.nc-sources-pill {
+    display: inline-flex;
+    align-items: center;
+    gap: 10px;
+    background: rgba(255, 255, 255, 0.05);
+    border: 1px solid rgba(255, 255, 255, 0.1);
+    padding: 6px 12px;
+    border-radius: 999px;
+    font-size: 13px;
+    color: rgba(255, 255, 255, 0.85);
+    cursor: pointer;
+    transition: border-color 0.2s ease, transform 0.2s ease;
+}
+.nc-sources-pill:hover { border-color: rgba(255, 149, 28, 0.6); transform: translateY(-1px); }
+.nc-sources-pill--disabled { opacity: 0.5; cursor: not-allowed; }
+.nc-sources-pill__stack { display: flex; align-items: center; }
+.nc-sources-pill__icon {
+    width: 16px;
+    height: 16px;
+    border-radius: 50%;
+    border: 1px solid #2A2A2A;
+    background: #111;
+    margin-left: -6px;
+}
+.nc-sources-pill__icon:first-child { margin-left: 0; }
+.nc-sources-pill__label { font-weight: 600; color: rgba(240, 240, 240, 0.85); }
+.nc-actions { display: flex; gap: 8px; margin-left: auto; }
+.nc-icon-btn { background: transparent; border: none; color: #FF951C; cursor: pointer; opacity: 0.8; }
+.nc-chat-input-group { display: flex; align-items: center; gap: 12px; flex: 1; }
+.nc-paperclip-icon { color: rgba(255, 255, 255, 0.3); font-size: 20px; cursor: pointer; }
+.nc-chat-input { background: transparent; border: none; color: #fff; font-size: 16px; width: 100%; outline: none; }
+.nc-chat-input::placeholder { color: rgba(255, 255, 255, 0.3); }
+.nc-chat-actions { display: flex; align-items: center; gap: 12px; }
+.nc-chat-icon { background: transparent; border: none; color: rgba(255, 255, 255, 0.6); cursor: pointer; display: flex; align-items: center; }
+.nc-send-btn { background: rgba(255, 255, 255, 0.1); border: none; width: 40px; height: 40px; border-radius: 50%; display: flex; align-items: center; justify-content: center; color: #FF951C; cursor: pointer; transition: background 0.2s; }
+.nc-fade-overlay { position: relative; }
+.nc-fade-overlay::after { content: ""; position: absolute; bottom: 0; left: 0; width: 100%; height: 150px; background: linear-gradient(to bottom, rgba(0,0,0,0) 0%, #000000 100%); pointer-events: none; }
+
+/* --- SOURCES PANEL --- */
+.nc-sources-overlay {
+    position: fixed;
+    inset: 0;
+    background: rgba(0, 0, 0, 0.55);
+    z-index: 200;
+    display: flex;
+    justify-content: flex-end;
+    align-items: center;
+    padding-right: 24px;
+}
+
+.nc-sources-panel {
+    width: 360px;
+    max-width: 90vw;
+    height: 80vh;
+    background: #1C1C1C;
+    border: 1px solid #FF951C;
+    border-radius: 18px;
+    padding: 16px;
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+    box-shadow: 0 10px 40px rgba(0,0,0,0.55);
+}
+
+.nc-sources-panel__header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+}
+
+.nc-sources-panel__title {
+    font-size: 20px;
+    color: #FF951C;
+    font-weight: 700;
+}
+
+.nc-sources-panel__close {
+    background: transparent;
+    border: none;
+    color: #FF951C;
+    width: 28px;
+    height: 28px;
+    border-radius: 50%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    cursor: pointer;
+}
+
+.nc-sources-panel__count {
+    font-size: 13px;
+    color: rgba(255, 255, 255, 0.6);
+}
+
+.nc-sources-panel__list {
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+    overflow-y: auto;
+    padding-right: 4px;
+}
+
+.nc-source-item {
+    display: grid;
+    grid-template-columns: 24px 1fr;
+    gap: 10px;
+    align-items: start;
+    padding: 10px 6px;
+    border-radius: 12px;
+    background: transparent;
+    border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+    text-decoration: none;
+    transition: color 0.2s ease;
+}
+
+.nc-source-item:hover {
+    color: #FFFFFF;
+}
+
+.nc-source-item__favicon {
+    width: 20px;
+    height: 20px;
+    border-radius: 4px;
+    margin-top: 2px;
+}
+
+.nc-source-item__content {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+}
+
+.nc-source-item__meta {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    font-size: 11px;
+    color: rgba(255, 255, 255, 0.6);
+}
+
+.nc-source-item__publisher {
+    color: #EDEDED;
+    font-weight: 600;
+}
+
+.nc-source-item__domain {
+    color: rgba(255, 255, 255, 0.5);
+}
+
+.nc-source-item__title {
+    color: #F0F0F0;
+    font-size: 13px;
+    font-weight: 600;
+    line-height: 1.4;
+}
+
+.nc-source-item__snippet {
+    color: rgba(255, 255, 255, 0.6);
+    font-size: 12px;
+    line-height: 1.4;
+    display: -webkit-box;
+    -webkit-line-clamp: 3;
+    -webkit-box-orient: vertical;
+    overflow: hidden;
+}

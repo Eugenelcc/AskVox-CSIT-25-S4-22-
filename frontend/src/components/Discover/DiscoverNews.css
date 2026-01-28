@@ -1,0 +1,290 @@
+.discover-root {
+  position: relative;
+  padding: 24px 24px 48px 24px;
+  overflow-y: auto; /* allow scrolling within Discover content */
+  max-height: calc(100vh - 75px); /* exclude top bar area */
+  -webkit-overflow-scrolling: touch; /* smooth scrolling on touch devices */
+  /* Hide scrollbar visuals while keeping scroll functionality */
+  -ms-overflow-style: none; /* IE/Edge */
+  scrollbar-width: none;    /* Firefox */
+}
+
+.discover-root::-webkit-scrollbar { /* Chrome/Safari */
+  width: 0;
+  height: 0;
+}
+
+.discover-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  margin-bottom: 16px;
+  
+  /* 🟢 FIX 1: High Z-Index ensures dropdowns float ABOVE articles */
+  position: relative; 
+  z-index: 9999 !important; 
+  
+  /* 🟢 FIX 2: REMOVED 'pointer-events: none'. 
+     This was the bug! It made clicks pass through the dropdown to the article behind. */
+  pointer-events: auto; 
+}
+
+.discover-header__left {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.discover-title {
+  font-size: 32px;
+  line-height: 38px;
+  color: #ffffff;
+}
+
+.discover-header__actions {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.pill {
+  box-sizing: border-box;
+  height: 33px;
+  padding: 4px 12px;
+  border: 1px solid #FF951C;
+  border-radius: 16px;
+  background: #1E1E1E;
+  color: #F0F0F0;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 16px;
+
+  /* Click interactions */
+  cursor: pointer; 
+  user-select: none;
+  position: relative;
+  z-index: 10000; /* Ensure button stays above header background */
+}
+
+/* Ensure the icon doesn't block the click */
+.pill svg {
+  pointer-events: none;
+}
+
+.pill:hover {
+  background-color: #333;
+  transform: translateY(-1px);
+  border-color: #ffffff; 
+}
+
+.pill:active {
+  transform: translateY(1px);
+}
+
+.pill--ghost {
+  border-color: #FF951C;
+  background: linear-gradient(0deg, #1E1E1E, #1E1E1E), rgba(0,0,0,0.53);
+}
+
+.btn-outline-orange {
+  box-sizing: border-box;
+  height: 33px;
+  padding: 4px 16px;
+  border: 1px solid #FF951C;
+  border-radius: 16px;
+  background: #1E1E1E;
+  color: #F0F0F0;
+  cursor: pointer; 
+}
+
+.discover-layout {
+  display: grid;
+  grid-template-columns: 1fr 330px;
+  gap: 24px;
+}
+
+/* Stack multiple feed sections with spacing */
+.discover-left {
+  display: flex;
+  flex-direction: column;
+  gap: 40px; 
+}
+
+.news-grid {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 24px;
+}
+
+.news-card {
+  background: #141313;
+  border-radius: 50px;
+  color: #FFFFFF;
+  overflow: hidden;
+}
+
+.news-card__body {
+  padding: 16px 20px 18px 20px;
+}
+
+.news-card__image {
+  width: 100%;
+  height: 200px;
+  object-fit: cover;
+  display: block;
+}
+
+.news-card--hero {
+  display: grid;
+  grid-template-columns: 449px 1fr;
+  background: rgba(31,30,30,0.63);
+}
+
+.news-card--hero .news-card__image {
+  height: 334px;
+}
+
+.news-card--wide {
+  display: grid;
+  grid-template-columns: 449px 1fr;
+  background: rgba(31,30,30,0.63);
+}
+
+.news-title {
+  font-size: 20px;
+  line-height: 24px;
+}
+
+.news-title--lg {
+  font-size: 29px;
+  line-height: 34px;
+}
+
+.news-title-gradient {
+  background: linear-gradient(90deg, #FF951C 0%, #BF8A4D 59.13%);
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  background-clip: text;
+  color: transparent;
+}
+
+.news-desc {
+  color: rgba(255, 255, 255, 0.76);
+  font-size: 16px;
+  line-height: 20px;
+}
+
+.news-meta {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-top: 10px;
+  color: rgba(255,255,255,0.54);
+  font-size: 14px;
+}
+
+.right-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.weather-card {
+  background: rgba(31,30,30,0.63);
+  border-radius: 31px;
+  padding: 16px;
+  color: #FFFFFF;
+}
+
+.weather-card__top {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.weather-card__weekly {
+  display: grid;
+  grid-template-columns: repeat(5, 1fr);
+  gap: 8px;
+  margin-top: 10px;
+}
+
+.weekly-item {
+  text-align: center;
+}
+
+.league-header {
+  background: linear-gradient(180deg, #910091 0%, #3D195B 28.37%, #141313 58.65%);
+  border-radius: 31px 31px 0 0;
+  padding: 16px;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.league-title {
+  font-weight: 700;
+  font-size: 13px;
+}
+
+.league-season {
+  font-size: 12px;
+}
+
+.league-table {
+  background: #141313;
+}
+
+.league-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 10px 20px;
+  color: #FEFEFE;
+}
+
+.league-row + .league-row { border-top: 1px solid #A68383; }
+
+.league-pos { width: 25px; text-align: center; color: #DCCFCF; }
+
+.league-club { display: flex; align-items: center; gap: 12px; flex: 1; }
+
+.league-points { width: 26px; text-align: center; font-weight: 800; color: #FFFFFF; }
+
+.matches-section {
+  background: #141313;
+}
+
+.matches-header {
+  background: linear-gradient(2.64deg, #141313 3.84%, #3E185C 58.1%, #141313 95.05%);
+  border: 1px solid #141313;
+  padding: 10px 16px;
+  color: #FFFFFF;
+}
+
+.match-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 10px 16px;
+}
+
+.match-team {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  color: #FFFFFF;
+}
+
+.match-time {
+  text-align: right;
+  color: #C0C0C0;
+  font-size: 12px;
+}
+
+@media (max-width: 1200px) {
+  .discover-layout { grid-template-columns: 1fr; }
+  .right-panel { order: 2; }
+}

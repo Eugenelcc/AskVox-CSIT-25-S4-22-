@@ -1,0 +1,33 @@
+.pa-statCard {
+    width: 465px;
+    height: 210px;
+    border-radius: 46px;
+  
+    background: linear-gradient(180deg, #333333 0%, #141313 29.49%, #191919 62.5%);
+    position: relative;
+  }
+  
+  .pa-statCard__title {
+    position: absolute;
+    left: 38px;  /* 피그마 title x: 194, card x: 156 => 38 */
+    top: 24px;   /* 피그마 y: 258, card y: 234 => 24 */
+    width: 351px;
+  
+    font-size: 24px;
+    line-height: 28px;
+    letter-spacing: 0.02em;
+    color: #d3d3d3;
+  }
+  
+  .pa-statCard__value {
+    position: absolute;
+    left: 37px;  /* value x: 193, card x: 156 => 37 */
+    top: 87px;   /* value y: 321, card y: 234 => 87 */
+    width: 292px;
+  
+    font-size: 70px;
+    line-height: 83px;
+    letter-spacing: 0.02em;
+    color: #e2dfdf;
+  }
+  

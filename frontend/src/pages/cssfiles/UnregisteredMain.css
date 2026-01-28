@@ -42,7 +42,7 @@
   top: 75px;          
   left: 0;
   right: 0;
-  bottom: 110px;       
+    font-size: clamp(20px, 2vw, 28px) !important;
   overflow-y: auto;   
   width: 100%;
   scroll-behavior: smooth;
