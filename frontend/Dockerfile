@@ -1,12 +1,14 @@
-# Stage 1: Build frontend (Debian-based, avoids Rollup musl optional dep issues)
+# Stage 1: Build frontend (Debian-based to avoid Rollup musl issues)
 FROM node:20-bookworm-slim as build
 WORKDIR /app
 
-# Install dependencies first for better caching
+# Copy package files from the frontend folder (because build context is repo root)
 COPY frontend/package.json frontend/package-lock.json* ./
-RUN npm ci
 
-# Copy rest of the application
+# Install deps (force optional deps so Rollup native package is installed)
+RUN if [ -f package-lock.json ]; then npm ci --include=optional; else npm install --include=optional; fi
+
+# Copy the rest of the frontend app
 COPY frontend/ ./
 
 # Build the app
