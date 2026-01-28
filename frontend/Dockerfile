@@ -6,8 +6,10 @@ WORKDIR /app
 # Copy package files
 COPY frontend/package.json frontend/package-lock.json* ./
 
-# Install dependencies
-RUN npm install
+# Fix: Remove lockfile and force reinstall Rollup
+RUN rm -f package-lock.json && \
+    npm install && \
+    npm install rollup --no-save
 
 # Copy source code
 COPY frontend/ ./
