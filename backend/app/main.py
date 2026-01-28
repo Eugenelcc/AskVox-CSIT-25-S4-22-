@@ -30,8 +30,8 @@ app = FastAPI(title="AskVox API")
 origins = [
     "http://localhost:5173",
     "http://localhost:5174",
-    "http://localhost:3000",
     "https://askvox-csit-25-s4-22-1.onrender.com",
+    "http://localhost:3000",
 ]
 
 app.add_middleware(
