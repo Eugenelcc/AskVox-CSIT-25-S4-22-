@@ -13,6 +13,8 @@ COPY . /app
 # Make entrypoint executable
 #RUN chmod +x /app/entrypoint.sh
 
-EXPOSE 8000
+EXPOSE 8080
 
-CMD ["/app/entrypoint.sh"]
+ # Run
+ENV PYTHONUNBUFFERED=1
+CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8080"]
