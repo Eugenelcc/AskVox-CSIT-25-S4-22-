@@ -1,12 +1,12 @@
-# Stage 1: Build frontend
-FROM node:20-alpine as build
+# Stage 1: Build frontend (Debian-based, avoids Rollup musl optional dep issues)
+FROM node:20-bookworm-slim as build
 WORKDIR /app
 
-# Copy package files from the frontend folder (because build context is repo root)
+# Install dependencies first for better caching
 COPY frontend/package.json frontend/package-lock.json* ./
-RUN if [ -f package-lock.json ]; then npm ci; else npm install; fi
+RUN npm ci
 
-# Copy the rest of the frontend app
+# Copy rest of the application
 COPY frontend/ ./
 
 # Build the app
