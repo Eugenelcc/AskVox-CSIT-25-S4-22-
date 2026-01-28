@@ -420,7 +420,7 @@ export default function Dashboard({
       // Attempt to remove folder links first (ignore errors if table doesn't exist or RLS blocks)
       try {
         await supabase.from("chat_session_folders").delete().eq("session_id", chatId);
-      } catch {}
+      } catch {}    //TEST
 
       // Delete the chat session (scoped to user for safety)
       const { error } = await supabase
