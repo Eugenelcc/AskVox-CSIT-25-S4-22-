@@ -1,20 +1,19 @@
-# Stage 1: Build frontend (Debian-based to avoid Rollup musl issues)
-FROM node:20-bookworm-slim as build
+# Stage 1: Build
+FROM node:20-bookworm-slim AS build
 WORKDIR /app
 
-# Copy package files from the frontend folder (because build context is repo root)
+# Upgrade npm to avoid optional-deps bug (rollup native package)
+RUN npm i -g npm@11.8.0
+
+# Install deps first (better caching)
 COPY frontend/package.json frontend/package-lock.json* ./
+RUN npm install --include=optional
 
-# Install deps (force optional deps so Rollup native package is installed)
-RUN if [ -f package-lock.json ]; then npm ci --include=optional; else npm install --include=optional; fi
-
-# Copy the rest of the frontend app
+# Copy source + build
 COPY frontend/ ./
-
-# Build the app
 RUN npm run build
 
-# Stage 2: Serve with nginx
+# Stage 2: Serve static with nginx
 FROM nginx:1.27-alpine
 RUN rm -rf /usr/share/nginx/html/*
 COPY --from=build /app/dist /usr/share/nginx/html
