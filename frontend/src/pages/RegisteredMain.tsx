@@ -34,7 +34,7 @@ import WakeWord from './settings/WakeWord';
 
 // Constants 
 const LLAMA_ID = 212020; 
-const API_BASE_URL = import.meta.env.VITE_API_URL;
+const API_BASE_URL = import.meta.env.VITE_API_URL || "http://localhost:8000";
 type SettingsKey = "account" | "billing" | "delete" | "wakeword";
 type ArticleContext = {
   title: string;
@@ -78,6 +78,7 @@ export default function Dashboard({
 
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [isSending, setIsSending] = useState(false);
+  const [isSmartRecPending, setIsSmartRecPending] = useState(false);
   const [profile, setProfile] = useState<UserProfile | null>(null);
   const [isQuizOpen, setIsQuizOpen] = useState(false);
   const [isVoiceMode, setIsVoiceMode] = useState(false);
@@ -457,21 +458,59 @@ export default function Dashboard({
         .eq("session_id", sid)
         .order("created_at", { ascending: true });
       if (data) {
-        setMessages(
-          data.map((msg: DatabaseMessage) => ({
-            id: msg.id,
-            senderId: msg.role === "user" ? session.user.id : LLAMA_ID,
-            content: msg.content,
-            createdAt: msg.created_at,
-            displayName: msg.display_name,
-            meta: msg.meta ?? null,
-          }))
-        );
+        const mapped = data.map((msg: DatabaseMessage) => ({
+          id: msg.id,
+          senderId: msg.role === "user" ? session.user.id : LLAMA_ID,
+          content: msg.content,
+          createdAt: msg.created_at,
+          displayName: msg.display_name,
+          meta: msg.meta ?? null,
+        }));
+        setMessages(mapped);
+        return mapped;
       }
     } catch (e) {
       console.warn("Failed to refresh chat messages after voice mode", e);
     }
+    return null;
   };
+
+  // SmartRec: poll until assistant reply arrives (backend inserts it asynchronously)
+  useEffect(() => {
+    if (!isSmartRecPending || !activeSessionId || isNewChat) return;
+
+    let cancelled = false;
+    let handle: number | null = null;
+    let attempts = 0;
+    const maxAttempts = 45; // ~45 seconds
+
+    const tick = async () => {
+      attempts += 1;
+      const currentSid = activeSessionId;
+      const mapped = await refreshActiveSessionMessages(currentSid);
+      if (cancelled) return;
+
+      const last = mapped && mapped.length ? mapped[mapped.length - 1] : null;
+      if (last && last.senderId === LLAMA_ID && String(last.content || "").trim()) {
+        setIsSmartRecPending(false);
+        return;
+      }
+
+      if (attempts >= maxAttempts) {
+        setIsSmartRecPending(false);
+        return;
+      }
+
+      handle = window.setTimeout(tick, 1000);
+    };
+
+    // Short delay to allow the just-inserted user message to appear
+    handle = window.setTimeout(tick, 400);
+    return () => {
+      cancelled = true;
+      if (handle) window.clearTimeout(handle);
+    };
+  }, [isSmartRecPending, activeSessionId, isNewChat]);
 
   // Keep component state in sync with /newchat and /chats/:sessionId
   useEffect(() => {
@@ -503,6 +542,9 @@ export default function Dashboard({
     const trimmed = text.trim();
     if (!trimmed || !session?.user?.id) return null;
     console.log("💬 [Text] route=llamachats/cloud payload=", trimmed);
+
+    // If user starts typing/sending, stop SmartRec pending indicator.
+    if (isSmartRecPending) setIsSmartRecPending(false);
 
     // 1. Determine Session ID
     let currentSessionId = options?.forceNewSession ? null : activeSessionId;
@@ -565,13 +607,70 @@ export default function Dashboard({
 
     const queryId = globalThis.crypto?.randomUUID?.() ?? `${Date.now()}-${Math.random()}`;
 
+    // Domain classify (best-effort). If backend is down, default to "general".
+    let detectedDomain = "general";
+    try {
+      const dres = await fetch(`${API_BASE_URL}/domain/classify`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ text: trimmed, include_debug: true }),
+      });
+      if (dres.ok) {
+        const djson = await dres.json().catch(() => null);
+        if (djson?.domain && typeof djson.domain === "string") {
+          detectedDomain = djson.domain;
+        }
+
+        // Debug: what Google NLP returned vs what we store in Supabase
+        if (djson?.google_top_category || djson?.strategy) {
+          console.log("[domain]", {
+            text: trimmed,
+            google_top_category: djson.google_top_category,
+            google_top_confidence: djson.google_top_confidence,
+            strategy: djson.strategy,
+            mapped_domain: djson.domain,
+          });
+        }
+      }
+    } catch {
+      // ignore; keep default
+    }
+
+    console.log("[supabase] inserting query detected_domain", {
+      queryId,
+      detectedDomain,
+      text: trimmed,
+    });
+
+    // Backend-terminal debug log of exactly what we will insert into Supabase.
+    // This is best-effort and will be ignored if the backend has debug logging disabled.
+    try {
+      await fetch(`${API_BASE_URL}/domain/debug-log`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          table: "queries",
+          payload: {
+            id: queryId,
+            session_id: currentSessionId,
+            user_id: session.user.id,
+            input_mode: "text",
+            transcribed_text: trimmed,
+            detected_domain: detectedDomain,
+          },
+        }),
+      });
+    } catch {
+      // ignore
+    }
+
     await supabase.from("queries").insert({
       id: queryId,
       session_id: currentSessionId,
       user_id: session.user.id,
       input_mode: "text",
       transcribed_text: trimmed,
-      detected_domain: "general",
+      detected_domain: detectedDomain,
     });
 
     
@@ -1033,13 +1132,63 @@ export default function Dashboard({
             // Create a query row (Voice) now so backend can attach response
             const queryId = globalThis.crypto?.randomUUID?.() ?? `${Date.now()}-${Math.random()}`;
             try {
+              // Domain classify (best-effort)
+              let detectedDomainVoice = "general";
+              try {
+                const dres = await fetch(`${API_BASE_URL}/domain/classify`, {
+                  method: "POST",
+                  headers: { "Content-Type": "application/json" },
+                  body: JSON.stringify({ text: transcript, include_debug: true }),
+                });
+                if (dres.ok) {
+                  const djson = await dres.json().catch(() => null);
+                  if (djson?.domain && typeof djson.domain === "string") {
+                    detectedDomainVoice = djson.domain;
+                  }
+
+                  if (djson?.google_top_category || djson?.strategy) {
+                    console.log("[domain][voice]", {
+                      text: transcript,
+                      google_top_category: djson.google_top_category,
+                      google_top_confidence: djson.google_top_confidence,
+                      strategy: djson.strategy,
+                      mapped_domain: djson.domain,
+                    });
+                  }
+                }
+              } catch {
+                // ignore; keep default
+              }
+
+              // Backend-terminal debug log of exactly what we will insert into Supabase.
+              // This is best-effort and will be ignored if the backend has debug logging disabled.
+              try {
+                await fetch(`${API_BASE_URL}/domain/debug-log`, {
+                  method: "POST",
+                  headers: { "Content-Type": "application/json" },
+                  body: JSON.stringify({
+                    table: "queries",
+                    payload: {
+                      id: queryId,
+                      session_id: currentSessionId,
+                      user_id: session.user.id,
+                      input_mode: "voice",
+                      transcribed_text: transcript,
+                      detected_domain: detectedDomainVoice,
+                    },
+                  }),
+                });
+              } catch {
+                // ignore
+              }
+
               await supabase.from('queries').insert({
                 id: queryId,
                 session_id: currentSessionId,
                 user_id: session.user.id,
                 input_mode: 'voice',
                 transcribed_text: transcript,
-                detected_domain: 'general',
+                detected_domain: detectedDomainVoice,
               });
             } catch (e) {
               console.warn('Failed to insert voice query', e);
@@ -1415,11 +1564,16 @@ export default function Dashboard({
         <div className="sr-overlay">
           <SmartRecPanel
             userId={session.user.id}
-            onOpenSession={(sid) => {
+            onOpenSession={(sid, pendingReply) => {
               setActiveTab("chats");
               setSidebarOpen(true);
               setActiveSessionId(sid);
               setIsNewChat(false);
+              setMessages([]);
+              setIsSmartRecPending(!!pendingReply);
+              window.setTimeout(() => {
+                void refreshActiveSessionMessages(sid);
+              }, 80);
             }}
           />
         </div>
@@ -1521,7 +1675,7 @@ export default function Dashboard({
                         </div>
                       </div>
                     )}
-                    <ChatMessages messages={messages} isLoading={isSending} />
+                    <ChatMessages messages={messages} isLoading={isSending || isSmartRecPending} />
                   </div>
                 </div>
               )}
