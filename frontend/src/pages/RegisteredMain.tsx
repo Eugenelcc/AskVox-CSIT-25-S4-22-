@@ -780,9 +780,6 @@ export default function Dashboard({
         return null;
       }
       
-      setIsSending(false);
-      
-
       const streamId = `llama-${Date.now()}`;
       setMessages(prev => [...prev, { 
         id: streamId, 
@@ -792,6 +789,8 @@ export default function Dashboard({
         displayName: "AskVox",
         meta,
       }]);
+
+      setIsSending(false);
 
     } catch (err) { 
        console.error("❌ Error sending message:", err);
