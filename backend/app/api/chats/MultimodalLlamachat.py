@@ -1,5 +1,4 @@
 
-from __future__ import annotations
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel, Field
 import re
@@ -11,7 +10,6 @@ import httpx
 from datetime import datetime, timezone
 import asyncio
 from dotenv import load_dotenv
-from urllib.parse import urlparse
 
 load_dotenv()
 
@@ -47,16 +45,6 @@ USE_SUPABASE_STORAGE_FOR_IMAGES = os.getenv("USE_SUPABASE_STORAGE_FOR_IMAGES", "
 FORCE_WEB_SOURCES = os.getenv("FORCE_WEB_SOURCES", "0") == "1"
 FORCE_YOUTUBE = os.getenv("FORCE_YOUTUBE", "0") == "1"
 FORCE_IMAGES = os.getenv("FORCE_IMAGES", "0") == "1"
-MODEL_KNOWLEDGE_CUTOFF_YEAR = int(os.getenv("MODEL_KNOWLEDGE_CUTOFF_YEAR", "2023"))
-BLOCK_YT_CHANNELS = [s.strip() for s in (os.getenv("BLOCK_YT_CHANNELS", "Formula 1,F1,Formula One").split(",")) if s.strip()]
-BLOCK_IMAGE_HOSTS = [s.strip().lower() for s in (os.getenv(
-    "BLOCK_IMAGE_HOSTS",
-    "instagram.com,fbcdn.net,facebook.com,x.com,twitter.com,tiktok.com,linkedin.com,reddit.com,redd.it"
-).split(",")) if s.strip()]
-
-# Output style (friendly tone + emoji) — configurable
-AV_EMOJI_STYLE = (os.getenv("AV_EMOJI_STYLE", "light") or "").strip().lower()  # off | light | strong
-AV_FRIENDLY_OPENERS = os.getenv("AV_FRIENDLY_OPENERS", "1") == "1"  # default ON; brief greeting guidance
 
 # Explicitly log CloudRun usage (no local model by default)
 if LLAMA_CLOUDRUN_URL:
@@ -202,135 +190,6 @@ MODEL_JSON_INSTRUCTION = (
 )
 
 # -----------------------
-# Second-pass (sanity) prompt builder — non-JSON
-# -----------------------
-def build_second_pass_prompt_chat(
-    message: str,
-    history: List[HistoryItem],
-    original_answer: str,
-    web_evidence_block: str = "",
-    article_block: str = "",
-) -> str:
-    """Construct a chat-style prompt to REWRITE/UPDATE the original answer using fresh web evidence.
-
-    This prompt outputs plain markdown (no JSON), suitable for LLaMA chat mode.
-    """
-    def _truncate(text: str, limit: int) -> str:
-        if not text:
-            return ""
-        return text if len(text) <= limit else text[:limit] + "..."
-
-    safe_msg = _truncate(message, MAX_MESSAGE_CHARS)
-    safe_orig = _truncate(original_answer, MAX_ARTICLE_CHARS)
-    safe_article = _truncate(article_block, MAX_ARTICLE_CHARS)
-    safe_evidence = _truncate(web_evidence_block, MAX_EVIDENCE_CHARS)
-
-    tone_lines = ""
-    if AV_EMOJI_STYLE != "off":
-        tone_lines += (
-            "Adopt a warm, friendly tone. Use at most one light emoji in openings/closings when helpful; skip emojis for formal or long answers.\n"
-        )
-    if AV_FRIENDLY_OPENERS:
-        tone_lines += (
-            "For casual questions, a brief, varied greeting is okay; for academic questions, start directly.\n"
-        )
-    tone_lines += (
-        "Optionally include a short closing inviting follow-up; avoid boilerplate; omit for formal or long answers.\n"
-    )
-
-    p = (
-        "<|begin_of_text|>"
-        "<|start_header_id|>system<|end_header_id|>\n"
-        "You are AskVox, a helpful assistant. Update and correct the original answer using the latest facts from the provided sources. "
-        "Your internal knowledge may be outdated beyond 2023; when sources conflict with prior knowledge, trust the latest [SOURCES]. "
-        "Do not mention training cutoffs or model limitations in the answer. "
-        "Write a complete, well-structured markdown response (NOT JSON). Prefer concise paragraphs; use lists only when they improve clarity. "
-        "If a line is 'Title - details', render as '**Title** — details'. Do not include any [SOURCES] section at the end.\n"
-        + tone_lines +
-        "<|eot_id|>"
-    )
-
-    # Minimal recent history (up to 3 entries)
-    filtered_history: List[HistoryItem] = []
-    seen = set()
-    for h in history[-3:]:
-        if not h.content or not h.content.strip():
-            continue
-        key = (h.role, h.content.strip())
-        if key in seen:
-            continue
-        seen.add(key)
-        filtered_history.append(h)
-
-    for h in filtered_history:
-        role = "user" if h.role == "user" else "assistant"
-        p += (
-            f"<|start_header_id|>{role}<|end_header_id|>\n" + _truncate(h.content, 240) + "<|eot_id|>"
-        )
-
-    # Current user message
-    p += (
-        "<|start_header_id|>user<|end_header_id|>\n" + safe_msg + "<|eot_id|>"
-        "<|start_header_id|>assistant<|end_header_id|>\n"
-    )
-
-    # Context blocks
-    if safe_article:
-        p += "[ARTICLE_CONTEXT]\n" + safe_article + "\n\n"
-    if safe_orig:
-        p += "[ORIGINAL_ANSWER]\n" + safe_orig + "\n\n"
-    if safe_evidence:
-        p += safe_evidence + "\n\n"
-
-    # Revision rules (inline, non-JSON)
-    p += (
-        "[REVISION_RULES]\n"
-        "- Integrate corrections and the latest facts from [SOURCES]; prefer them on conflicts.\n"
-        "- Produce a complete, informative answer (do NOT shorten/paraphrase excessively); match or exceed original detail.\n"
-        "- Preserve friendly tone and formatting; where appropriate, add [[cite:N]] after sentences supported by [SOURCES].\n"
-        "- Output plain markdown only; no JSON.\n"
-    )
-
-    return p[:MAX_PROMPT_CHARS] if len(p) > MAX_PROMPT_CHARS else p
-
-# -----------------------
-# Sanity web query builder — non-JSON
-# -----------------------
-def build_sanity_web_query(
-    message: str,
-    original_answer: str,
-    context_query_base: Optional[str] = None,
-) -> str:
-    """Derive a concise web query for sanity checking (non-JSON), without touching plan.web_query.
-
-    - Prefer context_query_base, else user message
-    - Remove media verbs (show me, images, videos, etc.)
-    - If no explicit year is present and query implies recency, append the current year
-    """
-    base = (context_query_base or message or "").strip()
-    q = re.sub(
-        r"\b(show me|give me|find|search|look for|video|videos|youtube|yt|image|images|picture|pictures|photo|photos)\b",
-        "",
-        base,
-        flags=re.I,
-    )
-    years = re.findall(r"\b(20\d{2})\b", (message or "") + " " + (original_answer or ""))
-    q = re.sub(r"\s+", " ", q).strip()
-    current_year = datetime.now(timezone.utc).year
-    recency_intent = bool(re.search(r"\b(now|currently|today|this year|latest|trending|airing|released|premiered)\b", (message or ""), re.I))
-    prefer_year = None
-    if years:
-        try:
-            prefer_year = max(int(y) for y in years if y.isdigit())
-        except Exception:
-            prefer_year = None
-    elif recency_intent or current_year > MODEL_KNOWLEDGE_CUTOFF_YEAR:
-        prefer_year = current_year
-    if prefer_year and str(prefer_year) not in q:
-        q = f"{q} {prefer_year}".strip()
-    return q[:120]
-
-# -----------------------
 # PERFORMANCE: lightweight in-memory caches and time budgets
 # -----------------------
 _CACHE_TTL_SEC = 300  # 5 minutes
@@ -339,14 +198,14 @@ _cache_tavily: Dict[Tuple[str, int], Tuple[float, Tuple[List['SourceItem'], List
 _cache_images: Dict[Tuple[str, int], Tuple[float, List[Dict[str, str]]]] = {}
 _cache_youtube: Dict[Tuple[str, int], Tuple[float, List['YouTubeItem']]] = {}
 
-async def fast_google_web_search(query: str, num: int = 6, timeout_sec: float = 3.5, date_restrict: Optional[str] = None) -> List['SourceItem']:
+async def fast_google_web_search(query: str, num: int = 6, timeout_sec: float = 3.5) -> List['SourceItem']:
     key = (query or "", int(num))
     now = time.perf_counter()
     cached = _cache_google.get(key)
     if cached and (now - cached[0] <= _CACHE_TTL_SEC):
         return cached[1]
     try:
-        res = await asyncio.wait_for(google_web_search(query, num=num, date_restrict=date_restrict), timeout=timeout_sec)
+        res = await asyncio.wait_for(google_web_search(query, num=num), timeout=timeout_sec)
     except Exception:
         res = []
     _cache_google[key] = (now, res)
@@ -394,6 +253,10 @@ async def fast_youtube(query: str, num: int = 2, timeout_sec: float = 3.0) -> Li
 # Overall time budget for a single multimodal request (soft)
 _TOTAL_BUDGET_SEC = float(os.getenv("MM_TOTAL_BUDGET_SEC", "9.0"))
 
+# YouTube result sizing (hard cap + default returned count)
+_YOUTUBE_MAX_RESULTS = max(1, min(int(os.getenv("MM_YOUTUBE_MAX_RESULTS", "5")), 10))
+_YOUTUBE_DEFAULT_RESULTS = max(1, min(int(os.getenv("MM_YOUTUBE_DEFAULT_RESULTS", "2")), _YOUTUBE_MAX_RESULTS))
+
 # -----------------------
 # DATA MODELS
 # -----------------------
@@ -428,7 +291,6 @@ class YouTubeItem(BaseModel):
     video_id: str
     channel: Optional[str] = None
     thumbnail_url: Optional[str] = None
-    embeddable: Optional[bool] = None
 
 class AssistantPayload(BaseModel):
     answer_markdown: str
@@ -447,6 +309,7 @@ class ChatResponse(BaseModel):
 # -----------------------
 # Option A: Keyword Router + Option C: Escalation + Tool Budget
 # -----------------------
+# NOTE: avoid overly generic triggers like "how to" which match many normal questions.
 _MEDIA_WORDS_RE = re.compile(r"\b(video|videos|youtube|yt|watch|tutorial|guide|how to|walkthrough)\b", re.I)
 _IMAGE_WORDS_RE = re.compile(r"\b(image|images|picture|pictures|photo|photos|png|jpg|jpeg|sticker|diagram|infographic|show me)\b", re.I)
 
@@ -454,7 +317,7 @@ _IMAGE_WORDS_RE = re.compile(r"\b(image|images|picture|pictures|photo|photos|png
 # - remove "now" and the generic "202[0-9]" trigger because it causes accidental web routing
 _WEB_WORDS_RE = re.compile(
     r"\b(latest|news|today|current|update|updated|recent|price|release|released|schedule|announcement|"
-    r"source|sources|link|links|cite|citation|according to|reference)\b",
+    r"source|sources|link|links|cite|citation|according to|resources|reference)\b",
     re.I,
 )
 
@@ -464,6 +327,20 @@ _YEAR_WEB_INTENT_RE = re.compile(r"\b(released|release|airing|air|premiere|premi
 _UNCERTAIN_RE = re.compile(
     r"\b(i (don't|do not) know|not sure|can't verify|cannot verify|unsure|might be|may be|could be|depends|"
     r"check online|look it up|search|verify|as of|recently)\b",
+    re.I,
+)
+
+_DEFLECTION_RE = re.compile(
+    r"\b(i can't|i cannot|i'm unable to|i am unable to|don't have access|do not have access|"
+    r"i don't have (real\s*-?time|realtime) data|i cannot browse|i can't browse|"
+    r"as an ai|i'm just an ai|cannot guarantee|no guarantees)\b",
+    re.I,
+)
+
+_FACT_SEEKING_RE = re.compile(
+    r"\b(who|what|when|where|which)\b|"
+    r"\b(how many|how much)\b|"
+    r"\b(compare|vs\.?|difference between)\b",
     re.I,
 )
 
@@ -494,18 +371,110 @@ def is_smalltalk_or_identity(message: str) -> bool:
         return False
     return bool(_SMALLTALK_RE.search(msg))
 
-# Follow-up intents like "elaborate more" / "apart from that" that
-# suggest the user wants additional information beyond what was already given.
-_MORE_DETAIL_FOLLOWUP_RE = re.compile(
-    r"\b(elaborate|eloborate|more detail|more details|tell me more|expand on|apart from that|other than that|anything else)\b",
-    re.I,
-)
-
 # ✅ FIX: Empty answer is NOT a signal that "web is needed"
 def looks_like_needs_web(answer_md: str) -> bool:
     if not answer_md or not answer_md.strip():
         return False
     return bool(_UNCERTAIN_RE.search(answer_md))
+
+def looks_like_deflection_or_nonanswer(answer_md: str) -> bool:
+    if not answer_md or not answer_md.strip():
+        return True
+    text = answer_md.strip()
+    if len(text) < 120:
+        return True
+    return bool(_DEFLECTION_RE.search(text))
+
+def is_fact_seeking_question(message: str) -> bool:
+    msg = (message or "").strip()
+    if not msg:
+        return False
+    # Avoid escalating purely general how-to/advice prompts.
+    if is_general_advice_question(msg) and not _FACTUAL_WEB_INTENT_RE.search(msg):
+        return False
+    return bool(_FACT_SEEKING_RE.search(msg) or _FACTUAL_WEB_INTENT_RE.search(msg))
+
+_FACTUAL_WEB_INTENT_RE = re.compile(
+    r"\b(as of|current|latest|updated|recent|today|news)\b|"
+    r"\b(price|cost|salary|net\s*worth|market\s*cap|population|gdp|revenue|statistics|statistic|percent|%|how many|how much|number of)\b|"
+    r"\b(is it true|true that|evidence|proof|study|research|paper)\b|"
+    r"\b(released|release date|premiere|premiered|announced|launch|deadline|schedule)\b|"
+    r"\b(20\d{2})\b",
+    re.I,
+)
+
+_GENERAL_ADVICE_RE = re.compile(
+    r"\b(how do i|how to|tips|advice|learn|improve|practice|study|start|begin|roadmap|plan)\b",
+    re.I,
+)
+
+_LEARNING_REQUEST_RE = re.compile(
+    r"\b(teach me|step\s*-?by\s*-?step|walk me through|tutorial|guide|documentation|docs|resources|course|learn)\b",
+    re.I,
+)
+
+def _has_web_providers() -> bool:
+    return bool((GOOGLE_API_KEY and GOOGLE_CSE_ID) or TAVILY_API_KEY)
+
+def is_general_advice_question(message: str) -> bool:
+    msg = (message or "").strip()
+    if not msg:
+        return False
+    return bool(_GENERAL_ADVICE_RE.search(msg))
+
+def wants_learning_resources(message: str) -> bool:
+    msg = (message or "").strip()
+    if not msg:
+        return False
+    return bool(_LEARNING_REQUEST_RE.search(msg))
+
+def infer_need_web_sources(
+    message: str,
+    answer_md: str,
+    user_flags: Dict[str, bool],
+    model_need_web: bool,
+    elapsed_sec: Optional[float] = None,
+) -> Tuple[bool, str]:
+    """Decide whether to fetch web sources.
+
+    Returns: (need_web, reason)
+    """
+    if not _has_web_providers():
+        return False, "no_providers"
+
+    if is_smalltalk_or_identity(message):
+        return False, "smalltalk_or_identity"
+
+    if user_flags.get("want_web"):
+        return True, "explicit_web_intent"
+
+    # Soft time-budget guard: avoid web escalation when we're already close to the total budget.
+    # (Still allow explicit requests via want_web above.)
+    if elapsed_sec is not None:
+        remaining = _TOTAL_BUDGET_SEC - float(elapsed_sec)
+        if remaining < 2.0:
+            return False, "budget_exhausted"
+
+    # Option C: for learning prompts, fetch sources proactively.
+    if wants_learning_resources(message):
+        return True, "learning_resources"
+
+    if model_need_web:
+        return True, "model_suggested"
+
+    if looks_like_needs_web(answer_md):
+        return True, "model_uncertain"
+
+    # If the draft answer is likely a deflection/non-answer AND the user asked a fact-seeking question,
+    # escalate to web even if the model didn't explicitly say it needs web.
+    if looks_like_deflection_or_nonanswer(answer_md) and is_fact_seeking_question(message):
+        return True, "draft_nonanswer_fact_seeking"
+
+    msg = (message or "").strip()
+    if msg and is_fact_seeking_question(msg) and not is_general_advice_question(msg):
+        return True, "factual_or_time_sensitive"
+
+    return False, "not_needed"
 
 def make_fallback_query(message: str, max_len: int = 120) -> str:
     if not message:
@@ -546,16 +515,12 @@ def apply_tool_budget(
     need_web: bool,
     need_img: bool,
     need_yt: bool,
-    is_first_turn: bool = False,
 ) -> Tuple[bool, bool, bool]:
-    # On the very first turn, don't override media flags here;
-    # higher-level logic in generate_cloud_structured controls behavior.
-    if not is_first_turn:
-        # Media only when user explicitly asked OR forced by env
-        if not (user_flags.get("want_images") or FORCE_IMAGES):
-            need_img = False
-        if not (user_flags.get("want_youtube") or FORCE_YOUTUBE):
-            need_yt = False
+    # Media only when user explicitly asked OR forced by env
+    if not (user_flags.get("want_images") or user_flags.get("auto_images") or FORCE_IMAGES):
+        need_img = False
+    if not (user_flags.get("want_youtube") or user_flags.get("auto_youtube") or FORCE_YOUTUBE):
+        need_yt = False
 
     # Web is handled by "hard gate" policy in caller
     return need_web, need_img, need_yt
@@ -563,91 +528,12 @@ def apply_tool_budget(
 def normalize_markdown_spacing(text: str) -> str:
     if not text:
         return ""
-    # Preserve paragraph separation: collapse 3+ blank lines into TWO, keep double newlines
-    text = re.sub(r"\n\s*\n\s*\n+", "\n\n", text)
-    # Optionally keep the blank line between a title and the following paragraph
-    keep_title_spacing = os.getenv("AV_KEEP_TITLE_SPACING", "1") == "1"
-    if not keep_title_spacing:
-        # Remove blank line between title + description (title line followed by blank, then capitalized desc)
-        text = re.sub(r"([^\n])\n\n([A-Z])", r"\1\n\2", text)
+    # Collapse ALL multiple blank lines into ONE
+    text = re.sub(r"\n\s*\n+", "\n\n", text)
+    # Remove blank line between title + description (title line followed by blank, then capitalized desc)
+    text = re.sub(r"([^\n])\n\n([A-Z])", r"\1\n\2", text)
     return text.strip()
 
-def enhance_markdown_for_ui(text: str) -> str:
-    """
-    Light post-processing to improve readability in the UI:
-    - Bold lines like "Title - details" -> "**Title** — details" (em dash)
-    - After a heading ending with ":", convert following standalone lines into markdown bullets
-      until another heading/section starts. Avoid double-bulleting existing list items.
-    """
-    if not text:
-        return ""
-
-    lines = text.splitlines()
-    out_lines: List[str] = []
-    in_list_after_colon = False
-    plain_list_mode = os.getenv("AV_PLAIN_LISTS", "1") == "1"  # render items as plain lines (no bullet markers)
-
-    def is_list_item(s: str) -> bool:
-        return bool(re.match(r"^\s*([-*•]|\d+\.|\d+\))\s+", s))
-
-    for i, line in enumerate(lines):
-        s = line.strip()
-
-        # Start or stop list mode based on headings
-        if s.endswith(":"):
-            in_list_after_colon = True
-            out_lines.append(line)
-            continue
-        if not s:
-            out_lines.append(line)
-            continue
-
-        # Normalize leading '*' bullets to '-' for consistent markdown lists
-        if re.match(r"^\s*\*+\s+", line):
-            line = re.sub(r"^\s*\*+\s+", "- ", line)
-            s = line.strip()
-
-        # Bold "Title - details" only when it precedes a list or within a list section
-        if not is_list_item(s):
-            m = re.match(r"^([A-Za-z0-9][^\-\n:]{0,80})\s*[-–—]\s+(.*)$", s)
-            if m:
-                apply_bold = in_list_after_colon
-                if not apply_bold:
-                    # Peek the next non-empty line; if it's a list item, then treat this as a title line
-                    next_non_empty = ""
-                    for j in range(i + 1, len(lines)):
-                        nn = (lines[j] or "").strip()
-                        if nn:
-                            next_non_empty = nn
-                            break
-                    if is_list_item(next_non_empty):
-                        apply_bold = True
-                if apply_bold:
-                    line = f"**{m.group(1).strip()}** — {m.group(2).strip()}"
-                    s = line
-
-        # Convert to list item or plain line if we're in a post-colon list section
-        if in_list_after_colon and not is_list_item(s):
-            # Heuristic: treat reasonably short standalone lines as items
-            if len(s) <= 160:
-                if plain_list_mode:
-                    # As plain paragraph item (no bullet marker), keep a bit of breathing room
-                    if out_lines and out_lines[-1].strip():
-                        out_lines.append("")
-                    line = s
-                else:
-                    line = f"- {s}"
-            else:
-                # Long line likely ends the list section
-                in_list_after_colon = False
-
-        # If we encounter another heading, end list mode
-        if s.endswith(":"):
-            in_list_after_colon = True
-
-        out_lines.append(line)
-
-    return "\n".join(out_lines).strip()
     
 
 # -----------------------
@@ -727,27 +613,15 @@ def build_web_evidence_block(sources: List[SourceItem], evidence_chunks: List[Di
     lines = ["[SOURCES]"]
     for i, s in enumerate(sources[:6], start=1):
         lines.append(f"[{i}] Title: {s.title}\n    URL: {s.url}")
-    # Prefer explicit evidence chunks when provided; otherwise include Google snippets
-    excerpt_lines: List[str] = []
     if evidence_chunks:
+        lines.append("\n[EVIDENCE EXCERPTS]")
         for j, ch in enumerate(evidence_chunks[:4], start=1):
             si = ch.get("source_index") or ""
             content = (ch.get("content") or "").strip()
             if not si or not content:
                 continue
             suffix = chr(ord("a") + (j - 1) % 26)
-            excerpt_lines.append(f"[{si}{suffix}] {content[:350]}")
-    else:
-        # Fallback: use available snippets from Google CSE results
-        for i, s in enumerate(sources[:6], start=1):
-            snip = (s.snippet or "").strip()
-            if snip:
-                excerpt_lines.append(f"[{i}a] {snip[:350]}")
-            if len(excerpt_lines) >= 4:
-                break
-    if excerpt_lines:
-        lines.append("\n[EVIDENCE EXCERPTS]")
-        lines.extend(excerpt_lines)
+            lines.append(f"[{si}{suffix}] {content[:350]}")
     block = "\n".join(lines).strip()
     if len(block) > MAX_EVIDENCE_CHARS:
         block = block[:MAX_EVIDENCE_CHARS] + "..."
@@ -756,13 +630,11 @@ def build_web_evidence_block(sources: List[SourceItem], evidence_chunks: List[Di
 # -----------------------
 # Google web sources (CSE)
 # -----------------------
-async def google_web_search(query: str, num: int = 6, date_restrict: Optional[str] = None) -> List[SourceItem]:
+async def google_web_search(query: str, num: int = 6) -> List[SourceItem]:
     if not (GOOGLE_API_KEY and GOOGLE_CSE_ID and query.strip()):
         return []
     url = "https://www.googleapis.com/customsearch/v1"
     params = {"key": GOOGLE_API_KEY, "cx": GOOGLE_CSE_ID, "q": query, "num": min(num, 10)}
-    if date_restrict:
-        params["dateRestrict"] = date_restrict
     async with httpx.AsyncClient(timeout=20) as client:
         r = await client.get(url, params=params)
         if r.status_code >= 400:
@@ -814,24 +686,6 @@ async def google_image_search(query: str, num: int = 4) -> List[Dict[str, str]]:
     return [x for x in results if x.get("image_url")]
 
 # -----------------------
-# Helpers: displayable image filtering
-# -----------------------
-def _is_displayable_image_url(url: str) -> bool:
-    if not url:
-        return False
-    u = url.lower().strip()
-    # Allow Pinterest CDN (pinimg.com) explicitly; block others from env list
-    host = urlparse(u).netloc
-    if host.endswith("pinimg.com"):
-        pass  # allow Pinterest CDN images
-    elif any(b in host for b in BLOCK_IMAGE_HOSTS):
-        return False
-    # Require a standard image extension
-    if not re.search(r"\.(jpg|jpeg|png|webp)(\?.*)?$", u):
-        return False
-    return True
-
-# -----------------------
 # Supabase storage upload for images
 # -----------------------
 async def supabase_upload_image_from_url(image_url: str, filename_hint: str) -> Optional[ImageItem]:
@@ -875,147 +729,42 @@ async def supabase_upload_image_from_url(image_url: str, filename_hint: str) -> 
 async def youtube_search(query: str, num: int = 2) -> List[YouTubeItem]:
     if not (YOUTUBE_API_KEY and query.strip()):
         return []
-    # First, search videos by query
-    search_url = "https://www.googleapis.com/youtube/v3/search"
-    search_params = {
+    url = "https://www.googleapis.com/youtube/v3/search"
+
+    # Enforce a strict upper bound regardless of caller to avoid returning huge lists.
+    max_results = max(1, min(int(num), _YOUTUBE_MAX_RESULTS, 50))
+    params = {
         "key": YOUTUBE_API_KEY,
         "part": "snippet",
         "q": query,
         "type": "video",
-        "maxResults": max(2, min(num * 3, 10)),  # search a few more to find embeddable ones
+        "maxResults": max_results,
         "safeSearch": "strict",
-        "videoEmbeddable": "true",
+        "order": "relevance",
     }
     async with httpx.AsyncClient(timeout=20) as client:
-        r = await client.get(search_url, params=search_params)
+        r = await client.get(url, params=params)
         if r.status_code >= 400:
             print("YOUTUBE SEARCH ERROR:", r.status_code, r.text[:300], flush=True)
             return []
-        search_data = r.json()
+        data = r.json()
 
-    ids: List[str] = []
-    snippets: Dict[str, Dict[str, Any]] = {}
-    for it in search_data.get("items", []):
+    out: List[YouTubeItem] = []
+    for it in data.get("items", []):
         vid = (it.get("id") or {}).get("videoId")
         snip = it.get("snippet") or {}
         if not vid:
             continue
-        ids.append(vid)
-        snippets[vid] = snip
-    if not ids:
-        return []
-
-    # Then, fetch embeddability status for these IDs
-    videos_url = "https://www.googleapis.com/youtube/v3/videos"
-    videos_params = {
-        "key": YOUTUBE_API_KEY,
-        "part": "status,snippet",
-        "id": ",".join(ids[:50]),
-    }
-    try:
-        async with httpx.AsyncClient(timeout=20) as client:
-            vr = await client.get(videos_url, params=videos_params)
-            if vr.status_code >= 400:
-                print("YOUTUBE VIDEOS ERROR:", vr.status_code, vr.text[:300], flush=True)
-                # Fallback: return basic results without embeddability filtering
-                pass
-            videos_data = vr.json() if vr.status_code < 400 else {"items": []}
-    except Exception:
-        videos_data = {"items": []}
-
-    embeddable_ids: List[str] = []
-    thumbnails: Dict[str, str] = {}
-    titles: Dict[str, str] = {}
-    channels: Dict[str, str] = {}
-    for v in videos_data.get("items", []):
-        vid = v.get("id")
-        status = v.get("status") or {}
-        snip = v.get("snippet") or {}
-        if not vid:
-            continue
-        if status.get("embeddable", True):
-            embeddable_ids.append(vid)
-            thumb = ((snip.get("thumbnails") or {}).get("medium") or {}).get("url")
-            thumbnails[vid] = thumb or f"https://i.ytimg.com/vi/{vid}/hqdefault.jpg"
-            titles[vid] = (snip.get("title") or snippets.get(vid, {}).get("title") or "YouTube video")
-            channels[vid] = (snip.get("channelTitle") or snippets.get(vid, {}).get("channelTitle") or None)
-
-    # If no embeddable info returned, fallback to using snippets list but avoid known blocked content
-    selected_ids = embeddable_ids or ids
-
-    # Fallback: if fewer than requested, try a second search ordered by viewCount
-    if len(selected_ids) < num:
-        fallback_params = dict(search_params)
-        fallback_params["order"] = "viewCount"
-        try:
-            async with httpx.AsyncClient(timeout=20) as client:
-                r2 = await client.get(search_url, params=fallback_params)
-                if r2.status_code < 400:
-                    data2 = r2.json()
-                    ids2: List[str] = []
-                    snippets2: Dict[str, Dict[str, Any]] = {}
-                    for it in data2.get("items", []):
-                        vid2 = (it.get("id") or {}).get("videoId")
-                        snip2 = it.get("snippet") or {}
-                        if not vid2:
-                            continue
-                        ids2.append(vid2)
-                        snippets2[vid2] = snip2
-                    # Fetch statuses for new IDs
-                    if ids2:
-                        videos_params2 = {
-                            "key": YOUTUBE_API_KEY,
-                            "part": "status,snippet",
-                            "id": ",".join(ids2[:50]),
-                        }
-                        async with httpx.AsyncClient(timeout=20) as client:
-                            vr2 = await client.get(videos_url, params=videos_params2)
-                            if vr2.status_code < 400:
-                                vids2 = (vr2.json() or {}).get("items", [])
-                                for v in vids2:
-                                    vid = v.get("id")
-                                    status = v.get("status") or {}
-                                    snip = v.get("snippet") or {}
-                                    if not vid:
-                                        continue
-                                    if status.get("embeddable", True):
-                                        if vid not in selected_ids:
-                                            selected_ids.append(vid)
-                                        thumb = ((snip.get("thumbnails") or {}).get("medium") or {}).get("url")
-                                        thumbnails[vid] = thumb or f"https://i.ytimg.com/vi/{vid}/hqdefault.jpg"
-                                        titles[vid] = (snip.get("title") or snippets2.get(vid, {}).get("title") or "YouTube video")
-                                        channels[vid] = (snip.get("channelTitle") or snippets2.get(vid, {}).get("channelTitle") or None)
-                                # Merge snippet fallbacks
-                                for vid in ids2:
-                                    if vid not in titles:
-                                        titles[vid] = (snippets2.get(vid, {}) or {}).get("title") or "YouTube video"
-                                    if vid not in channels:
-                                        channels[vid] = (snippets2.get(vid, {}) or {}).get("channelTitle")
-                                    if vid not in thumbnails:
-                                        thumb = (((snippets2.get(vid, {}) or {}).get("thumbnails") or {}).get("medium") or {}).get("url")
-                                        thumbnails[vid] = thumb or f"https://i.ytimg.com/vi/{vid}/hqdefault.jpg"
-        except Exception:
-            pass
-
-    out: List[YouTubeItem] = []
-    for vid in selected_ids[:max(2, num)]:
-        title = titles.get(vid) or (snippets.get(vid, {}) or {}).get("title") or "YouTube video"
-        channel = channels.get(vid) or (snippets.get(vid, {}) or {}).get("channelTitle")
-        thumb = thumbnails.get(vid) or (((snippets.get(vid, {}) or {}).get("thumbnails") or {}).get("medium") or {}).get("url")
-        if not thumb:
-            thumb = f"https://i.ytimg.com/vi/{vid}/hqdefault.jpg"
-        # Skip videos from blocked channels
-        if channel and any(b.lower() in (channel or "").lower() for b in BLOCK_YT_CHANNELS):
-            continue
         out.append(YouTubeItem(
-            title=title,
+            title=snip.get("title") or "YouTube video",
             video_id=vid,
             url=f"https://www.youtube.com/watch?v={vid}",
-            channel=channel,
-            thumbnail_url=thumb,
-            embeddable=True if vid in embeddable_ids else None,
+            channel=snip.get("channelTitle"),
+            thumbnail_url=((snip.get("thumbnails") or {}).get("medium") or {}).get("url"),
         ))
-    return out
+
+    # Final guard (belt-and-suspenders) to ensure we never exceed max_results.
+    return out[:max_results]
 
 # -----------------------
 # Helpers: extract JSON from model
@@ -1075,8 +824,8 @@ def cleanup_model_text(text: str) -> str:
     ]
     for pat in schema_keys:
         out = re.sub(pat, "", out, flags=re.MULTILINE)
-    # Remove inline citation tokens like [[cite:1]] or [[cite:4, 6]] (UI shows sources separately)
-    out = re.sub(r"\[\[\s*cite\s*:\s*[^\]]+\]\]", "", out, flags=re.IGNORECASE)
+    # Remove inline citation tokens like [[cite:1]] (sources will be shown separately)
+    out = re.sub(r"\[\[\s*cite\s*:\s*\d+\s*\]\]", "", out, flags=re.IGNORECASE)
     # Strip leaked special tokens (e.g., <|eot_id|>, <|start_header_id|>)
     out = re.sub(r"<\|.*?\|>", "", out)
     # Remove [USER] and [ASSISTANT] tags (model echoes)
@@ -1107,132 +856,6 @@ def strip_meta_prompts(text: str) -> str:
 
     return re.sub(r"\n{3,}", "\n\n", out).strip()
 
-# -----------------------
-# Context extraction helpers for media follow-ups
-# -----------------------
-def extract_titles_from_answer(text: str) -> List[str]:
-    """Extract likely title candidates from an assistant answer.
-    Prefers bolded titles ("**Title** — details") and numbered list items
-    that look like proper nouns.
-    """
-    titles: List[str] = []
-    if not text:
-        return titles
-
-    for line in (text or "").splitlines():
-        s = (line or "").strip()
-        if not s:
-            continue
-        m_bold = re.match(r"^\*\*(.+?)\*\*\s+—\s+.*$", s)
-        if m_bold:
-            titles.append((m_bold.group(1) or "").strip())
-            continue
-        m_num = re.match(r"^\s*\d+[\.)]\s*([A-Z][A-Za-z0-9'&\- ]{2,})(?::|\s+-)\s+.*$", s)
-        if m_num:
-            titles.append((m_num.group(1) or "").strip())
-            continue
-        m_tc = re.match(r"^([A-Z][A-Za-z0-9'&\- ]{2,})\s*:\s+.*$", s)
-        if m_tc:
-            titles.append((m_tc.group(1) or "").strip())
-
-    seen: set = set()
-    uniq: List[str] = []
-    for t in titles:
-        k = t.lower()
-        if k in seen:
-            continue
-        seen.add(k)
-        uniq.append(t)
-    return uniq
-
-async def fetch_last_assistant_message(session_id: Optional[str]) -> str:
-    """Fetch the most recent assistant message for a session from Supabase."""
-    if not (SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY and session_id):
-        return ""
-    headers = {
-        "apikey": SUPABASE_SERVICE_ROLE_KEY,
-        "Authorization": f"Bearer {SUPABASE_SERVICE_ROLE_KEY}",
-    }
-    url = (
-        f"{SUPABASE_URL}/rest/v1/chat_messages"
-        f"?session_id=eq.{session_id}&role=eq.assistant&select=content,meta&order=created_at.desc&limit=1"
-    )
-    try:
-        async with httpx.AsyncClient(timeout=10) as client:
-            r = await client.get(url, headers=headers)
-            if r.status_code >= 400:
-                return ""
-            data = r.json() or []
-    except Exception:
-        return ""
-    if not data:
-        return ""
-    row = data[0] if isinstance(data[0], dict) else {}
-    content = (row.get("content") or "").strip()
-    meta = row.get("meta") or {}
-    try:
-        if isinstance(meta, str):
-            meta = json.loads(meta)
-    except Exception:
-        meta = {}
-    ans_md = (meta.get("answer_markdown") or "").strip() if isinstance(meta, dict) else ""
-    return ans_md or content
-
-async def fetch_recent_session_pairs(session_id: Optional[str], max_pairs: int = 2) -> List[Tuple[str, str]]:
-    """Return up to `max_pairs` of (query, response) pairs for the session.
-
-    Notes:
-    - Supabase `queries` table uses `transcribed_text` for the user query text.
-    - We still fall back to `question` for legacy schemas.
-    """
-    if not (SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY and session_id):
-        return []
-    headers = {
-        "apikey": SUPABASE_SERVICE_ROLE_KEY,
-        "Authorization": f"Bearer {SUPABASE_SERVICE_ROLE_KEY}",
-        "Content-Type": "application/json",
-    }
-    # Prefer transcribed_text; include question for backward compatibility
-    q_url = (
-        f"{SUPABASE_URL}/rest/v1/queries"
-        f"?session_id=eq.{session_id}&select=id,transcribed_text,question,created_at&order=created_at.desc&limit={max_pairs}"
-    )
-    try:
-        async with httpx.AsyncClient(timeout=12) as client:
-            q_resp = await client.get(q_url, headers=headers)
-            if q_resp.status_code >= 400:
-                return []
-            q_rows = q_resp.json() or []
-    except Exception:
-        return []
-
-    pairs: List[Tuple[str, str]] = []
-    for qr in q_rows:
-        qid = qr.get("id")
-        # Use transcribed_text (current schema), fallback to question
-        q_text = (qr.get("transcribed_text") or qr.get("question") or "").strip()
-        if not qid:
-            continue
-        r_url = (
-            f"{SUPABASE_URL}/rest/v1/responses"
-            f"?query_id=eq.{qid}&select=response_text,content,created_at&order=created_at.desc&limit=1"
-        )
-        try:
-            async with httpx.AsyncClient(timeout=10) as client:
-                r_resp = await client.get(r_url, headers=headers)
-                if r_resp.status_code >= 400:
-                    continue
-                r_rows = r_resp.json() or []
-        except Exception:
-            continue
-        r_text = ""
-        if r_rows:
-            r = r_rows[0] if isinstance(r_rows[0], dict) else {}
-            r_text = (r.get("response_text") or r.get("content") or "").strip()
-        pairs.append((q_text, r_text))
-    return pairs
-
-
 def build_prompt(
     message: str,
     history: List[HistoryItem],
@@ -1255,47 +878,23 @@ def build_prompt(
 
     # LLaMA-3.3 Instruct chat headers
     if chat_mode:
-        # Minimal system + recent history (compact) + current user
-        tone_lines = ""
-        # Configure friendly tone + emoji usage without hardcoding specific emojis everywhere
-        if AV_EMOJI_STYLE != "off":
-            tone_lines += (
-                "Adopt a warm, friendly tone. You may add a single light emoji in an opening or closing when helpful "
-                "(e.g., 😊 or 🤖). Keep emoji usage minimal and skip them for formal, code, or JSON-only answers.\n"
-            )
-        if AV_FRIENDLY_OPENERS:
-            tone_lines += (
-                "If the question is casual, you may begin with a brief friendly greeting. Vary the phrasing across answers, "
-                "do not repeat the same greeting, and sometimes omit it entirely. For direct academic questions, begin with the explanation.\n"
-            )
-        # Optional closings guidance for variety without boilerplate
-        tone_lines += (
-            "Optionally include one short closing line inviting follow-up (e.g., ask if more detail is needed). Vary its wording, "
-            "avoid generic boilerplate, and omit closings for formal, code, or long answers.\n"
-        )
-
         p = (
             "<|begin_of_text|>"
             "<|start_header_id|>system<|end_header_id|>\n"
-            "You are AskVox, a friendly and helpful AI assistant. "
-            "Explain topics in a natural, human, tutor-like way. "
-            "Prefer clear paragraph-style explanations with context, reasoning, and examples. "
-            "Use bullet points or numbered lists only when they genuinely improve clarity "
-            "(such as rankings, comparisons, or step-by-step instructions). "
-            "When the request involves rankings, comparisons, or step-by-step instructions, respond with a numbered or bulleted list rather than plain paragraphs. "
-            "For rankings or 'top N' queries, present a numbered list starting at 1 with ONE item per line, and include a short explanation for each item.\n"
-            "Use concise paragraphs. "
-            "If a line is in the form 'Title - details', render it as '**Title** — details'. "
-            "Avoid giant wall-of-text paragraphs.\n"
-            + tone_lines +
+            "You are AskVox, a friendly, knowledgeable AI assistant. "
+            "Provide clear, detailed, and helpful responses with examples when useful.\n"
             "<|eot_id|>"
         )
 
-        # Compact recent history
-        filtered_history: List[HistoryItem] = []
+        # Include recent history so the model gets conversational context.
+        filtered_history = []
         seen = set()
         for h in history:
             if not h.content or not h.content.strip():
+                continue
+            # If the caller already included the current user message in history,
+            # avoid duplicating it (we append safe_message at the end).
+            if h.role == "user" and h.content.strip() == safe_message.strip():
                 continue
             key = (h.role, h.content.strip())
             if key in seen:
@@ -1304,12 +903,18 @@ def build_prompt(
             filtered_history.append(h)
         filtered_history = filtered_history[-4:]
 
+        print(
+            "🧠 CHAT_MODE prompt context:",
+            {"history_items_included": len(filtered_history)},
+            flush=True,
+        )
+
         remaining_history_chars = MAX_HISTORY_CHARS
         for h in filtered_history:
+            role = "user" if h.role == "user" else "assistant"
             if remaining_history_chars <= 0:
                 break
-            role = "user" if h.role == "user" else "assistant"
-            content = _truncate(h.content, 240)
+            content = _truncate(h.content, 260)
             if len(content) > remaining_history_chars:
                 content = _truncate(content, max(0, remaining_history_chars))
             remaining_history_chars -= len(content)
@@ -1325,6 +930,7 @@ def build_prompt(
         )
         if len(p) > MAX_PROMPT_CHARS:
             p = p[:MAX_PROMPT_CHARS] + "..."
+        print("🧠 CHAT_MODE prompt length:", len(p), flush=True)
         print("\n==== PROMPT SENT TO MODEL ====".ljust(40, "="), flush=True)
         print(p[:1200] + ("..." if len(p) > 1200 else ""), flush=True)
         print("="*40, flush=True)
@@ -1350,6 +956,10 @@ def build_prompt(
     seen = set()
     for h in history:
         if not h.content or not h.content.strip():
+            continue
+        # If the caller already included the current user message in history,
+        # avoid duplicating it (we append safe_message at the end).
+        if h.role == "user" and h.content.strip() == safe_message.strip():
             continue
         key = (h.role, h.content.strip())
         if key in seen:
@@ -1480,11 +1090,7 @@ async def call_runpod_job_prompt(prompt: str) -> str:
     payload = {"input": {"prompt": prompt, "stop": ["<|eot_id|>"]}}
 
     try:
-        # Debug: show a preview of the prompt sent to RunPod
         print(f"🚀 Submitting RunPod job: {RUNPOD_RUN_ENDPOINT}", flush=True)
-        print("—— Prompt Preview (first 900 chars) ——", flush=True)
-        print((prompt or "")[:900], flush=True)
-        print("—— End Preview ——", flush=True)
         async with httpx.AsyncClient(timeout=httpx.Timeout(connect=10.0, read=30.0, write=10.0, pool=10.0)) as client:
             run_resp = await client.post(RUNPOD_RUN_ENDPOINT, json=payload, headers=headers)
     except httpx.RequestError as e:
@@ -1761,91 +1367,8 @@ async def generate_cloud_structured(
 
     timeout = httpx.Timeout(connect=10.0, read=300.0, write=10.0, pool=10.0)
     trimmed_history = history[-max_history:] if max_history and max_history > 0 else []
-    is_first_turn = len(trimmed_history) == 0
-    # If no client history provided but we have a session, keep current behavior (no fetch here)
     user_flags = keyword_router(message)
     chat_flag = not user_flags.get("want_web", False)
-
-    # Debug: show the history window used for context (up to 4 entries)
-    def _preview(s: str, n: int = 180) -> str:
-        return (s or "").replace("\n", " ")[:n]
-    try:
-        print(
-            "HISTORY_WINDOW:",
-            [{"role": getattr(h, "role", None), "content": _preview(getattr(h, "content", ""))} for h in (trimmed_history or [])],
-            flush=True,
-        )
-    except Exception:
-        pass
-
-    # Build context base from Supabase pairs when follow-up is generic
-    def _is_generic_followup(s: str) -> bool:
-        t = (s or "").strip()
-        if not t:
-            return True
-        has_media_word = bool(_MEDIA_WORDS_RE.search(t) or _IMAGE_WORDS_RE.search(t))
-        has_pronoun_ref = bool(re.search(r"\b(it|those|them|that|this)\b", t, re.I))
-        has_more = bool(re.search(r"\bmore\b", t, re.I))
-        # Treat things like "can show me more videos?" as generic media follow-ups
-        if has_media_word and (has_pronoun_ref or has_more):
-            return True
-        # Very short and mentions media words => likely generic
-        if len(t) < 10 and has_media_word:
-            return True
-        return False
-
-    context_query_base = None
-    if _is_generic_followup(message) and session_id:
-        pairs = await fetch_recent_session_pairs(session_id, max_pairs=2)
-        try:
-            print(
-                "SUPABASE RECENT PAIRS:",
-                [{"q": _preview(q), "r": _preview(r)} for (q, r) in (pairs or [])],
-                flush=True,
-            )
-        except Exception:
-            pass
-        # Prefer a title extracted from last response; else last query text
-        last_resp = next((p[1] for p in pairs if (p[1] or "").strip()), "")
-        last_query = next((p[0] for p in pairs if (p[0] or "").strip()), "")
-        title_hint = None
-        if last_resp:
-            titles = extract_titles_from_answer(last_resp)
-            if titles:
-                title_hint = titles[0]
-        # If Supabase lacks pairs, fall back to last non-generic user message in history
-        if not last_query:
-            hist_user_msgs: List[str] = [
-                (h.content or "").strip()
-                for h in (trimmed_history or [])
-                if getattr(h, "role", None) == "user" and (h.content or "").strip()
-            ]
-            def _is_generic(s: str) -> bool:
-                t = (s or "").strip()
-                if not t:
-                    return True
-                has_media_word = bool(_MEDIA_WORDS_RE.search(t) or _IMAGE_WORDS_RE.search(t))
-                has_pronoun_ref = bool(re.search(r"\b(it|those|them|that|this)\b", t, re.I))
-                if has_media_word and has_pronoun_ref:
-                    return True
-                if len(t) < 10 and has_media_word:
-                    return True
-                return False
-            for s in reversed(hist_user_msgs):
-                if not _is_generic(s):
-                    last_query = s
-                    break
-            if not last_query and hist_user_msgs:
-                last_query = hist_user_msgs[0]
-        context_query_base = make_fallback_query(title_hint or last_query or article_title or message, max_len=120)
-        try:
-            print(
-                "CONTEXT_BASE:",
-                {"title_hint": title_hint, "last_query": _preview(last_query), "context_query_base": context_query_base},
-                flush=True,
-            )
-        except Exception:
-            pass
 
 
     # ✅ Draft answer first (no tools yet)
@@ -1898,107 +1421,69 @@ async def generate_cloud_structured(
     plan["image_query"] = (plan.get("image_query") or "").strip()
     plan["youtube_query"] = (plan.get("youtube_query") or "").strip()
     plan["answer_markdown"] = answer_md
-    
-    # -----------------------
-    # Sanity checker: use fresh Google sources to refine answer (non-JSON)
-    # -----------------------
-    sanity_sources: List[SourceItem] = []
-    sanity_q_used: str = ""
-    try:
-        current_year = datetime.now(timezone.utc).year
-        msg_text = (message or "")
-        years = extract_years(msg_text + " " + (answer_md or ""))
-        recency_intent = bool(re.search(r"\b(now|currently|today|this year|latest|trending|airing|released|premiered)\b", msg_text, re.I))
-        mentions_future = any(int(y) > MODEL_KNOWLEDGE_CUTOFF_YEAR for y in years if y.isdigit())
-        should_sanity = recency_intent or mentions_future or (current_year > MODEL_KNOWLEDGE_CUTOFF_YEAR)
-        if should_sanity:
-            sanity_q = build_sanity_web_query(message, answer_md, context_query_base=None)
-            sanity_q_used = sanity_q
-            # Prefer last year for recency queries; no domain-specific hardcoding
-            sanity_sources = await fast_google_web_search(sanity_q, num=7, date_restrict="y[1]")
-            if not sanity_sources:
-                sanity_sources = await fast_google_web_search(sanity_q, num=7)
-            if sanity_sources:
-                sanity_block = build_web_evidence_block(sanity_sources, [])
-                prompt2 = build_second_pass_prompt_chat(
-                    message=message,
-                    history=trimmed_history,
-                    original_answer=answer_md,
-                    web_evidence_block=sanity_block,
-                    article_block=article_block,
-                )
-                refined_raw = ""
-                try:
-                    if RUNPOD_RUN_ENDPOINT:
-                        refined_raw = await call_runpod_job_prompt(prompt2)
-                    else:
-                        refined_raw = await call_cloudrun(prompt2, timeout=timeout)
-                except Exception:
-                    refined_raw = ""
-
-                plan2 = extract_json(refined_raw)
-                refined_md = (plan2.get("answer_markdown") or "").strip() if plan2 else (refined_raw or "").strip()
-                if refined_md:
-                    answer_md = refined_md
-                    plan["answer_markdown"] = answer_md
-                    print("🧩 SECOND_PASS_APPLIED (sanity)", {"query": sanity_q[:120], "len": len(answer_md)}, flush=True)
-    except Exception:
-        pass
 
     # Model suggestions (soft)
-    need_web = bool(plan.get("need_web_sources"))
+    model_need_web = bool(plan.get("need_web_sources"))
     need_img = bool(plan.get("need_images"))
     need_yt = bool(plan.get("need_youtube"))
     web_q = (plan.get("web_query") or "").strip()
     img_q = (plan.get("image_query") or "").strip()
     yt_q = (plan.get("youtube_query") or "").strip()
 
-    # For the very first query in a session (non-smalltalk),
-    # default to surfacing both images and videos unless caller disables via env.
-    if is_first_turn and not is_smalltalk_or_identity(message):
-        if not need_img:
-            need_img = True
-        if not need_yt:
-            need_yt = True
-
-    # If sanity sources were fetched, also surface images and auto-enable YouTube for display
-    if 'sanity_sources' in locals() and sanity_sources:
-        # Prefer enabling images when fresh sources exist
-        if not need_img:
-            need_img = True
-        # Auto-enable YouTube when sanity found fresh web evidence
-        if not need_yt:
-            need_yt = True
-        if not img_q:
-            # Derive a neutral image query from the latest answer/title or sanity query
-            title_candidates = []
-            try:
-                title_candidates = extract_titles_from_answer(answer_md)
-            except Exception:
-                title_candidates = []
-            base_iq = (title_candidates[0] if title_candidates else (sanity_q_used or (context_query_base or message)))
-            # Avoid hard-coding "poster"; keep it close to the semantic topic
-            img_q = str(base_iq or "").strip()[:120]
-
     # ✅ Deterministic keyword routing (still used for images/youtube decisions)
     user_flags = keyword_router(message)
 
-    # ✅ Gate web sources for smalltalk/identity queries
+    # Option C: for learning prompts, auto-enable web + YouTube.
+    auto_learning_media = wants_learning_resources(message)
+    if auto_learning_media:
+        user_flags["auto_youtube"] = True
+        user_flags["auto_images"] = False
+        need_yt = True
+
+    # ✅ Smart web decision: explicit intent OR factual/time-sensitive OR model uncertainty
+    need_web, need_web_reason = infer_need_web_sources(
+        message=message,
+        answer_md=answer_md,
+        user_flags=user_flags,
+        model_need_web=model_need_web,
+        elapsed_sec=(time.perf_counter() - t_start),
+    )
+
+    # Fetch web sources only when the smart decision says we need them
     sources: List[SourceItem] = []
     evidence_chunks: List[Dict[str, str]] = []
-    skip_web = chat_flag
-    if skip_web:
-        need_web = False
+    if not need_web:
         plan["need_web_sources"] = False
-        # Clarify why web is skipped: the user didn't explicitly ask for web sources
-        print("🔕 Skipping web sources (no explicit web intent)", {"message": message[:80]}, flush=True)
+        print(
+            "🔕 Skipping web sources",
+            {"reason": need_web_reason, "message": message[:80]},
+            flush=True,
+        )
+
+        # If we're skipping only because we're near budget, still fetch a small set of sources quickly
+        # (no second-pass generation) so the UI can show helpful links.
+        if need_web_reason == "budget_exhausted" and _has_web_providers():
+            web_q = enforce_web_query_constraints(message, web_q or message)
+            g_task = asyncio.create_task(fast_google_web_search(web_q, num=7, timeout_sec=2.5))
+            t_task = asyncio.create_task(fast_tavily(web_q, max_sources=6, timeout_sec=3.0))
+            g_res, (tav_sources, tav_chunks) = await asyncio.gather(g_task, t_task)
+            sources = g_res or []
+            evidence_chunks = tav_chunks or []
+            if tav_sources:
+                seen = {s.url.lower(): s for s in sources if s.url}
+                for s in tav_sources:
+                    key = (s.url or "").lower()
+                    if key and key not in seen:
+                        sources.append(s)
+                        seen[key] = s
+            if sources:
+                print(
+                    "🔎 Budget-limited sources fetched (no second pass)",
+                    {"count": len(sources), "web_q": web_q},
+                    flush=True,
+                )
     else:
-        base_for_web = (context_query_base or web_q or message)
-        # For follow-ups like "elaborate more" / "apart from that",
-        # bias the web query toward additional/new information beyond what was already given.
-        if _MORE_DETAIL_FOLLOWUP_RE.search(message or ""):
-            base_for_web = f"{base_for_web} additional details new information not already mentioned"[:180]
-        web_q = enforce_web_query_constraints(message, base_for_web)
+        web_q = enforce_web_query_constraints(message, web_q or message)
         g_task = asyncio.create_task(google_web_search(web_q, num=7))
         t_task = asyncio.create_task(internet_rag_search_and_extract(web_q, max_sources=6))
         g_res, (tav_sources, tav_chunks) = await asyncio.gather(g_task, t_task)
@@ -2011,6 +1496,15 @@ async def generate_cloud_structured(
                 if key and key not in seen:
                     sources.append(s)
                     seen[key] = s
+
+        if not sources:
+            need_web = False
+            plan["need_web_sources"] = False
+            print(
+                "🔕 Web requested but no sources available",
+                {"reason": need_web_reason, "web_q": web_q},
+                flush=True,
+            )
     if FORCE_IMAGES:
         need_img = True
     if FORCE_YOUTUBE:
@@ -2021,86 +1515,21 @@ async def generate_cloud_structured(
         need_img = True
     if user_flags.get("want_youtube"):
         need_yt = True
-    # Image-only follow-up: ensure YouTube is OFF when user did not ask for it
-    if user_flags.get("want_images") and not user_flags.get("want_youtube"):
-        need_yt = False
-
-    # After the first turn in a session, only show images/YouTube
-    # if the user explicitly asks for them (or FORCE_* is enabled).
-    if not is_first_turn:
-        if not user_flags.get("want_images") and not FORCE_IMAGES:
-            need_img = False
-        if not user_flags.get("want_youtube") and not FORCE_YOUTUBE:
-            need_yt = False
-
-    # Build base topic from the last non-generic user message or Supabase pairs
-    user_msgs: List[str] = [
-        (h.content or "").strip()
-        for h in (trimmed_history or [])
-        if getattr(h, "role", None) == "user" and (h.content or "").strip()
-    ]
-
-    def _is_generic_followup(s: str) -> bool:
-        t = (s or "").strip()
-        if not t:
-            return True
-        # Use existing media identifiers + pronoun/more reference to detect generic follow-ups
-        has_media_word = bool(_MEDIA_WORDS_RE.search(t) or _IMAGE_WORDS_RE.search(t))
-        has_pronoun_ref = bool(re.search(r"\b(it|those|them|that|this)\b", t, re.I))
-        has_more = bool(re.search(r"\bmore\b", t, re.I))
-        if has_media_word and (has_pronoun_ref or has_more):
-            return True
-        # Very short and mentions media words => likely generic
-        if len(t) < 10 and has_media_word:
-            return True
-        return False
-
-    base_topic_src = None
-    for s in reversed(user_msgs):
-        if not _is_generic_followup(s):
-            base_topic_src = s
-            break
-    if not base_topic_src and user_msgs:
-        base_topic_src = user_msgs[0]
-    base_topic = make_fallback_query((context_query_base or base_topic_src or article_title or message), max_len=100)
 
     # web_q already enforced; prepare sensible fallback if empty
     if not web_q:
-        web_q = make_fallback_query(base_topic or (article_title or message), max_len=120)
+        web_q = make_fallback_query(article_title or message, max_len=120)
 
     if need_img and not img_q:
-        img_q = f"{base_topic} photos"[:120]
+        img_q = make_fallback_query(message, max_len=120)
     if need_yt and not yt_q:
-        yt_q = f"{base_topic} highlights"[:120]
-
-    # Inline refinement for generic media follow-ups using current answer/title context
-    if need_img or need_yt:
-        # Detect generic phrases
-        def _is_generic(q: str) -> bool:
-            s = (q or "").strip().lower()
-            return not s or re.match(r"^(videos?|images?|pictures?|photos?)\b", s or "") is not None or len(s) < 8
-
-        # Prefer a concrete topic from the current answer (e.g., show title)
-        topic_title = None
-        try:
-            title_list = extract_titles_from_answer(answer_md)
-            if title_list:
-                topic_title = title_list[0]
-        except Exception:
-            topic_title = None
-        if not topic_title:
-            # Fallbacks: sanity query, base topic, or message
-            topic_title = (sanity_q_used or base_topic or context_query_base or message)
-
-        if need_img and _is_generic(img_q):
-            img_q = f"{topic_title} poster stills promotional photos cast".strip()[:120]
-        if need_yt and _is_generic(yt_q):
-            yt_q = f"{topic_title} official trailer clips".strip()[:120]
+        yt_q = make_fallback_query(message, max_len=120)
 
     print(
         "ROUTED FLAGS:",
         {
             "need_web": need_web,
+            "need_web_reason": need_web_reason,
             "web_q": web_q,
             "need_img": need_img,
             "img_q": img_q,
@@ -2111,23 +1540,10 @@ async def generate_cloud_structured(
         },
         flush=True,
     )
-    print("MEDIA QUERIES:", {"base_topic": base_topic, "img_q": img_q, "yt_q": yt_q}, flush=True)
 
     # Keep previously fetched sources; initialize media containers
     images: List[ImageItem] = []
     youtube: List[YouTubeItem] = []
-
-    # Merge sanity sources (if any) into payload sources later
-    if 'sanity_sources' in locals() and sanity_sources:
-        try:
-            existing = {s.url.lower(): s for s in sources if s.url}
-            for s in sanity_sources:
-                key = (s.url or "").lower()
-                if key and key not in existing:
-                    sources.append(s)
-                    existing[key] = s
-        except Exception:
-            pass
 
     # 3) Web evidence + second pass answer (only if need_web)
     if need_web and web_q:
@@ -2182,7 +1598,7 @@ async def generate_cloud_structured(
                 web_q = enforce_web_query_constraints(message, web_q2)
 
         # ✅ Re-apply tool budget to stop model from forcing media unexpectedly
-        need_web, need_img, need_yt = apply_tool_budget(user_flags, need_web, need_img, need_yt, is_first_turn=is_first_turn)
+        need_web, need_img, need_yt = apply_tool_budget(user_flags, need_web, need_img, need_yt)
 
         # Fallbacks again
         if need_img and not img_q:
@@ -2192,71 +1608,9 @@ async def generate_cloud_structured(
 
     # 4) Images
     if need_img and img_q:
-        # Prefer deriving multiple specific queries from curated titles
-        def _is_generic(q: str) -> bool:
-            s = (q or "").strip().lower()
-            return not s or re.match(r"^(images?|pictures?|photos?)\b", s or "") is not None or len(s) < 8
-
-        title_list: List[str] = []
-        try:
-            title_list = extract_titles_from_answer(answer_md) or []
-        except Exception:
-            title_list = []
-        if (not title_list) and session_id:
-            try:
-                last_resp_text = await fetch_last_assistant_message(session_id)
-                title_list = extract_titles_from_answer(last_resp_text) or []
-            except Exception:
-                title_list = []
-
-        img_results: List[Dict[str, str]] = []
-        if title_list and _is_generic(img_q):
-            # Build per-title queries; stop when we have enough images
-            queries = [
-                f"{t} poster stills promotional photos cast"[:120]
-                for t in title_list[:5]
-            ]
-            seen_urls: set = set()
-            for q in queries:
-                chunk = await fast_images(q, num=4)
-                # Filter and de-duplicate
-                for it in chunk:
-                    u = it.get("image_url") or ""
-                    if not _is_displayable_image_url(u):
-                        continue
-                    if u and u not in seen_urls:
-                        img_results.append(it)
-                        seen_urls.add(u)
-                if len(img_results) >= 4:
-                    break
-            # If still thin, fall back to the original img_q
-            if len(img_results) < 2:
-                base_q = re.sub(r"\b(photos?|images?)\b", "", img_q, flags=re.I).strip()
-                fallback_q = f"{base_q} wallpaper hd"[:120]
-                more = await fast_images(fallback_q, num=6)
-                more = [it for it in more if _is_displayable_image_url(it.get("image_url", ""))]
-                seen_urls = {it.get("image_url") for it in img_results}
-                for it in more:
-                    u = it.get("image_url")
-                    if u and u not in seen_urls:
-                        img_results.append(it)
-                        seen_urls.add(u)
-        else:
-            # Single-query path (non-generic or no titles)
-            img_results = await fast_images(img_q, num=4)
-            img_results = [it for it in img_results if _is_displayable_image_url(it.get("image_url", ""))]
-            if len(img_results) < 2:
-                base_q = re.sub(r"\b(photos?|images?)\b", "", img_q, flags=re.I).strip()
-                fallback_q = f"{base_q} wallpaper hd"[:120]
-                more = await fast_images(fallback_q, num=6)
-                more = [it for it in more if _is_displayable_image_url(it.get("image_url", ""))]
-                seen_urls = {it.get("image_url") for it in img_results}
-                for it in more:
-                    u = it.get("image_url")
-                    if u and u not in seen_urls:
-                        img_results.append(it)
-                        seen_urls.add(u)
+        img_results = await fast_images(img_q, num=4)
         print("IMAGE RESULTS:", len(img_results), flush=True)
+
         for it in img_results[:4]:
             if not USE_SUPABASE_STORAGE_FOR_IMAGES:
                 images.append(ImageItem(
@@ -2284,30 +1638,15 @@ async def generate_cloud_structured(
 
     # 5) YouTube
     if need_yt and yt_q:
-        youtube = await fast_youtube(yt_q, num=2)
-        print("YOUTUBE RESULTS:", len(youtube), flush=True)
-        # If none after filtering, disable embed to avoid broken UI but keep sources promotion
-        if not youtube:
-            need_yt = False
-
-    # Optional: prepend a short line when user explicitly asked for media
-    try:
-        if answer_md and (images or youtube):
-            if user_flags.get("want_youtube") or user_flags.get("want_images"):
-                media_parts: List[str] = []
-                if youtube:
-                    media_parts.append("videos")
-                if images:
-                    media_parts.append("images")
-                if media_parts:
-                    if len(media_parts) == 2:
-                        media_phrase = " and ".join(media_parts)
-                    else:
-                        media_phrase = media_parts[0]
-                    lead_in = f"Sure, here are some {media_phrase} I found based on your request.\n\n"
-                    answer_md = lead_in + answer_md
-    except Exception:
-        pass
+        youtube = await fast_youtube(yt_q, num=_YOUTUBE_DEFAULT_RESULTS)
+        if len(youtube) > _YOUTUBE_DEFAULT_RESULTS:
+            youtube = youtube[:_YOUTUBE_DEFAULT_RESULTS]
+        print(
+            "YOUTUBE RESULTS:",
+            len(youtube),
+            {"requested": _YOUTUBE_DEFAULT_RESULTS, "cap": _YOUTUBE_MAX_RESULTS},
+            flush=True,
+        )
 
     # 6) Final fallback if answer_md still empty
     if not answer_md:
@@ -2320,29 +1659,6 @@ async def generate_cloud_structured(
     answer_md = cleanup_model_text(answer_md)
     answer_md = strip_meta_prompts(answer_md)
     answer_md = normalize_markdown_spacing(answer_md)
-    answer_md = enhance_markdown_for_ui(answer_md)
-
-    # 8) Promote media (YouTube/images) into generic sources for clickable links in UI
-    try:
-        if os.getenv("PROMOTE_MEDIA_TO_SOURCES", "1") == "1":
-            merged: Dict[str, SourceItem] = {}
-            for s in sources or []:
-                if s.url:
-                    merged[s.url.lower()] = s
-            for y in youtube or []:
-                url = y.url or (f"https://www.youtube.com/watch?v={y.video_id}" if getattr(y, 'video_id', None) else "")
-                if url and url.lower() not in merged:
-                    title = y.title or "YouTube video"
-                    merged[url.lower()] = SourceItem(title=title, url=url, snippet=None, icon_url=y.thumbnail_url)
-            for im in images or []:
-                url = im.source_url or im.url
-                if url and url.lower() not in merged:
-                    title = im.alt or "Image"
-                    merged[url.lower()] = SourceItem(title=title, url=url, snippet=None, icon_url=None)
-            sources = list(merged.values())
-    except Exception:
-        # Never fail the request because of promotion logic
-        pass
 
     return AssistantPayload(
         answer_markdown=answer_md,
