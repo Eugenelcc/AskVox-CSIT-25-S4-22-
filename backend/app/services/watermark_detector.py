@@ -15,23 +15,38 @@ class WatermarkDetector:
             'thin_spaces': 0,
             'total_markers': 0,
             'ai_percentage': 0,
-            'human_percentage': 0
+            'human_percentage': 0,
+            'watermarked_positions': []
         }
         
         if not text or len(text) == 0:
             return results
         
-        # Count Cyrillic lookalikes
-        cyrillic_chars = 'аеоісАЕОІС'
-        results['cyrillic'] = sum(text.count(c) for c in cyrillic_chars)
+        # Track watermarked character positions
+        watermarked_positions = []
         
-        # Count zero-width characters (common ZW markers)
+        # Count Cyrillic lookalikes and track positions
+        cyrillic_chars = 'аеоісАЕОІС'
+        for i, char in enumerate(text):
+            if char in cyrillic_chars:
+                watermarked_positions.append(i)
+                results['cyrillic'] += 1
+        
+        # Count zero-width characters and track positions
         zero_width_chars = ['\u200b', '\u200c', '\u200d', '\ufeff']
-        results['zero_width'] = sum(text.count(z) for z in zero_width_chars)
+        for i, char in enumerate(text):
+            if char in zero_width_chars:
+                watermarked_positions.append(i)
+                results['zero_width'] += 1
 
-        # Count thin spaces (hair, thin, narrow no-break)
+        # Count thin spaces and track positions
         thin_space_chars = ['\u2009', '\u200a', '\u202f']
-        results['thin_spaces'] = sum(text.count(z) for z in thin_space_chars)
+        for i, char in enumerate(text):
+            if char in thin_space_chars:
+                watermarked_positions.append(i)
+                results['thin_spaces'] += 1
+        
+        results['watermarked_positions'] = sorted(watermarked_positions)
         
         # Total markers
         results['total_markers'] = results['cyrillic'] + results['zero_width'] + results['thin_spaces']
@@ -64,6 +79,7 @@ class WatermarkDetector:
                 'zero_width_count': detection['zero_width'],
                 'thin_spaces_count': detection['thin_spaces'],
                 'total_markers': detection['total_markers'],
-                'text_length': len(text)
+                'text_length': len(text),
+                'watermarked_positions': detection['watermarked_positions']
             }
         }

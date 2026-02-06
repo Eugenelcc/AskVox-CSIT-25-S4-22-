@@ -5,7 +5,9 @@ import "./ChatBar.css";
 interface ChatBarProps {
   onSubmit?: (text: string) => void;
   onAttachClick?: () => void;
-  
+  attachedFile?: File | null;
+  attachedPreviewUrl?: string | null;
+  onRemoveFile?: () => void;
   onMicClick?: () => void;
   onQuizClick?: () => void;
   disabled?: boolean;
@@ -17,6 +19,9 @@ const MAX_TEXTAREA_HEIGHT = 160;
 const ChatBar: FC<ChatBarProps> = ({
   onSubmit,
   onAttachClick,
+  attachedFile,
+  attachedPreviewUrl,
+  onRemoveFile,
   onMicClick,
   onQuizClick,
   disabled,
@@ -35,17 +40,18 @@ const ChatBar: FC<ChatBarProps> = ({
 
   const sendMessage = () => {
     const trimmed = value.trim();
-    if (!trimmed || disabled) return;
+    if ((!trimmed && !attachedFile) || disabled) return;
     // prevent duplicate submissions of the same text within 3s
     const now = Date.now();
+    const submissionKey = trimmed || (attachedFile ? `__file__:${attachedFile.name}` : "");
     if (
       lastSubmittedRef.current &&
-      lastSubmittedRef.current.text === trimmed &&
+      lastSubmittedRef.current.text === submissionKey &&
       now - lastSubmittedRef.current.ts < 3000
     ) {
       return;
     }
-    lastSubmittedRef.current = { text: trimmed, ts: now };
+    lastSubmittedRef.current = { text: submissionKey, ts: now };
     onSubmit?.(trimmed);
     setValue("");
   };
@@ -170,61 +176,112 @@ const ChatBar: FC<ChatBarProps> = ({
 
   const isMicActive = isRecording || isTranscribing;
 
+  const isImage = Boolean(attachedFile?.type?.startsWith("image/")) && Boolean(attachedPreviewUrl);
+  const fileExt = attachedFile?.name.split(".").pop()?.toLowerCase() ?? "";
+  const fileTypeLabel = fileExt ? fileExt.toUpperCase() : "FILE";
+  const fileIconClass =
+    fileExt === "pdf"
+      ? "av-file-icon av-file-icon--pdf"
+      : fileExt === "doc" || fileExt === "docx"
+        ? "av-file-icon av-file-icon--docx"
+        : "av-file-icon";
+
   return (
     <div className="av-chatbar-wrapper">
-      <form className="av-chatbar" onSubmit={handleSubmit}>
-        <button
-          type="button"
-          className="av-icon-button"
-          onClick={onAttachClick}
-          disabled={disabled}
-          aria-label="Attach"
-        >
-          <Paperclip className="av-icon" />
-        </button>
+      <form
+        className={`av-chatbar ${attachedFile ? "has-file" : ""}`}
+        onSubmit={handleSubmit}
+      >
+        {attachedFile && (
+          <div className={isImage ? "av-file-chip av-file-chip--image" : "av-file-chip"}>
+            {isImage ? (
+              <>
+                <div className="av-file-thumb">
+                  <img src={attachedPreviewUrl ?? ""} alt={attachedFile.name} />
+                </div>
+                <button
+                  type="button"
+                  className="av-file-remove--overlay"
+                  onClick={onRemoveFile}
+                  aria-label="Remove attachment"
+                >
+                  ×
+                </button>
+              </>
+            ) : (
+              <>
+                <div className={fileIconClass}>{fileTypeLabel}</div>
+                <div className="av-file-text">
+                  <div className="av-file-name">{attachedFile.name}</div>
+                  <div className="av-file-type">{fileTypeLabel}</div>
+                </div>
+                <button
+                  type="button"
+                  className="av-file-remove"
+                  onClick={onRemoveFile}
+                  aria-label="Remove attachment"
+                >
+                  ×
+                </button>
+              </>
+            )}
+          </div>
+        )}
 
-        <textarea
-          ref={textareaRef}
-          className="av-input"
-          placeholder={`Enter text here or say "${wakeWord ?? 'Hey AskVox'}"...`}
-          value={value}
-          onChange={(e) => setValue(e.target.value)}
-          onKeyDown={handleKeyDown}
-          disabled={disabled}
-          rows={1}
-        />
-
-        <div className="av-toolbar-right">
-          <button
-            type="button"
-            className={`av-icon-button ${
-              isMicActive ? "av-mic-pulsing" : ""
-            }`}
-            onClick={handleMicClickInternal}
-            disabled={disabled}
-            aria-label={isMicActive ? "Stop voice input" : "Voice input"}
-          >
-            <Mic className="av-icon" />
-          </button>
-
+        <div className="av-input-row">
           <button
             type="button"
             className="av-icon-button"
-            onClick={onQuizClick}
+            onClick={onAttachClick}
             disabled={disabled}
-            aria-label="Quiz"
+            aria-label="Attach"
           >
-            <BookOpen className="av-icon" />
+            <Paperclip className="av-icon" />
           </button>
 
-          <button
-            type="submit"
-            className="av-send-button"
-            disabled={disabled || !value.trim()}
-            aria-label="Send"
-          >
-            <Send className="av-icon" />
-          </button>
+          <textarea
+            ref={textareaRef}
+            className="av-input"
+            placeholder={`Enter text here or say "${wakeWord ?? 'Hey AskVox'}"...`}
+            value={value}
+            onChange={(e) => setValue(e.target.value)}
+            onKeyDown={handleKeyDown}
+            disabled={disabled}
+            rows={1}
+          />
+
+          <div className="av-toolbar-right">
+            <button
+              type="button"
+              className={`av-icon-button ${
+                isMicActive ? "av-mic-pulsing" : ""
+              }`}
+              onClick={handleMicClickInternal}
+              disabled={disabled}
+              aria-label={isMicActive ? "Stop voice input" : "Voice input"}
+            >
+              <Mic className="av-icon" />
+            </button>
+
+            <button
+              type="button"
+              className="av-icon-button"
+              onClick={onQuizClick}
+              disabled={disabled}
+              aria-label="Quiz"
+            >
+              <BookOpen className="av-icon" />
+            </button>
+
+            <button
+              type="submit"
+              className="av-send-button"
+              disabled={disabled || (!value.trim() && !attachedFile)}
+              aria-label="Send"
+            >
+              <Send className="av-icon" />
+            </button>
+          </div>
         </div>
       </form>
     </div>

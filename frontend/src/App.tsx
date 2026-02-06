@@ -23,6 +23,7 @@ import AdminEducation from './pages/admin/AdminEducation'
 // import NewsContent from './components/Discover/NewsContent/NewsContent'
 import InstituteVerification from './pages/subscription/InstituteVerification.tsx'
 import PreferenceSelect from './pages/onboarding/PreferenceSelect'
+import EducationalHomepage from './pages/educationalinstutiaonal/homepage'
 
 
 function App() {
@@ -31,6 +32,7 @@ function App() {
   const [isPaid, setIsPaid] = useState<boolean>(false)
   const [isAdmin, setIsAdmin] = useState<boolean>(false)
   const [needsPreference, setNeedsPreference] = useState<boolean>(false)
+  const [role, setRole] = useState<string | null>(null)
 
   useEffect(() => {
     let cancelled = false
@@ -57,10 +59,16 @@ function App() {
           .select('role')
           .eq('id', userId)
           .maybeSingle()
-        const role = (data?.role ?? '').toString().trim().toLowerCase()
-        if (!cancelled) setIsAdmin(role === 'platform_admin')
+        const userRole = (data?.role ?? '').toString().trim().toLowerCase()
+        if (!cancelled) {
+          setRole(userRole)
+          setIsAdmin(userRole === 'platform_admin')
+        }
       } catch {
-        if (!cancelled) setIsAdmin(false)
+        if (!cancelled) {
+          setRole(null)
+          setIsAdmin(false)
+        }
       }
     }
 
@@ -110,6 +118,7 @@ function App() {
       else {
         setIsPaid(false)
         setIsAdmin(false)
+        setRole(null)
       }
     })
 
@@ -141,14 +150,16 @@ function App() {
           path="/"
           element={
             session
-              ? (isAdmin ? <Navigate to="/platformadmin/dashboard" /> : (needsPreference ? <Navigate to="/onboarding/preferences" /> : <Navigate to="/newchat" />))
+              ? (role === 'educational_user'
+                  ? <Navigate to="/educationalinstutiaonal/homepage" />
+                  : (isAdmin ? <Navigate to="/platformadmin/dashboard" /> : (needsPreference ? <Navigate to="/onboarding/preferences" /> : <Navigate to="/newchat" />)))
               : <UnregisteredMain session={session} />
           }
         />
 
         {/* Auth Routes: Redirect to role-aware destination if already logged in */}
-        <Route path="/login" element={!session ? <Login /> : (isAdmin ? <Navigate to="/platformadmin/dashboard" /> : (needsPreference ? <Navigate to="/onboarding/preferences" /> : <Navigate to="/newchat" />))} />
-        <Route path="/register" element={!session ? <Register /> : (isAdmin ? <Navigate to="/platformadmin/dashboard" /> : (needsPreference ? <Navigate to="/onboarding/preferences" /> : <Navigate to="/newchat" />))} />
+        <Route path="/login" element={!session ? <Login /> : (role === 'educational_user' ? <Navigate to="/educationalinstutiaonal/homepage" /> : (isAdmin ? <Navigate to="/platformadmin/dashboard" /> : (needsPreference ? <Navigate to="/onboarding/preferences" /> : <Navigate to="/newchat" />)))} />
+        <Route path="/register" element={!session ? <Register /> : (role === 'educational_user' ? <Navigate to="/educationalinstutiaonal/homepage" /> : (isAdmin ? <Navigate to="/platformadmin/dashboard" /> : (needsPreference ? <Navigate to="/onboarding/preferences" /> : <Navigate to="/newchat" />)))} />
         <Route path="/auth/confirmed" element={<ConfirmedPage />} />
         <Route path="/auth/check-email" element={<CheckEmailPage />} />
         <Route path="/auth/oauth-callback" element={<OAuthCallback />} />
@@ -158,9 +169,11 @@ function App() {
           path="/reguserhome"
           element={
             session
-              ? (isAdmin
-                  ? <Navigate to="/platformadmin/dashboard" />
-                  : (needsPreference ? <Navigate to="/onboarding/preferences" /> : (isPaid ? <PaidMain session={session} /> : <RegisterMain session={session} />)))
+              ? (role === 'educational_user'
+                  ? <Navigate to="/educationalinstutiaonal/homepage" />
+                  : (isAdmin
+                      ? <Navigate to="/platformadmin/dashboard" />
+                      : (needsPreference ? <Navigate to="/onboarding/preferences" /> : (isPaid ? <PaidMain session={session} /> : <RegisterMain session={session} />))))
               : <UnregisteredMain session={session} />
           }
         />
@@ -169,7 +182,9 @@ function App() {
           path="/newchat"
           element={
             session
-              ? (isAdmin ? <Navigate to="/platformadmin/dashboard" /> : <RegisterMain session={session} />)
+              ? (role === 'educational_user'
+                  ? <Navigate to="/educationalinstutiaonal/homepage" />
+                  : (isAdmin ? <Navigate to="/platformadmin/dashboard" /> : <RegisterMain session={session} />))
               : <Navigate to="/login" />
           }
         />
@@ -180,31 +195,38 @@ function App() {
           path="/chats/:sessionId"
           element={
             session
-              ? (isAdmin ? <Navigate to="/platformadmin/dashboard" /> : <RegisterMain session={session} />)
+              ? (role === 'educational_user'
+                  ? <Navigate to="/educationalinstutiaonal/homepage" />
+                  : (isAdmin ? <Navigate to="/platformadmin/dashboard" /> : <RegisterMain session={session} />))
               : <Navigate to="/login" />
           }
         />
         <Route
           path="/paiduserhome"
-          element={session ? (isAdmin ? <Navigate to="/platformadmin/dashboard" /> : <PaidMain session={session} />) : <Navigate to="/login" />}
+          element={session ? (role === 'educational_user' ? <Navigate to="/educationalinstutiaonal/homepage" /> : (isAdmin ? <Navigate to="/platformadmin/dashboard" /> : <PaidMain session={session} />)) : <Navigate to="/login" />}
         />
         <Route
           path="/discover"
-          element={session ? <RegisterMain session={session} paid={isPaid} initialTab="discover" /> : <Navigate to="/login" />}
+          element={session ? (role === 'educational_user' ? <Navigate to="/educationalinstutiaonal/homepage" /> : <RegisterMain session={session} paid={isPaid} initialTab="discover" />) : <Navigate to="/login" />}
         />
         {/* Discover → Detailed News Content (render within RegisteredMain to avoid layout flash) */}
         <Route
           path="/discover/news/:id"
-          element={session ? <RegisterMain session={session} paid={isPaid} initialTab="discover" /> : <Navigate to="/login" />}
+          element={session ? (role === 'educational_user' ? <Navigate to="/educationalinstutiaonal/homepage" /> : <RegisterMain session={session} paid={isPaid} initialTab="discover" />) : <Navigate to="/login" />}
         />
         <Route
           path="/discover/news"
-          element={session ? <RegisterMain session={session} paid={isPaid} initialTab="discover" /> : <Navigate to="/login" />}
+          element={session ? (role === 'educational_user' ? <Navigate to="/educationalinstutiaonal/homepage" /> : <RegisterMain session={session} paid={isPaid} initialTab="discover" />) : <Navigate to="/login" />}
         />
         
         <Route 
           path="/upgrade"
-          element={session ? <Upgrade /> : <Navigate to="/login" />}
+          element={session ? (role === 'educational_user' ? <Navigate to="/educationalinstutiaonal/homepage" /> : <Upgrade />) : <Navigate to="/login" />}
+        />
+        {/* Educational Institution Homepage */}
+        <Route
+          path="/educationalinstutiaonal/homepage"
+          element={session ? <EducationalHomepage /> : <Navigate to="/login" />}
         />
         {/* Onboarding: Learning Preference */}
         <Route
@@ -222,7 +244,7 @@ function App() {
 
         <Route
           path="/payment"
-          element={session ? <Payment /> : <Navigate to="/login" />}
+          element={session ? (role === 'educational_user' ? <Navigate to="/educationalinstutiaonal/homepage" /> : <Payment />) : <Navigate to="/login" />}
         />
 
         {/* ✅ Platform Admin Routes */}

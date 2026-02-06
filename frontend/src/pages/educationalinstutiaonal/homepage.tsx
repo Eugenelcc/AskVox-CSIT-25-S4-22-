@@ -39,7 +39,7 @@ const EducationalHomepage = () => {
   const [aiPercentage, setAiPercentage] = useState(80)
   const [humanPercentage, setHumanPercentage] = useState(20)
   const [analyzing, setAnalyzing] = useState(false)
-  const [analysisDetails, setAnalysisDetails] = useState<{ cyrillic_count: number; zero_width_count: number; thin_spaces_count: number; total_markers: number; text_length: number } | null>(null)
+  const [analysisDetails, setAnalysisDetails] = useState<{ cyrillic_count: number; zero_width_count: number; thin_spaces_count: number; total_markers: number; text_length: number; watermarked_positions?: number[] } | null>(null)
 
   // ✅ ADD: user profile state
   const [userRole, setUserRole] = useState<string | null>(null)
@@ -81,6 +81,56 @@ const EducationalHomepage = () => {
   const wordCount =
     text.trim() === "" ? 0 : text.trim().split(/\s+/).length
 
+  // Render text with watermarked characters highlighted
+  const renderHighlightedText = () => {
+    if (!analysisDetails?.watermarked_positions || analysisDetails.watermarked_positions.length === 0) {
+      return <span>{text}</span>
+    }
+
+    const positions = new Set(analysisDetails.watermarked_positions)
+    const elements: JSX.Element[] = []
+    
+    for (let i = 0; i < text.length; i++) {
+      const char = text[i]
+      if (positions.has(i)) {
+        // Watermarked character - highlight it
+        elements.push(
+          <span
+            key={i}
+            style={{
+              backgroundColor: '#ffeb3b'
+            }}
+          >
+            {char}
+          </span>
+        )
+      } else {
+        // Normal character
+        elements.push(<span key={i}>{char}</span>)
+      }
+    }
+    
+    return <>{elements}</>
+  }
+
+  const handlePasteFromClipboard = async () => {
+    try {
+      const clipboardText = await navigator.clipboard.readText()
+      if (!clipboardText) {
+        alert("Clipboard is empty")
+        return
+      }
+      setText(clipboardText)
+      setUploadedFile(null)
+      setPreviewImageUrl(null)
+      setPreviewText("")
+      setShowResults(false)
+    } catch (err) {
+      console.error("Clipboard error:", err)
+      alert("Failed to read clipboard. Make sure you have permission and text is copied.")
+    }
+  }
+
   const handleFileUpload = async (
     e: React.ChangeEvent<HTMLInputElement>
   ) => {
@@ -102,7 +152,8 @@ const EducationalHomepage = () => {
     formData.append("file", file)
 
     try {
-      const res = await fetch("http://localhost:5000/extract-text", {
+      const API_BASE_URL = import.meta.env.VITE_API_URL || "http://localhost:8000";
+      const res = await fetch(`${API_BASE_URL}/files/extract-text`, {
         method: "POST",
         body: formData,
       })
@@ -126,7 +177,8 @@ const EducationalHomepage = () => {
 
     setAnalyzing(true)
     try {
-      const res = await fetch("http://localhost:8000/watermark/analyze", {
+      const API_BASE_URL = import.meta.env.VITE_API_URL || "http://localhost:8000";
+      const res = await fetch(`${API_BASE_URL}/watermark/analyze`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ text: text }),
@@ -265,6 +317,14 @@ const EducationalHomepage = () => {
               </button>
 
               <button
+                className={styles.uploadBtn}
+                onClick={handlePasteFromClipboard}
+                title="Preserves watermarks - copy text directly instead of screenshots"
+              >
+                Paste from Clipboard
+              </button>
+
+              <button
                 className={styles.submitBtn}
                 onClick={handleAnalyze}
                 disabled={!text.trim() || analyzing}
@@ -281,20 +341,23 @@ const EducationalHomepage = () => {
                 <span>{wordCount} words</span>
               </header>
 
-              <div className={styles.analyzedText}>{text}</div>
+              <div className={styles.analyzedText}>{renderHighlightedText()}</div>
 
               <div className={styles.complete}>● Analysis Complete</div>
 
-              {analysisDetails && (
-                <div className={styles.detailsBox}>
-                  <div>Markers found:</div>
-                  <div>Cyrillic: {analysisDetails.cyrillic_count}</div>
-                  <div>Zero-width: {analysisDetails.zero_width_count}</div>
-                  <div>Thin spaces: {analysisDetails.thin_spaces_count}</div>
-                  <div>Total markers: {analysisDetails.total_markers}</div>
-                  <div>Text length: {analysisDetails.text_length}</div>
+              <div className={styles.detailsBox}>
+                <div><strong>Watermark Detection:</strong></div>
+                <div>Cyrillic characters: {analysisDetails?.cyrillic_count ?? 0}</div>
+                <div>Zero-width chars: {analysisDetails?.zero_width_count ?? 0}</div>
+                <div>Thin spaces: {analysisDetails?.thin_spaces_count ?? 0}</div>
+                <div>Total markers: {analysisDetails?.total_markers ?? 0}</div>
+                <div>Text length: {analysisDetails?.text_length ?? text.length}</div>
+                <div style={{ marginTop: '8px', fontSize: '11px', opacity: 0.7 }}>
+                  {(analysisDetails?.total_markers ?? 0) > 0 
+                    ? '✓ AskVox watermarks detected' 
+                    : '✗ No watermarks found'}
                 </div>
-              )}
+              </div>
 
               <button
                 className={styles.backBtn}

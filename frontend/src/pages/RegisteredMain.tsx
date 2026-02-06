@@ -98,7 +98,6 @@ export default function Dashboard({
   const ttsSanitizeRef = useRef<((t: string) => string) | null>(null);
   const voiceSessionIdRef = useRef<string | null>(null);
   
-  // Sidebar & Navigation State
   const [sessions, setSessions] = useState<{id: string, title: string, article_context?: ArticleContext | null}[]>([]); // all chats the user has created, shown in the sidebar
   const [activeSessionId, setActiveSessionId] = useState<string | null>(null); // currently selected chat session
   const [activeTab, setActiveTab] = useState<string>(
@@ -118,6 +117,13 @@ export default function Dashboard({
   const [folderModalName, setFolderModalName] = useState("");
   const [folderModalBusy, setFolderModalBusy] = useState(false);
   const [folderModalErr, setFolderModalErr] = useState<string | null>(null);
+
+  // File upload state
+  const [uploadedFile, setUploadedFile] = useState<File | null>(null);
+  const [extractedFileText, setExtractedFileText] = useState<string>("");
+  const [filePreviewUrl, setFilePreviewUrl] = useState<string | null>(null);
+  const [imageLabels, setImageLabels] = useState<string[]>([]);
+  const [imageCaption, setImageCaption] = useState<string>("");
   const [folderModalForChatId, setFolderModalForChatId] = useState<string | null>(null);
   
   // Chat list in folders
@@ -125,6 +131,80 @@ export default function Dashboard({
     () => new Set(folders.flatMap(f => f.items.map(i => i.id))),
     [folders]
   );
+
+  const handleFileUpload = async (file: File) => {
+    setUploadedFile(file);
+
+    // Set preview URL for images
+    if (file.type.startsWith("image/")) {
+      setFilePreviewUrl(URL.createObjectURL(file));
+    } else {
+      setFilePreviewUrl(null);
+    }
+
+    const formData = new FormData();
+    formData.append("file", file);
+
+    try {
+      const API_URL = import.meta.env.VITE_API_URL || "http://localhost:8000";
+      
+      // Extract text from file
+      const res = await fetch(`${API_URL}/files/extract-text`, {
+        method: "POST",
+        body: formData,
+      });
+
+      if (!res.ok) {
+        console.error("Failed to extract text");
+        alert("Failed to extract text from file");
+        return;
+      }
+
+      const data = await res.json();
+      setExtractedFileText(data.text || "");
+
+      // If it's an image, analyze it for object recognition (Gemini)
+      if (file.type.startsWith("image/")) {
+        try {
+          const imageFormData = new FormData();
+          imageFormData.append("file", file);
+          
+          const analyzeRes = await fetch(`${API_URL}/files/analyze-image?mode=labels`, {
+            method: "POST",
+            body: imageFormData,
+          });
+
+          if (analyzeRes.ok) {
+            const analysisData = await analyzeRes.json();
+            if (analysisData.labels && analysisData.labels.length > 0) {
+              setImageLabels(analysisData.labels);
+            }
+          }
+        } catch (analyzeErr) {
+          console.error("Image analysis error:", analyzeErr);
+        }
+      }
+    } catch (err) {
+      console.error("File upload error:", err);
+      alert("Error uploading file");
+    }
+  };
+
+  const handleRemoveFile = () => {
+    setUploadedFile(null);
+    setExtractedFileText("");
+    setFilePreviewUrl(null);
+    setImageLabels([]);
+    setImageCaption("");
+  };
+
+  useEffect(() => {
+    return () => {
+      if (filePreviewUrl) {
+        URL.revokeObjectURL(filePreviewUrl);
+      }
+    };
+  }, [filePreviewUrl]);
 
   // Chats not in folders
   const standaloneSessions = useMemo(
@@ -539,9 +619,33 @@ export default function Dashboard({
     text: string,
     options?: { forceNewSession?: boolean; context?: ArticleContext }
   ): Promise<string | null> => {
-    const trimmed = text.trim();
-    if (!trimmed || !session?.user?.id) return null;
+    let trimmed = text.trim();
+    const hasFile = Boolean(uploadedFile);
+
+    // Include extracted file/image text and analysis
+    if (uploadedFile && extractedFileText) {
+      const header = uploadedFile.type.startsWith("image/") ? "Image" : "File";
+      let content = `[${header}: ${uploadedFile.name}]`;
+      
+      // Add image labels if available
+      if (uploadedFile.type.startsWith("image/") && imageLabels.length > 0) {
+        content += `\n[Objects detected: ${imageLabels.join(", ")}]`;
+      }
+      
+      content += `\n${extractedFileText}`;
+      
+      trimmed = `${content}\n\nUser message: ${trimmed || "(no additional message)"}`;
+    }
+
+    if ((!trimmed && !hasFile) || !session?.user?.id) return null;
     console.log("💬 [Text] route=llamachats/cloud payload=", trimmed);
+
+    // Clear file upload state
+    setUploadedFile(null);
+    setExtractedFileText("");
+    setFilePreviewUrl(null);
+    setImageLabels([]);
+    setImageCaption("");
 
     // If user starts typing/sending, stop SmartRec pending indicator.
     if (isSmartRecPending) setIsSmartRecPending(false);
@@ -1682,20 +1786,34 @@ export default function Dashboard({
               {!isVoiceMode && (
   <div className="uv-input-container">
     {!activeSessionId && (
-      <div className="av-chatbar-caption">
-        <h3 className="orb-caption">
-          Hi {profile?.username ?? "User"}, say{" "}
-          <span className="visual-askvox">
-            {`"${(profile?.wake_word?.trim?.() || "Hey AskVox")}"`}
-          </span>{" "}
-          to begin or type below.
-        </h3>
+      <div className={`uv-greeting ${uploadedFile ? "uv-greeting--has-file" : ""}`}>
+        Hi {profile?.username ?? "User"}, say{" "}
+        <span className="uv-greeting-askvox">
+          {`"${(profile?.wake_word?.trim?.() || "Hey AskVox")}"`}
+        </span>{" "}
+        to begin or type below.
       </div>
     )}
     <ChatBar
       onSubmit={handleSubmit}
       disabled={isSending}
+      attachedFile={uploadedFile}
+      attachedPreviewUrl={filePreviewUrl}
+      onRemoveFile={handleRemoveFile}
       onQuizClick={() => setIsQuizOpen(true)}
+      onAttachClick={() => {
+        const input = document.createElement('input');
+        input.type = 'file';
+        input.accept = 'image/*,.pdf,.doc,.docx,.txt';
+        input.onchange = (e) => {
+          const files = (e.target as HTMLInputElement).files;
+          if (files && files.length > 0) {
+            void handleFileUpload(files[0]);
+          }
+        };
+        input.click();
+      }}
+      wakeWord={profile?.wake_word?.trim?.() || "Hey AskVox"}
     />
 
    <Quiz

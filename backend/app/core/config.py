@@ -20,6 +20,8 @@ class Settings(BaseSettings):
     supabase_service_role_key: str | None = None
     # Stripe
     stripe_secret_key: str | None = None
+    # Google Generative AI (Gemini) for image analysis
+    google_api_key: str | None = None
 
 
 settings = Settings()
