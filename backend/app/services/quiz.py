@@ -1,13 +1,34 @@
 import os
 import json
 import asyncio
+import time
+import logging
 import httpx
+from contextvars import ContextVar
 from typing import Literal, List, Optional, Tuple
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 from dotenv import load_dotenv
 
 load_dotenv()
+
+logger = logging.getLogger(__name__)
+
+# Per-request override so you can switch providers without changing .env.
+_quiz_provider_override: ContextVar[str | None] = ContextVar("quiz_provider_override", default=None)
+
+
+def _normalize_quiz_provider(provider: str | None) -> str | None:
+    if provider is None:
+        return None
+    v = str(provider).strip().lower()
+    if not v:
+        return None
+    if v in {"llama", "runpod", "llama_runpod", "llama-runpod", "llama_runpod_default"}:
+        return "llama_runpod"
+    if v in {"gemini", "gemni"}:
+        return "gemini"
+    return None
 
 router = APIRouter(prefix="/quiz", tags=["quiz"])
 
@@ -23,13 +44,80 @@ GEMINI_BASE_URL = os.getenv(
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY", "")
 GEMINI_MODEL = os.getenv("GEMINI_MODEL", "gemini-2.0-flash")
 
-# Choose provider: set QUIZ_PROVIDER=gemini or llama in .env
-QUIZ_PROVIDER = os.getenv("QUIZ_PROVIDER", "gemini").lower().strip()
+# --- RunPod Llama config (shared with SmartRec/Multimodal chat) ---
+# Direct HTTP endpoint (OpenAI-compatible or custom)
+LLAMA_RUNPOD_URL = os.getenv("LLAMA_RUNPOD_URL", "").strip().rstrip("/")
+
+# RunPod Serverless job-mode
+RUNPOD_API_KEY = os.getenv("RUNPOD_API_KEY", "").strip()
+RUNPOD_AUTH_HEADER = os.getenv("RUNPOD_AUTH_HEADER", "Authorization").strip()
+RUNPOD_RUN_ENDPOINT = os.getenv("RUNPOD_RUN_ENDPOINT", "").strip()
+RUNPOD_STATUS_ENDPOINT = os.getenv("RUNPOD_STATUS_ENDPOINT", "").strip()
+RUNPOD_MAX_WAIT_SEC = float(os.getenv("RUNPOD_MAX_WAIT_SEC", "180"))
+RUNPOD_POLL_INTERVAL_SEC = float(os.getenv("RUNPOD_POLL_INTERVAL_SEC", "1.5"))
+
+# Optional identifier for OpenAI-compatible shims
+LLAMA_MODEL_NAME = os.getenv("LLAMA_MODEL_NAME", "meta-llama/Llama-3-8b-chat-hf")
+
+# Choose provider: default to RunPod Llama; Gemini is optional/fallback.
+# Back-compat: accepts QUIZ_PROVIDER or QUIZ_LLM_PROVIDER
+QUIZ_PROVIDER = (
+    os.getenv("QUIZ_PROVIDER")
+    or os.getenv("QUIZ_LLM_PROVIDER")
+    or "llama_runpod"
+).lower().strip()
+
+# Print provider + prompt preview for quick verification
+QUIZ_PRINT_PROMPT = os.getenv("QUIZ_PRINT_PROMPT", "1").strip() in ("1", "true", "yes", "on")
+QUIZ_PROMPT_PREVIEW_CHARS = int(os.getenv("QUIZ_PROMPT_PREVIEW_CHARS", "900"))
+
+# Startup log toggle
+QUIZ_STARTUP_LOG = os.getenv("QUIZ_STARTUP_LOG", "1").strip() in ("1", "true", "yes", "on")
 
 # Verifier toggle (you usually want this ON)
 VERIFY_ANSWERS = os.getenv("QUIZ_VERIFY", "1").strip() in ("1", "true", "yes", "on")
 
 QuizMode = Literal["A", "B", "C"]
+
+
+def _log_quiz_provider_startup() -> None:
+    if not QUIZ_STARTUP_LOG:
+        return
+
+    default_provider = _normalize_quiz_provider(QUIZ_PROVIDER) or "llama_runpod"
+
+    runpod_configured = bool(RUNPOD_RUN_ENDPOINT) and bool(RUNPOD_API_KEY)
+    gemini_configured = bool(GEMINI_API_KEY)
+
+    msg = (
+        "[QUIZ_STARTUP] "
+        f"default_provider={default_provider} "
+        f"(QUIZ_PROVIDER={QUIZ_PROVIDER!r}) "
+        f"runpod_job_mode={'on' if runpod_configured else 'off'} "
+        f"runpod_run_endpoint_set={'yes' if bool(RUNPOD_RUN_ENDPOINT) else 'no'} "
+        f"gemini_key_set={'yes' if gemini_configured else 'no'} "
+        f"gemini_model={GEMINI_MODEL}"
+    )
+
+    # stdout print for quick visibility in dev + log for deployments
+    print(msg)
+    logger.info(msg)
+
+    if default_provider == "gemini" and not gemini_configured:
+        warn = "[QUIZ_STARTUP] WARNING: default_provider=gemini but GEMINI_API_KEY is not set"
+        print(warn)
+        logger.warning(warn)
+    if default_provider == "llama_runpod" and not runpod_configured:
+        warn = "[QUIZ_STARTUP] WARNING: default_provider=llama_runpod but RUNPOD_RUN_ENDPOINT/RUNPOD_API_KEY not fully set"
+        print(warn)
+        logger.warning(warn)
+
+
+try:
+    _log_quiz_provider_startup()
+except Exception:
+    # Never fail import due to logging
+    pass
 
 
 class GenerateQuizReq(BaseModel):
@@ -38,6 +126,9 @@ class GenerateQuizReq(BaseModel):
     session_id: Optional[str] = None
     topic: Optional[str] = None
     num_questions: int = 3
+    # Optional: override model provider for THIS request: "llama_runpod" or "gemini".
+    # (Also accepts "llama", "runpod", and common misspelling "gemni".)
+    provider: Optional[str] = None
     # Optional: prevent repeats and request related variations for follow-up quizzes
     avoid_questions: Optional[List[str]] = None
     related: bool = False
@@ -63,6 +154,8 @@ class QuizFeedbackReq(BaseModel):
     userAnswers: List[Optional[int]]  # same length as questions
     user_id: str                      # needed to store attempts under user
     quiz_id: Optional[str] = None     # pass quiz id if available
+    # Optional: override provider for THIS feedback generation call
+    provider: Optional[str] = None
 
 
 class QuizFeedbackRes(BaseModel):
@@ -474,25 +567,209 @@ async def _fetch_turns_with_responses(user_id: str, session_id: Optional[str], l
 # -------------------------
 # Model calls (DETACHED)
 # -------------------------
+def _print_quiz_llm_usage(provider: str, prompt: str) -> None:
+    """Prints which LLM is being used for quiz + a prompt preview.
+
+    Intentionally prints only a preview by default to avoid log bloat.
+    """
+    provider_norm = (provider or "").strip().lower() or "(unknown)"
+    preview_len = max(0, int(QUIZ_PROMPT_PREVIEW_CHARS))
+    prompt_preview = (prompt or "")
+    if preview_len and len(prompt_preview) > preview_len:
+        prompt_preview = prompt_preview[:preview_len] + "\n... [truncated]"
+
+    extra = ""
+    if provider_norm in {"llama", "llama_runpod", "runpod"}:
+        extra = f" runpod_url={(LLAMA_RUNPOD_URL or RUNPOD_RUN_ENDPOINT or '(not set)')} model={LLAMA_MODEL_NAME}"
+    elif provider_norm == "gemini":
+        extra = f" gemini_model={GEMINI_MODEL}"
+
+    msg = f"[QUIZ_LLM] provider={provider_norm}.{extra}"
+    # stdout print for quick visibility in dev
+    print(msg)
+    logger.info(msg)
+
+    if QUIZ_PRINT_PROMPT:
+        print("[QUIZ_LLM] prompt_preview:\n" + prompt_preview)
+
+
+async def _runpod_llama_completion(messages: list[dict], temperature: float = 0.25, max_tokens: int = 900) -> str:
+    """Call your RunPod-hosted Llama model.
+
+    Supports:
+    - Serverless job-mode: RUNPOD_RUN_ENDPOINT (+ RUNPOD_API_KEY)
+    - Direct endpoint: LLAMA_RUNPOD_URL (OpenAI-compatible or custom)
+    """
+    # Preferred: RunPod serverless job-mode
+    if RUNPOD_RUN_ENDPOINT:
+        if not RUNPOD_API_KEY:
+            raise HTTPException(status_code=500, detail="RUNPOD_API_KEY missing")
+
+        prompt_lines: list[str] = []
+        for m in messages or []:
+            if not isinstance(m, dict):
+                continue
+            role = (m.get("role") or "user").upper()
+            content = m.get("content")
+            if content is None:
+                continue
+            if not isinstance(content, str):
+                content = str(content)
+            content = content.strip()
+            if not content:
+                continue
+            prompt_lines.append(f"{role}: {content}")
+        prompt_lines.append("ASSISTANT:")
+        prompt = "\n".join(prompt_lines)
+
+        headers = {RUNPOD_AUTH_HEADER or "Authorization": f"Bearer {RUNPOD_API_KEY}"}
+        payload = {"input": {"prompt": prompt, "stop": ["<|eot_id|>"]}}
+
+        try:
+            async with httpx.AsyncClient(timeout=httpx.Timeout(connect=10.0, read=30.0, write=10.0, pool=10.0)) as client:
+                run_resp = await client.post(RUNPOD_RUN_ENDPOINT, json=payload, headers=headers)
+        except httpx.RequestError as e:
+            raise HTTPException(status_code=502, detail=f"RunPod run request failed: {e}")
+
+        if run_resp.status_code >= 400:
+            raise HTTPException(status_code=502, detail=f"RunPod /run returned {run_resp.status_code}: {run_resp.text[:200]}")
+
+        try:
+            run_data = run_resp.json()
+        except Exception:
+            raise HTTPException(status_code=502, detail="Invalid JSON from RunPod /run")
+
+        job_id = run_data.get("id") or run_data.get("jobId") or run_data.get("job_id")
+        if not job_id:
+            immediate_output = (run_data.get("output") or {}).get("response") or run_data.get("response")
+            if immediate_output:
+                return str(immediate_output).strip()
+            raise HTTPException(status_code=502, detail="RunPod /run response missing job id")
+
+        status_base = RUNPOD_STATUS_ENDPOINT.strip() if RUNPOD_STATUS_ENDPOINT else ""
+        if not status_base:
+            if RUNPOD_RUN_ENDPOINT.endswith("/run"):
+                status_base = RUNPOD_RUN_ENDPOINT[: -len("/run")] + "/status"
+            else:
+                status_base = RUNPOD_RUN_ENDPOINT.rstrip("/") + "/status"
+
+        t0 = time.perf_counter()
+        last_status = ""
+        while (time.perf_counter() - t0) < RUNPOD_MAX_WAIT_SEC:
+            url = f"{status_base}/{job_id}"
+            try:
+                async with httpx.AsyncClient(timeout=httpx.Timeout(connect=10.0, read=20.0, write=10.0, pool=10.0)) as client:
+                    st_resp = await client.get(url, headers=headers)
+            except httpx.RequestError as e:
+                last_status = f"request_error: {e}"
+                await asyncio.sleep(RUNPOD_POLL_INTERVAL_SEC)
+                continue
+
+            if st_resp.status_code >= 400:
+                last_status = f"http_{st_resp.status_code}"
+                await asyncio.sleep(RUNPOD_POLL_INTERVAL_SEC)
+                continue
+
+            try:
+                st_data = st_resp.json()
+            except Exception:
+                last_status = "bad_json"
+                await asyncio.sleep(RUNPOD_POLL_INTERVAL_SEC)
+                continue
+
+            status = (st_data.get("status") or st_data.get("state") or "").upper()
+            last_status = status or last_status
+            if status == "COMPLETED":
+                out = st_data.get("output") or {}
+                if isinstance(out, dict):
+                    ans = out.get("response") or out.get("answer") or out.get("reply")
+                    if ans:
+                        return str(ans).strip()
+                if isinstance(out, str) and out:
+                    return out.strip()
+                ans2 = st_data.get("response") or st_data.get("answer") or st_data.get("reply")
+                if ans2:
+                    return str(ans2).strip()
+                raise HTTPException(status_code=502, detail="RunPod status completed but no output.response")
+            if status in {"FAILED", "ERROR", "CANCELLED"}:
+                raise HTTPException(status_code=502, detail=f"RunPod job {status}")
+
+            await asyncio.sleep(RUNPOD_POLL_INTERVAL_SEC)
+
+        raise HTTPException(status_code=504, detail=f"RunPod job timed out (last_status={last_status})")
+
+    # Direct endpoint mode
+    if not LLAMA_RUNPOD_URL:
+        raise HTTPException(
+            status_code=500,
+            detail="No RunPod Llama endpoint configured: set RUNPOD_RUN_ENDPOINT (job-mode) or LLAMA_RUNPOD_URL (direct)",
+        )
+
+    headers = {"Content-Type": "application/json"}
+    if RUNPOD_API_KEY:
+        headers["X-API-Key"] = RUNPOD_API_KEY
+
+    is_openai_compatible = "/v1/chat/completions" in LLAMA_RUNPOD_URL.lower()
+    if is_openai_compatible:
+        payload = {
+            "model": LLAMA_MODEL_NAME,
+            "messages": messages,
+            "temperature": float(temperature),
+            "max_tokens": int(max_tokens),
+            "stream": False,
+        }
+    else:
+        payload = {
+            "input": {
+                "messages": messages,
+                "parameters": {
+                    "temperature": float(temperature),
+                    "max_new_tokens": int(max_tokens),
+                    "do_sample": True,
+                    "top_p": 0.9,
+                    "repetition_penalty": 1.1,
+                },
+            }
+        }
+
+    try:
+        async with httpx.AsyncClient(timeout=90) as client:
+            res = await client.post(LLAMA_RUNPOD_URL, headers=headers, json=payload)
+    except httpx.RequestError as e:
+        raise HTTPException(status_code=502, detail=f"RunPod Llama request failed: {e}")
+
+    if res.status_code >= 400:
+        raise HTTPException(status_code=502, detail=f"RunPod Llama returned {res.status_code}: {res.text[:200]}")
+
+    try:
+        data = res.json()
+    except Exception:
+        return (res.text or "").strip()
+
+    try:
+        if is_openai_compatible:
+            return (data["choices"][0]["message"]["content"] or "").strip()
+        out = data.get("output") if isinstance(data, dict) else None
+        if isinstance(out, dict):
+            for k in ("response", "answer", "reply"):
+                if out.get(k):
+                    return str(out.get(k)).strip()
+        for k in ("generated_text", "text", "response", "answer", "reply"):
+            if isinstance(data, dict) and data.get(k):
+                return str(data.get(k)).strip()
+        if isinstance(data, str):
+            return data.strip()
+        return str(data).strip()
+    except Exception:
+        return str(data).strip()
+
+
 async def _call_llama_detached(prompt: str) -> str:
     """
-    Uses your /llamachats/cloud but DETACHED so it won't log quiz/verifier/feedback text into chat tables.
+    Uses your RunPod Llama model (DETACHED) so it won't log quiz/verifier/feedback text into chat tables.
     """
-    url = f"{API_BASE_LOCAL}/llamachats/cloud"
-    payload = {
-        "message": prompt,
-        "history": [],
-        "query_id": None,
-        "session_id": None,  # detach
-        "user_id": None,     # detach
-    }
-    timeout = httpx.Timeout(connect=15.0, read=240.0, write=30.0, pool=20.0)
-    async with httpx.AsyncClient(timeout=timeout) as client:
-        res = await client.post(url, json=payload)
-        if res.status_code >= 400:
-            raise HTTPException(status_code=502, detail=f"Quiz model call failed: {res.text[:200]}")
-        data = res.json() or {}
-        return (data.get("answer") or "").strip()
+    messages = [{"role": "user", "content": prompt}]
+    return await _runpod_llama_completion(messages=messages, temperature=0.25, max_tokens=900)
 
 
 async def _call_gemini(prompt: str) -> str:
@@ -543,9 +820,31 @@ async def _call_gemini(prompt: str) -> str:
 
 
 async def _call_model(prompt: str) -> str:
-    if QUIZ_PROVIDER == "gemini":
-        return await _call_gemini(prompt)
-    return await _call_llama_detached(prompt)
+    provider_raw = _quiz_provider_override.get() or QUIZ_PROVIDER
+    provider = _normalize_quiz_provider(provider_raw) or "llama_runpod"
+    prefer_gemini = provider == "gemini"
+
+    if prefer_gemini:
+        _print_quiz_llm_usage("gemini", prompt)
+        try:
+            return await _call_gemini(prompt)
+        except Exception as e:
+            # Optional fallback to RunPod if configured
+            _print_quiz_llm_usage("llama_runpod", prompt)
+            logger.warning(f"Gemini failed for quiz; falling back to RunPod Llama: {e}")
+            return await _call_llama_detached(prompt)
+
+    # Default path: RunPod Llama
+    _print_quiz_llm_usage("llama_runpod", prompt)
+    try:
+        return await _call_llama_detached(prompt)
+    except Exception as e:
+        # Optional fallback to Gemini if API key is present
+        if GEMINI_API_KEY:
+            _print_quiz_llm_usage("gemini", prompt)
+            logger.warning(f"RunPod Llama failed for quiz; falling back to Gemini: {e}")
+            return await _call_gemini(prompt)
+        raise
 
 
 # -------------------------
@@ -777,21 +1076,27 @@ Return JSON format:
 # -------------------------
 @router.post("/generate", response_model=GenerateQuizRes)
 async def generate_quiz(req: GenerateQuizReq):
-    if req.num_questions < 1 or req.num_questions > 10:
-        raise HTTPException(status_code=400, detail="num_questions must be between 1 and 10.")
+    token = None
+    normalized = _normalize_quiz_provider(req.provider)
+    if normalized:
+        token = _quiz_provider_override.set(normalized)
 
-    # Build content per mode
-    if req.mode == "A":
-        # Enforce using the CURRENT chat session only
-        if not (req.session_id and str(req.session_id).strip()):
-            raise HTTPException(status_code=400, detail="Mode A requires current session_id.")
+    try:
+        if req.num_questions < 1 or req.num_questions > 10:
+            raise HTTPException(status_code=400, detail="num_questions must be between 1 and 10.")
 
-        last_prompt, last_resp = await _get_last_turn(req.user_id, req.session_id)
-        if not last_prompt:
-            raise HTTPException(status_code=400, detail="No last prompt found yet. Send a chat message first.")
+        # Build content per mode
+        if req.mode == "A":
+            # Enforce using the CURRENT chat session only
+            if not (req.session_id and str(req.session_id).strip()):
+                raise HTTPException(status_code=400, detail="Mode A requires current session_id.")
 
-        title = "Quiz from Last Prompt"
-        base_text = f"""
+            last_prompt, last_resp = await _get_last_turn(req.user_id, req.session_id)
+            if not last_prompt:
+                raise HTTPException(status_code=400, detail="No last prompt found yet. Send a chat message first.")
+
+            title = "Quiz from Last Prompt"
+            base_text = f"""
 USER ASKED:
 {last_prompt}
 
@@ -799,18 +1104,18 @@ ASSISTANT ANSWERED:
 {last_resp if last_resp else "(No assistant response found.)"}
 """.strip()
 
-        derived_title, derived_topic = await _derive_title_and_topic(base_text)
-        store_title = derived_title
-        store_quiz_type = "mcq"
-        store_topic = derived_topic
+            derived_title, derived_topic = await _derive_title_and_topic(base_text)
+            store_title = derived_title
+            store_quiz_type = "mcq"
+            store_topic = derived_topic
 
-    elif req.mode == "B":
-        topic = (req.topic or "").strip()
-        if not topic:
-            raise HTTPException(status_code=400, detail="Mode B requires 'topic'.")
+        elif req.mode == "B":
+            topic = (req.topic or "").strip()
+            if not topic:
+                raise HTTPException(status_code=400, detail="Mode B requires 'topic'.")
 
-        title = f"Quiz: {topic}"
-        base_text = f"""
+            title = f"Quiz: {topic}"
+            base_text = f"""
 TOPIC:
 {topic}
 
@@ -818,131 +1123,143 @@ Make questions ONLY about this topic.
 Do NOT use any other topics.
 """.strip()
 
-        derived_title, derived_topic = await _derive_title_and_topic(f"TOPIC:\n{topic}")
-        store_title = derived_title or topic
-        store_quiz_type = "mcq"
-        store_topic = topic
+            derived_title, derived_topic = await _derive_title_and_topic(f"TOPIC:\n{topic}")
+            store_title = derived_title or topic
+            store_quiz_type = "mcq"
+            store_topic = topic
 
-    else:  # "C"
-        # Enforce using the CURRENT chat session only and fetch full session turns
-        if not (req.session_id and str(req.session_id).strip()):
-            raise HTTPException(status_code=400, detail="Mode C requires current session_id.")
+        else:  # "C"
+            # Enforce using the CURRENT chat session only and fetch full session turns
+            if not (req.session_id and str(req.session_id).strip()):
+                raise HTTPException(status_code=400, detail="Mode C requires current session_id.")
 
-        # Fetch all turns in this session (high cap to cover entire chat)
-        turns = await _fetch_turns_with_responses(req.user_id, req.session_id, limit=1000)
-        if not turns:
-            raise HTTPException(status_code=400, detail="No discussion found yet. Chat first, then generate Mode C.")
+            # Fetch all turns in this session (high cap to cover entire chat)
+            turns = await _fetch_turns_with_responses(req.user_id, req.session_id, limit=1000)
+            if not turns:
+                raise HTTPException(status_code=400, detail="No discussion found yet. Chat first, then generate Mode C.")
 
-        title = "Quiz from Current Discussion"
+            title = "Quiz from Current Discussion"
 
-        lines: List[str] = []
-        for (p, a) in turns:
-            lines.append(f"USER: {p}")
-            if a:
-                lines.append(f"ASSISTANT: {a}")
-        base_text = "\n".join(lines).strip()
+            lines: List[str] = []
+            for (p, a) in turns:
+                lines.append(f"USER: {p}")
+                if a:
+                    lines.append(f"ASSISTANT: {a}")
+            base_text = "\n".join(lines).strip()
 
-        derived_title, derived_topic = await _derive_title_and_topic(base_text)
-        store_title = derived_title
-        store_quiz_type = "mcq"
-        store_topic = derived_topic
+            derived_title, derived_topic = await _derive_title_and_topic(base_text)
+            store_title = derived_title
+            store_quiz_type = "mcq"
+            store_topic = derived_topic
 
-    seed_avoid = [str(x)[:256] for x in (req.avoid_questions or []) if isinstance(x, str) and x.strip()]
-    questions = await _generate_fill_to_n(base_text, req.num_questions, seed_avoid=seed_avoid, related=req.related)
-    if not questions:
-        raise HTTPException(status_code=502, detail="Parsed quiz had no valid questions.")
+        seed_avoid = [str(x)[:256] for x in (req.avoid_questions or []) if isinstance(x, str) and x.strip()]
+        questions = await _generate_fill_to_n(base_text, req.num_questions, seed_avoid=seed_avoid, related=req.related)
+        if not questions:
+            raise HTTPException(status_code=502, detail="Parsed quiz had no valid questions.")
 
-    questions = questions[: req.num_questions]
-    for i, q in enumerate(questions, start=1):
-        q.id = f"q{i}"
+        questions = questions[: req.num_questions]
+        for i, q in enumerate(questions, start=1):
+            q.id = f"q{i}"
 
-    # Persist quiz + questions + options to Supabase
-    try:
-        quiz_id = await _sb_insert_quiz(
-            user_id=req.user_id,
-            title=store_title,
-            quiz_type=store_quiz_type,
-            topic=store_topic,
-            mode=req.mode,
-        )
-        await _sb_bulk_insert_questions_and_options(quiz_id, questions)
-    except HTTPException:
-        # If storage fails, still return quiz to the client
-        quiz_id = None
+        # Persist quiz + questions + options to Supabase
+        try:
+            quiz_id = await _sb_insert_quiz(
+                user_id=req.user_id,
+                title=store_title,
+                quiz_type=store_quiz_type,
+                topic=store_topic,
+                mode=req.mode,
+            )
+            await _sb_bulk_insert_questions_and_options(quiz_id, questions)
+        except HTTPException:
+            # If storage fails, still return quiz to the client
+            quiz_id = None
 
-    return GenerateQuizRes(title=title, questions=questions, quiz_id=quiz_id)
+        return GenerateQuizRes(title=title, questions=questions, quiz_id=quiz_id)
+    finally:
+        if token is not None:
+            _quiz_provider_override.reset(token)
 
 
 @router.post("/feedback", response_model=QuizFeedbackRes)
 async def quiz_feedback(req: QuizFeedbackReq):
-    if len(req.questions) != len(req.userAnswers):
-        raise HTTPException(status_code=400, detail="userAnswers length must match questions length")
+    token = None
+    normalized = _normalize_quiz_provider(req.provider)
+    if normalized:
+        token = _quiz_provider_override.set(normalized)
 
-    correct, wrong = [], []
-
-    for q, ans in zip(req.questions, req.userAnswers):
-        entry = {
-            "question": q.q,
-            "options": q.options,
-            "correctIndex": q.answerIndex,
-            "userIndex": ans,
-        }
-        if ans is None:
-            wrong.append(entry)
-        elif ans == q.answerIndex:
-            correct.append(entry)
-        else:
-            wrong.append(entry)
-
-    prompt = _build_feedback_prompt(req.title, correct, wrong)
-
-    raw = await _call_model(prompt)
-    parsed = _safe_json_extract(raw)
-    if not parsed:
-        parsed = await _repair_to_json(raw)
-
-    strengths = parsed.get("strengths") or []
-    weak = parsed.get("weakAreas") or []
-    rec = (parsed.get("recommended") or "").strip()
-
-    # Hard fallbacks
-    if not isinstance(strengths, list) or not strengths:
-        strengths = ["Core topic understanding"]
-    if not isinstance(weak, list) or not weak:
-        weak = ["Advanced topic details"]
-    if not rec:
-        rec = "Review the incorrect questions and try another quiz."
-
-    strengths = [str(x).strip() for x in strengths if str(x).strip()][:4]
-    weak = [str(x).strip() for x in weak if str(x).strip()][:4]
-
-    # Store attempt + feedback in Supabase
     try:
-        # Determine quiz id to attach attempt to
-        quiz_id = req.quiz_id or await _find_latest_quiz_by_title(req.user_id, req.title)
-        # compute score: count correct answers where user answered
-        score = 0
-        for q, ans in zip(req.questions, req.userAnswers):
-            if ans is not None and ans == q.answerIndex:
-                score += 1
-        if quiz_id:
-            attempt_id = await _sb_insert_attempt(req.user_id, quiz_id, score)
-            if attempt_id:
-                await _sb_insert_feedback(attempt_id, strengths, weak, rec)
-                # Also store per-question answers for later review
-                try:
-                    await _sb_bulk_insert_attempt_answers(attempt_id, req.questions, req.userAnswers)
-                except Exception:
-                    pass
-    except Exception:
-        # non-fatal; continue returning feedback
-        pass
+        if len(req.questions) != len(req.userAnswers):
+            raise HTTPException(status_code=400, detail="userAnswers length must match questions length")
 
-    return QuizFeedbackRes(
-        strengths=strengths,
-        weakAreas=weak,
-        recommended=rec,
-    )
+        correct, wrong = [], []
+
+        for q, ans in zip(req.questions, req.userAnswers):
+            entry = {
+                "question": q.q,
+                "options": q.options,
+                "correctIndex": q.answerIndex,
+                "userIndex": ans,
+            }
+            if ans is None:
+                wrong.append(entry)
+            elif ans == q.answerIndex:
+                correct.append(entry)
+            else:
+                wrong.append(entry)
+
+        prompt = _build_feedback_prompt(req.title, correct, wrong)
+
+        raw = await _call_model(prompt)
+        parsed = _safe_json_extract(raw)
+        if not parsed:
+            parsed = await _repair_to_json(raw)
+
+        strengths = parsed.get("strengths") or []
+        weak = parsed.get("weakAreas") or []
+        rec = (parsed.get("recommended") or "").strip()
+
+        # Hard fallbacks
+        if not isinstance(strengths, list) or not strengths:
+            strengths = ["Core topic understanding"]
+        if not isinstance(weak, list) or not weak:
+            weak = ["Advanced topic details"]
+        if not rec:
+            rec = "Review the incorrect questions and try another quiz."
+
+        strengths = [str(x).strip() for x in strengths if str(x).strip()][:4]
+        weak = [str(x).strip() for x in weak if str(x).strip()][:4]
+
+        # Store attempt + feedback in Supabase
+        try:
+            # Determine quiz id to attach attempt to
+            quiz_id = req.quiz_id or await _find_latest_quiz_by_title(req.user_id, req.title)
+            # compute score: count correct answers where user answered
+            score = 0
+            for q, ans in zip(req.questions, req.userAnswers):
+                if ans is not None and ans == q.answerIndex:
+                    score += 1
+            if quiz_id:
+                attempt_id = await _sb_insert_attempt(req.user_id, quiz_id, score)
+                if attempt_id:
+                    await _sb_insert_feedback(attempt_id, strengths, weak, rec)
+                    # Also store per-question answers for later review
+                    try:
+                        await _sb_bulk_insert_attempt_answers(attempt_id, req.questions, req.userAnswers)
+                    except Exception:
+                        pass
+        except Exception:
+            # non-fatal; continue returning feedback
+            pass
+
+        return QuizFeedbackRes(
+            strengths=strengths,
+            weakAreas=weak,
+            recommended=rec,
+        )
+    finally:
+        if token is not None:
+            _quiz_provider_override.reset(token)
 
 
 @router.get("/attempt/{attempt_id}")
