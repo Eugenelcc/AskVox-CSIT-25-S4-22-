@@ -5,14 +5,14 @@ import { RotateCw } from "lucide-react";
 type TopicItem = { id: string; topic: string };
 type DomainCard = { domain: string; topics: TopicItem[] };
 
-const API_BASE = "http://localhost:8000";
+const API_BASE = import.meta.env.VITE_API_URL || "http://localhost:8000";
 
 export default function SmartRecPanel({
   userId,
   onOpenSession,
 }: {
   userId: string;
-  onOpenSession: (sessionId: string) => void;
+  onOpenSession: (sessionId: string, pendingReply?: boolean) => void;
 }) {
   const [domains, setDomains] = useState<DomainCard[]>([]);
   const [loading, setLoading] = useState(false);
@@ -82,7 +82,7 @@ export default function SmartRecPanel({
       });
 
       if (data.domains) setDomains(data.domains);
-      if (data.session_id) onOpenSession(data.session_id);
+      if (data.session_id) onOpenSession(data.session_id, !!data.pending_reply);
     } catch (e: any) {
       if (e?.name === "AbortError" || String(e?.message || "").toLowerCase().includes("aborted")) return;
       setErrorMsg(e?.message || "Failed to open topic.");

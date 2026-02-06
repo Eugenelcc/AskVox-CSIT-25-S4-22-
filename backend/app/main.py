@@ -1,5 +1,6 @@
 from fastapi import FastAPI, Depends, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import text
 from app.db.session import get_db
@@ -21,6 +22,8 @@ from app.api.accounts.billing import router as billing_router
 from app.api.watermark import router as watermark_router
 from app.api.news_worker import router as news_worker_router
 from app.services.quiz import router as quiz_router
+from app.api.domain_routes import router as domain_router
+from app.api.sports import router as sports_router
 
 app = FastAPI(title="AskVox API")
 
@@ -29,13 +32,14 @@ app = FastAPI(title="AskVox API")
 origins = [
     "http://localhost:5173",
     "http://localhost:5174",
-    "http://localhost:3000",
     "https://askvox-csit-25-s4-22-1.onrender.com",
-    # "https://askvox-frontend.vercel.app"  <-- Add your production URL later
+    "https://askvox-front-production.up.railway.app",
+    "http://localhost:3000",
 ]
 
 app.add_middleware(
     CORSMiddleware,
+    #allow_origin_regex=r"^https://askvox-csit-25-s4-22(-.*)?\.onrender\.com$",
     allow_origins=origins,
     allow_credentials=True,
     allow_methods=["*"],
@@ -59,26 +63,26 @@ app.include_router(billing_router)
 app.include_router(watermark_router)
 app.include_router(news_worker_router)  
 app.include_router(quiz_router)
+app.include_router(domain_router)
+app.include_router(sports_router)
 
 # --- HEALTH CHECKS ---
 
-@app.get("/health")
+@app.api_route("/health", methods=["GET", "HEAD"])
 async def health(db: AsyncSession = Depends(get_db)):
     """
     Checks if the Backend is running and if the Database is accessible.
     """
     status = {"backend": "online", "database": "unknown"}
-    
+
     try:
-        # We use the existing SQLAlchemy session to check connection
-        # This is better than importing the Supabase client just for this one check
         await db.execute(text("SELECT 1"))
         status["database"] = "online"
     except Exception as e:
         status["database"] = "offline"
         status["error"] = str(e)
-        
-    return status
+
+    return JSONResponse(content=status)
 
 @app.get("/db-check")
 async def db_check(db: AsyncSession = Depends(get_db)):

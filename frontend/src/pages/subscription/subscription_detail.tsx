@@ -41,7 +41,7 @@ export default function Upgrade() {
         const token = sess?.access_token as string | undefined;
         if (!token) throw new Error("Not authenticated");
 
-        const resp = await fetch("http://localhost:8000/billing/education-status", {
+        const resp = await fetch(`${import.meta.env.VITE_API_URL}/billing/education-status`, {
           method: "GET",
           headers: { Authorization: `Bearer ${token}` },
         });

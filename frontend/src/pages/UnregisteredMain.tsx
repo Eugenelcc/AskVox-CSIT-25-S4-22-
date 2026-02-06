@@ -15,10 +15,11 @@ import "./cssfiles/UnregisteredMain.css";
 
 const USER_ID = 874902 as const;
 const LLAMA_ID = 212020 as const;
+const API_BASE_URL = import.meta.env.VITE_API_URL || "http://localhost:8000";
 
 // ✅ 2. Update Component to accept 'session' prop
 const UnregisteredMain = ({ session }: { session: Session | null }) => {
-  const API_BASE_URL = import.meta.env.VITE_API_URL || "http://localhost:8000";
+  
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [isSending, setIsSending] = useState(false);
   const [guestSessionId, setGuestSessionId] = useState<string | null>(null);
@@ -37,6 +38,21 @@ const UnregisteredMain = ({ session }: { session: Session | null }) => {
   const ttsActiveRef = useRef(false);
   const ttsSanitizeRef = useRef<((t: string) => string) | null>(null);
   const voiceGuestSessionIdRef = useRef<string | null>(null);
+
+  const classifyDomainBestEffort = async (text: string): Promise<string> => {
+    try {
+      const resp = await fetch(`${API_BASE_URL}/domain/classify`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ text }),
+      });
+      if (!resp.ok) return "general";
+      const data = (await resp.json()) as { domain?: string };
+      return typeof data.domain === "string" && data.domain.trim() ? data.domain : "general";
+    } catch {
+      return "general";
+    }
+  };
 
   const postLog = (text: string, kind: string) => {
     try {
@@ -121,13 +137,14 @@ const UnregisteredMain = ({ session }: { session: Session | null }) => {
     // Insert into queries (capture query_id to link response)
     const queryId = globalThis.crypto?.randomUUID?.() ?? `${Date.now()}-${Math.random()}`;
     try {
+      const detectedDomain = await classifyDomainBestEffort(trimmed);
       await supabase.from('queries').insert({
         id: queryId,
         session_id: currentSessionId,
         user_id: null,
         input_mode: 'text',
         transcribed_text: trimmed,
-        detected_domain: 'general'
+        detected_domain: detectedDomain,
       });
     } catch {}
 
@@ -402,13 +419,14 @@ const UnregisteredMain = ({ session }: { session: Session | null }) => {
             const queryId = globalThis.crypto?.randomUUID?.() ?? `${Date.now()}-${Math.random()}`;
             if (currentSessionId) {
               try {
+                const detectedDomainVoice = await classifyDomainBestEffort(transcript);
                 await supabase.from('queries').insert({
                   id: queryId,
                   session_id: currentSessionId,
                   user_id: null,
                   input_mode: 'voice',
                   transcribed_text: transcript,
-                  detected_domain: 'general',
+                  detected_domain: detectedDomainVoice,
                 });
               } catch {}
             }

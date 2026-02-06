@@ -148,7 +148,6 @@ MAX_MESSAGE_CHARS = 800
 # -----------------------
 FORMAT_INSTRUCTION = (
     "Always format your answer clearly.\n"
-    "- Start with at most 1 short sentence introduction.\n"
     "- When giving multiple suggestions, use a numbered list with ONE item per line.\n"
     "- Avoid giant wall-of-text paragraphs.\n"
 )
@@ -162,7 +161,7 @@ CITATIONS RULES (VERY IMPORTANT):
 """
 
 MODEL_JSON_INSTRUCTION = (
-        "Return a VALID JSON object using the schema below.\n\n"
+    "When appropriate, respond using a VALID JSON object matching the schema below.\n\n"
         "CRITICAL RULES:\n"
         "- Do NOT rewrite, summarize, shorten, or rephrase the answer.\n"
         "- Preserve ALL tone, emojis, formatting, markdown, lists, and wording exactly.\n"
@@ -254,6 +253,10 @@ async def fast_youtube(query: str, num: int = 2, timeout_sec: float = 3.0) -> Li
 # Overall time budget for a single multimodal request (soft)
 _TOTAL_BUDGET_SEC = float(os.getenv("MM_TOTAL_BUDGET_SEC", "9.0"))
 
+# YouTube result sizing (hard cap + default returned count)
+_YOUTUBE_MAX_RESULTS = max(1, min(int(os.getenv("MM_YOUTUBE_MAX_RESULTS", "5")), 10))
+_YOUTUBE_DEFAULT_RESULTS = max(1, min(int(os.getenv("MM_YOUTUBE_DEFAULT_RESULTS", "2")), _YOUTUBE_MAX_RESULTS))
+
 # -----------------------
 # DATA MODELS
 # -----------------------
@@ -306,6 +309,7 @@ class ChatResponse(BaseModel):
 # -----------------------
 # Option A: Keyword Router + Option C: Escalation + Tool Budget
 # -----------------------
+# NOTE: avoid overly generic triggers like "how to" which match many normal questions.
 _MEDIA_WORDS_RE = re.compile(r"\b(video|videos|youtube|yt|watch|tutorial|guide|how to|walkthrough)\b", re.I)
 _IMAGE_WORDS_RE = re.compile(r"\b(image|images|picture|pictures|photo|photos|png|jpg|jpeg|sticker|diagram|infographic|show me)\b", re.I)
 
@@ -313,7 +317,7 @@ _IMAGE_WORDS_RE = re.compile(r"\b(image|images|picture|pictures|photo|photos|png
 # - remove "now" and the generic "202[0-9]" trigger because it causes accidental web routing
 _WEB_WORDS_RE = re.compile(
     r"\b(latest|news|today|current|update|updated|recent|price|release|released|schedule|announcement|"
-    r"source|sources|link|links|cite|citation|according to|reference)\b",
+    r"source|sources|link|links|cite|citation|according to|resources|reference)\b",
     re.I,
 )
 
@@ -323,6 +327,20 @@ _YEAR_WEB_INTENT_RE = re.compile(r"\b(released|release|airing|air|premiere|premi
 _UNCERTAIN_RE = re.compile(
     r"\b(i (don't|do not) know|not sure|can't verify|cannot verify|unsure|might be|may be|could be|depends|"
     r"check online|look it up|search|verify|as of|recently)\b",
+    re.I,
+)
+
+_DEFLECTION_RE = re.compile(
+    r"\b(i can't|i cannot|i'm unable to|i am unable to|don't have access|do not have access|"
+    r"i don't have (real\s*-?time|realtime) data|i cannot browse|i can't browse|"
+    r"as an ai|i'm just an ai|cannot guarantee|no guarantees)\b",
+    re.I,
+)
+
+_FACT_SEEKING_RE = re.compile(
+    r"\b(who|what|when|where|which)\b|"
+    r"\b(how many|how much)\b|"
+    r"\b(compare|vs\.?|difference between)\b",
     re.I,
 )
 
@@ -358,6 +376,105 @@ def looks_like_needs_web(answer_md: str) -> bool:
     if not answer_md or not answer_md.strip():
         return False
     return bool(_UNCERTAIN_RE.search(answer_md))
+
+def looks_like_deflection_or_nonanswer(answer_md: str) -> bool:
+    if not answer_md or not answer_md.strip():
+        return True
+    text = answer_md.strip()
+    if len(text) < 120:
+        return True
+    return bool(_DEFLECTION_RE.search(text))
+
+def is_fact_seeking_question(message: str) -> bool:
+    msg = (message or "").strip()
+    if not msg:
+        return False
+    # Avoid escalating purely general how-to/advice prompts.
+    if is_general_advice_question(msg) and not _FACTUAL_WEB_INTENT_RE.search(msg):
+        return False
+    return bool(_FACT_SEEKING_RE.search(msg) or _FACTUAL_WEB_INTENT_RE.search(msg))
+
+_FACTUAL_WEB_INTENT_RE = re.compile(
+    r"\b(as of|current|latest|updated|recent|today|news)\b|"
+    r"\b(price|cost|salary|net\s*worth|market\s*cap|population|gdp|revenue|statistics|statistic|percent|%|how many|how much|number of)\b|"
+    r"\b(is it true|true that|evidence|proof|study|research|paper)\b|"
+    r"\b(released|release date|premiere|premiered|announced|launch|deadline|schedule)\b|"
+    r"\b(20\d{2})\b",
+    re.I,
+)
+
+_GENERAL_ADVICE_RE = re.compile(
+    r"\b(how do i|how to|tips|advice|learn|improve|practice|study|start|begin|roadmap|plan)\b",
+    re.I,
+)
+
+_LEARNING_REQUEST_RE = re.compile(
+    r"\b(teach me|step\s*-?by\s*-?step|walk me through|tutorial|guide|documentation|docs|resources|course|learn)\b",
+    re.I,
+)
+
+def _has_web_providers() -> bool:
+    return bool((GOOGLE_API_KEY and GOOGLE_CSE_ID) or TAVILY_API_KEY)
+
+def is_general_advice_question(message: str) -> bool:
+    msg = (message or "").strip()
+    if not msg:
+        return False
+    return bool(_GENERAL_ADVICE_RE.search(msg))
+
+def wants_learning_resources(message: str) -> bool:
+    msg = (message or "").strip()
+    if not msg:
+        return False
+    return bool(_LEARNING_REQUEST_RE.search(msg))
+
+def infer_need_web_sources(
+    message: str,
+    answer_md: str,
+    user_flags: Dict[str, bool],
+    model_need_web: bool,
+    elapsed_sec: Optional[float] = None,
+) -> Tuple[bool, str]:
+    """Decide whether to fetch web sources.
+
+    Returns: (need_web, reason)
+    """
+    if not _has_web_providers():
+        return False, "no_providers"
+
+    if is_smalltalk_or_identity(message):
+        return False, "smalltalk_or_identity"
+
+    if user_flags.get("want_web"):
+        return True, "explicit_web_intent"
+
+    # Soft time-budget guard: avoid web escalation when we're already close to the total budget.
+    # (Still allow explicit requests via want_web above.)
+    if elapsed_sec is not None:
+        remaining = _TOTAL_BUDGET_SEC - float(elapsed_sec)
+        if remaining < 2.0:
+            return False, "budget_exhausted"
+
+    # Option C: for learning prompts, fetch sources proactively.
+    if wants_learning_resources(message):
+        return True, "learning_resources"
+
+    if model_need_web:
+        return True, "model_suggested"
+
+    if looks_like_needs_web(answer_md):
+        return True, "model_uncertain"
+
+    # If the draft answer is likely a deflection/non-answer AND the user asked a fact-seeking question,
+    # escalate to web even if the model didn't explicitly say it needs web.
+    if looks_like_deflection_or_nonanswer(answer_md) and is_fact_seeking_question(message):
+        return True, "draft_nonanswer_fact_seeking"
+
+    msg = (message or "").strip()
+    if msg and is_fact_seeking_question(msg) and not is_general_advice_question(msg):
+        return True, "factual_or_time_sensitive"
+
+    return False, "not_needed"
 
 def make_fallback_query(message: str, max_len: int = 120) -> str:
     if not message:
@@ -400,9 +517,9 @@ def apply_tool_budget(
     need_yt: bool,
 ) -> Tuple[bool, bool, bool]:
     # Media only when user explicitly asked OR forced by env
-    if not (user_flags.get("want_images") or FORCE_IMAGES):
+    if not (user_flags.get("want_images") or user_flags.get("auto_images") or FORCE_IMAGES):
         need_img = False
-    if not (user_flags.get("want_youtube") or FORCE_YOUTUBE):
+    if not (user_flags.get("want_youtube") or user_flags.get("auto_youtube") or FORCE_YOUTUBE):
         need_yt = False
 
     # Web is handled by "hard gate" policy in caller
@@ -417,16 +534,7 @@ def normalize_markdown_spacing(text: str) -> str:
     text = re.sub(r"([^\n])\n\n([A-Z])", r"\1\n\2", text)
     return text.strip()
 
-def enforce_compact_list(text: str) -> str:
-    lines = [l.strip() for l in text.splitlines() if l.strip()]
-    out = []
-    i = 0
-    while i < len(lines):
-        title = lines[i]
-        desc = lines[i + 1] if i + 1 < len(lines) else ""
-        out.append(f"- **{title}** – {desc}")
-        i += 2
-    return "\n".join(out)
+    
 
 # -----------------------
 # PLACEHOLDER: Moderation
@@ -622,13 +730,17 @@ async def youtube_search(query: str, num: int = 2) -> List[YouTubeItem]:
     if not (YOUTUBE_API_KEY and query.strip()):
         return []
     url = "https://www.googleapis.com/youtube/v3/search"
+
+    # Enforce a strict upper bound regardless of caller to avoid returning huge lists.
+    max_results = max(1, min(int(num), _YOUTUBE_MAX_RESULTS, 50))
     params = {
         "key": YOUTUBE_API_KEY,
         "part": "snippet",
         "q": query,
         "type": "video",
-        "maxResults": min(num, 5),
+        "maxResults": max_results,
         "safeSearch": "strict",
+        "order": "relevance",
     }
     async with httpx.AsyncClient(timeout=20) as client:
         r = await client.get(url, params=params)
@@ -650,7 +762,9 @@ async def youtube_search(query: str, num: int = 2) -> List[YouTubeItem]:
             channel=snip.get("channelTitle"),
             thumbnail_url=((snip.get("thumbnails") or {}).get("medium") or {}).get("url"),
         ))
-    return out
+
+    # Final guard (belt-and-suspenders) to ensure we never exceed max_results.
+    return out[:max_results]
 
 # -----------------------
 # Helpers: extract JSON from model
@@ -662,17 +776,24 @@ def extract_json(text: str) -> Dict[str, Any]:
         return json.loads(text)
     except Exception:
         pass
-
-    # ✅ more robust: first "{" to last "}"
-    start = text.find("{")
-    end = text.rfind("}")
-    if start == -1 or end == -1 or end <= start:
-        return {}
-    candidate = text[start:end+1]
-    try:
-        return json.loads(candidate)
-    except Exception:
-        return {}
+    # Try to find the first balanced JSON object in the text
+    s = str(text)
+    n = len(s)
+    for i in range(n):
+        if s[i] == '{':
+            depth = 0
+            for j in range(i, n):
+                if s[j] == '{':
+                    depth += 1
+                elif s[j] == '}':
+                    depth -= 1
+                    if depth == 0:
+                        candidate = s[i:j+1]
+                        try:
+                            return json.loads(candidate)
+                        except Exception:
+                            break
+    return {}
 
 def safe_wrap_json(raw_text: str) -> Dict[str, Any]:
     rt = (raw_text or "").strip()
@@ -705,6 +826,8 @@ def cleanup_model_text(text: str) -> str:
         out = re.sub(pat, "", out, flags=re.MULTILINE)
     # Remove inline citation tokens like [[cite:1]] (sources will be shown separately)
     out = re.sub(r"\[\[\s*cite\s*:\s*\d+\s*\]\]", "", out, flags=re.IGNORECASE)
+    # Strip leaked special tokens (e.g., <|eot_id|>, <|start_header_id|>)
+    out = re.sub(r"<\|.*?\|>", "", out)
     # Remove [USER] and [ASSISTANT] tags (model echoes)
     out = re.sub(r"^\s*\[(USER|ASSISTANT)\]\s*", "", out, flags=re.MULTILINE)
     # Remove trailing [SOURCES] section entirely (frontend shows clickable sources separately)
@@ -739,6 +862,7 @@ def build_prompt(
     rag_block: str = "",
     web_evidence_block: str = "",
     article_block: str = "",
+    chat_mode: bool = False,
 ) -> str:
     def _truncate(text: str, limit: int) -> str:
         if not text:
@@ -752,42 +876,118 @@ def build_prompt(
     safe_rag = _truncate(rag_block, MAX_RAG_CHARS)
     safe_evidence = _truncate(web_evidence_block, MAX_EVIDENCE_CHARS)
 
-    p = f"[SYSTEM]\n{MODEL_JSON_INSTRUCTION}\n"
+    # LLaMA-3.3 Instruct chat headers
+    if chat_mode:
+        p = (
+            "<|begin_of_text|>"
+            "<|start_header_id|>system<|end_header_id|>\n"
+            "You are AskVox, a friendly, knowledgeable AI assistant. "
+            "Provide clear, detailed, and helpful responses with examples when useful.\n"
+            "<|eot_id|>"
+        )
+
+        # Include recent history so the model gets conversational context.
+        filtered_history = []
+        seen = set()
+        for h in history:
+            if not h.content or not h.content.strip():
+                continue
+            # If the caller already included the current user message in history,
+            # avoid duplicating it (we append safe_message at the end).
+            if h.role == "user" and h.content.strip() == safe_message.strip():
+                continue
+            key = (h.role, h.content.strip())
+            if key in seen:
+                continue
+            seen.add(key)
+            filtered_history.append(h)
+        filtered_history = filtered_history[-4:]
+
+        print(
+            "🧠 CHAT_MODE prompt context:",
+            {"history_items_included": len(filtered_history)},
+            flush=True,
+        )
+
+        remaining_history_chars = MAX_HISTORY_CHARS
+        for h in filtered_history:
+            role = "user" if h.role == "user" else "assistant"
+            if remaining_history_chars <= 0:
+                break
+            content = _truncate(h.content, 260)
+            if len(content) > remaining_history_chars:
+                content = _truncate(content, max(0, remaining_history_chars))
+            remaining_history_chars -= len(content)
+            p += (
+                f"<|start_header_id|>{role}<|end_header_id|>\n"
+                f"{content}<|eot_id|>"
+            )
+
+        p += (
+            "<|start_header_id|>user<|end_header_id|>\n"
+            f"{safe_message}<|eot_id|>"
+            "<|start_header_id|>assistant<|end_header_id|>\n"
+        )
+        if len(p) > MAX_PROMPT_CHARS:
+            p = p[:MAX_PROMPT_CHARS] + "..."
+        print("🧠 CHAT_MODE prompt length:", len(p), flush=True)
+        print("\n==== PROMPT SENT TO MODEL ====".ljust(40, "="), flush=True)
+        print(p[:1200] + ("..." if len(p) > 1200 else ""), flush=True)
+        print("="*40, flush=True)
+        return p
+
+    # Structured mode with JSON instruction and optional context blocks
+    p = (
+        "<|begin_of_text|>"
+        "<|start_header_id|>system<|end_header_id|>\n"
+    )
+    p += MODEL_JSON_INSTRUCTION
     if safe_article:
-        p += "\n[INSTRUCTION] Use the provided ARTICLE_CONTEXT as the primary source for the user's question.\n"
+        p += "\nUse the provided ARTICLE_CONTEXT as the primary source for the user's question.\n"
         p += f"\n{safe_article}\n"
     if safe_rag:
         p += f"\n{safe_rag}\n"
     if safe_evidence:
         p += f"\n{safe_evidence}\n"
+    p += "<|eot_id|>"
 
-    # Filter out empty or duplicate history entries
+    # Filter out empty or duplicate history entries (keep last 2 exchanges)
     filtered_history = []
     seen = set()
     for h in history:
         if not h.content or not h.content.strip():
+            continue
+        # If the caller already included the current user message in history,
+        # avoid duplicating it (we append safe_message at the end).
+        if h.role == "user" and h.content.strip() == safe_message.strip():
             continue
         key = (h.role, h.content.strip())
         if key in seen:
             continue
         seen.add(key)
         filtered_history.append(h)
-
-    # Only keep the last 2 exchanges (user/assistant pairs) for clarity
     filtered_history = filtered_history[-4:]
 
     remaining_history_chars = MAX_HISTORY_CHARS
     for h in filtered_history:
-        role_tag = "USER" if h.role == "user" else "ASSISTANT"
+        role = "user" if h.role == "user" else "assistant"
         if remaining_history_chars <= 0:
             break
         content = _truncate(h.content, 260)
         if len(content) > remaining_history_chars:
             content = _truncate(content, max(0, remaining_history_chars))
         remaining_history_chars -= len(content)
-        p += f"\n[{role_tag}] {content}\n"
+        p += (
+            f"<|start_header_id|>{role}<|end_header_id|>\n"
+            f"{content}<|eot_id|>"
+        )
 
-    p += f"\n[USER] {safe_message}\n[ASSISTANT]"
+    p += (
+        "<|start_header_id|>user<|end_header_id|>\n"
+        f"{safe_message}<|eot_id|>"
+        "<|start_header_id|>assistant<|end_header_id|>\n"
+    )
+
     if len(p) > MAX_PROMPT_CHARS:
         p = p[:MAX_PROMPT_CHARS] + "..."
 
@@ -887,7 +1087,7 @@ async def call_runpod_job_prompt(prompt: str) -> str:
         raise HTTPException(status_code=500, detail="RUNPOD_API_KEY missing")
 
     headers = {RUNPOD_AUTH_HEADER or "Authorization": f"Bearer {RUNPOD_API_KEY}"}
-    payload = {"input": {"prompt": prompt}}
+    payload = {"input": {"prompt": prompt, "stop": ["<|eot_id|>"]}}
 
     try:
         print(f"🚀 Submitting RunPod job: {RUNPOD_RUN_ENDPOINT}", flush=True)
@@ -1167,18 +1367,37 @@ async def generate_cloud_structured(
 
     timeout = httpx.Timeout(connect=10.0, read=300.0, write=10.0, pool=10.0)
     trimmed_history = history[-max_history:] if max_history and max_history > 0 else []
+    user_flags = keyword_router(message)
+    chat_flag = not user_flags.get("want_web", False)
+
 
     # ✅ Draft answer first (no tools yet)
     if RUNPOD_RUN_ENDPOINT:
         raw = await call_runpod_job_prompt(
-            build_prompt(message, trimmed_history, rag_block=rag_block, article_block=article_block)
+            build_prompt(
+                message,
+                trimmed_history,
+                rag_block=rag_block,
+                article_block=article_block,
+                chat_mode=chat_flag,
+            )
         )
     else:
         raw = await call_cloudrun(
-            build_prompt(message, trimmed_history, rag_block=rag_block, article_block=article_block),
+            build_prompt(
+                message,
+                trimmed_history,
+                rag_block=rag_block,
+                article_block=article_block,
+                chat_mode=chat_flag,
+            ),
             timeout=timeout,
         )
-    plan = extract_json(raw)
+    if not chat_flag:
+        plan = extract_json(raw)
+    else:
+        plan = {}
+
 
     # ✅ Non-destructive fallback: wrap raw text into JSON without rewriting content
     if not plan or "answer_markdown" not in plan or not (plan.get("answer_markdown") or "").strip():
@@ -1204,7 +1423,7 @@ async def generate_cloud_structured(
     plan["answer_markdown"] = answer_md
 
     # Model suggestions (soft)
-    need_web = bool(plan.get("need_web_sources"))
+    model_need_web = bool(plan.get("need_web_sources"))
     need_img = bool(plan.get("need_images"))
     need_yt = bool(plan.get("need_youtube"))
     web_q = (plan.get("web_query") or "").strip()
@@ -1214,14 +1433,55 @@ async def generate_cloud_structured(
     # ✅ Deterministic keyword routing (still used for images/youtube decisions)
     user_flags = keyword_router(message)
 
-    # ✅ Gate web sources for smalltalk/identity queries
+    # Option C: for learning prompts, auto-enable web + YouTube.
+    auto_learning_media = wants_learning_resources(message)
+    if auto_learning_media:
+        user_flags["auto_youtube"] = True
+        user_flags["auto_images"] = False
+        need_yt = True
+
+    # ✅ Smart web decision: explicit intent OR factual/time-sensitive OR model uncertainty
+    need_web, need_web_reason = infer_need_web_sources(
+        message=message,
+        answer_md=answer_md,
+        user_flags=user_flags,
+        model_need_web=model_need_web,
+        elapsed_sec=(time.perf_counter() - t_start),
+    )
+
+    # Fetch web sources only when the smart decision says we need them
     sources: List[SourceItem] = []
     evidence_chunks: List[Dict[str, str]] = []
-    skip_web = is_smalltalk_or_identity(message)
-    if skip_web:
-        need_web = False
+    if not need_web:
         plan["need_web_sources"] = False
-        print("🔕 Skipping web sources for smalltalk/identity query", {"message": message[:80]}, flush=True)
+        print(
+            "🔕 Skipping web sources",
+            {"reason": need_web_reason, "message": message[:80]},
+            flush=True,
+        )
+
+        # If we're skipping only because we're near budget, still fetch a small set of sources quickly
+        # (no second-pass generation) so the UI can show helpful links.
+        if need_web_reason == "budget_exhausted" and _has_web_providers():
+            web_q = enforce_web_query_constraints(message, web_q or message)
+            g_task = asyncio.create_task(fast_google_web_search(web_q, num=7, timeout_sec=2.5))
+            t_task = asyncio.create_task(fast_tavily(web_q, max_sources=6, timeout_sec=3.0))
+            g_res, (tav_sources, tav_chunks) = await asyncio.gather(g_task, t_task)
+            sources = g_res or []
+            evidence_chunks = tav_chunks or []
+            if tav_sources:
+                seen = {s.url.lower(): s for s in sources if s.url}
+                for s in tav_sources:
+                    key = (s.url or "").lower()
+                    if key and key not in seen:
+                        sources.append(s)
+                        seen[key] = s
+            if sources:
+                print(
+                    "🔎 Budget-limited sources fetched (no second pass)",
+                    {"count": len(sources), "web_q": web_q},
+                    flush=True,
+                )
     else:
         web_q = enforce_web_query_constraints(message, web_q or message)
         g_task = asyncio.create_task(google_web_search(web_q, num=7))
@@ -1236,6 +1496,15 @@ async def generate_cloud_structured(
                 if key and key not in seen:
                     sources.append(s)
                     seen[key] = s
+
+        if not sources:
+            need_web = False
+            plan["need_web_sources"] = False
+            print(
+                "🔕 Web requested but no sources available",
+                {"reason": need_web_reason, "web_q": web_q},
+                flush=True,
+            )
     if FORCE_IMAGES:
         need_img = True
     if FORCE_YOUTUBE:
@@ -1260,6 +1529,7 @@ async def generate_cloud_structured(
         "ROUTED FLAGS:",
         {
             "need_web": need_web,
+            "need_web_reason": need_web_reason,
             "web_q": web_q,
             "need_img": need_img,
             "img_q": img_q,
@@ -1290,6 +1560,7 @@ async def generate_cloud_structured(
                         rag_block=rag_block,
                         web_evidence_block=web_evidence_block,
                         article_block=article_block,
+                        chat_mode=False,
                     )
                 )
             else:
@@ -1300,6 +1571,7 @@ async def generate_cloud_structured(
                         rag_block=rag_block,
                         web_evidence_block=web_evidence_block,
                         article_block=article_block,
+                        chat_mode=False,
                     ),
                     timeout=timeout,
                 )
@@ -1366,8 +1638,15 @@ async def generate_cloud_structured(
 
     # 5) YouTube
     if need_yt and yt_q:
-        youtube = await fast_youtube(yt_q, num=2)
-        print("YOUTUBE RESULTS:", len(youtube), flush=True)
+        youtube = await fast_youtube(yt_q, num=_YOUTUBE_DEFAULT_RESULTS)
+        if len(youtube) > _YOUTUBE_DEFAULT_RESULTS:
+            youtube = youtube[:_YOUTUBE_DEFAULT_RESULTS]
+        print(
+            "YOUTUBE RESULTS:",
+            len(youtube),
+            {"requested": _YOUTUBE_DEFAULT_RESULTS, "cap": _YOUTUBE_MAX_RESULTS},
+            flush=True,
+        )
 
     # 6) Final fallback if answer_md still empty
     if not answer_md:
@@ -1380,12 +1659,6 @@ async def generate_cloud_structured(
     answer_md = cleanup_model_text(answer_md)
     answer_md = strip_meta_prompts(answer_md)
     answer_md = normalize_markdown_spacing(answer_md)
-    if (
-        "-" not in answer_md
-        and "*" not in answer_md
-        and not re.search(r"\bDay\s+\d+\b", answer_md)
-    ):
-        answer_md = enforce_compact_list(answer_md)
 
     return AssistantPayload(
         answer_markdown=answer_md,

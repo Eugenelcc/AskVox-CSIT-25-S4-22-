@@ -1,41 +1,38 @@
 """
-AskVox SmartRec (rewritten)
-- Domain cards + topics are STRICTLY based on the user's latest query + detected domain
-- Topics are generated as "next things to learn" (query-anchored expansions)
-- Refresh generates genuinely new topics by avoiding:
-  1) clicked topics
-  2) currently active topics
-  3) recently served topics (even if not clicked) within a lookback window
-
-NOTE (recommended DB tweak):
-To avoid repeating topics across refresh, we should NOT hard-delete active recs.
-Instead, we "expire" them by setting dismissed_at.
-
-Run this once in Supabase SQL editor:
-  alter table public.recommendations
-  add column if not exists dismissed_at timestamptz null;
-
-If you don't add dismissed_at, the code will fallback to deleting active recs (less good).
+AskVox SmartRec - Domain-aware recommendation engine
+- Uses YOUR RunPod-hosted Llama model for topic generation
+- Reads detected_domain from queries table (set by domain_classifier)
+- Generates query-anchored topic suggestions
 """
-
 import json
 import os
+import asyncio
+import time
 from datetime import datetime, timezone, timedelta
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, BackgroundTasks, HTTPException
 from pydantic import BaseModel
 import httpx
 from dotenv import load_dotenv
 from supabase import create_client, Client
+from app.services.domain_classifier import validate_domain  # ✅ Import domain validation
 
 router = APIRouter(prefix="/smartrec", tags=["smartrec"])
 load_dotenv()
 
-GEMINI_BASE_URL = os.getenv(
-    "GEMINI_BASE_URL",
-    "https://generativelanguage.googleapis.com/v1beta"
-).rstrip("/")
-GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
-GEMINI_MODEL = os.getenv("GEMINI_MODEL", "gemini-2.0-flash")
+# ✅ RUNPOD LLAMA CONFIGURATION (UPDATED FOR YOUR SETUP)
+# Back-compat: direct HTTP endpoint (OpenAI-compatible or custom)
+LLAMA_RUNPOD_URL = os.getenv("LLAMA_RUNPOD_URL", "").strip().rstrip("/")
+
+# RunPod Serverless (job-mode), as used by MultimodalLlamachat.py
+RUNPOD_API_KEY = os.getenv("RUNPOD_API_KEY", "").strip()
+RUNPOD_AUTH_HEADER = os.getenv("RUNPOD_AUTH_HEADER", "Authorization").strip()
+RUNPOD_RUN_ENDPOINT = os.getenv("RUNPOD_RUN_ENDPOINT", "").strip()
+RUNPOD_STATUS_ENDPOINT = os.getenv("RUNPOD_STATUS_ENDPOINT", "").strip()
+RUNPOD_MAX_WAIT_SEC = float(os.getenv("RUNPOD_MAX_WAIT_SEC", "180"))
+RUNPOD_POLL_INTERVAL_SEC = float(os.getenv("RUNPOD_POLL_INTERVAL_SEC", "1.5"))
+
+# Optional identifier for OpenAI-compatible shims
+LLAMA_MODEL_NAME = os.getenv("LLAMA_MODEL_NAME", "meta-llama/Llama-3-8b-chat-hf")
 
 SUPABASE_URL = os.getenv("SUPABASE_URL", "")
 SUPABASE_SERVICE_ROLE_KEY = os.getenv("SUPABASE_SERVICE_ROLE_KEY", "")
@@ -43,8 +40,6 @@ SUPABASE_SERVICE_ROLE_KEY = os.getenv("SUPABASE_SERVICE_ROLE_KEY", "")
 supabase: Client | None = None
 if SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY:
     supabase = create_client(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY)
-
-
 
 # --- DOMAIN NORMALIZATION (match your UI options exactly) ---
 DOMAIN_CANONICAL = {
@@ -57,11 +52,15 @@ DOMAIN_CANONICAL = {
     "Astronomy": "Astronomy",
     "Geography and Travel": "Geography and Travel",
     "Art, Music and Literature": "Art, Music and Literature",
+    "Technology": "Technology",
+    "Health & Wellness": "Health & Wellness",
     # legacy / variants
     "History": "History and World Events",
     "History & World Events": "History and World Events",
     "Cooking": "Cooking & Food",
     "Astronomy & Space": "Astronomy",
+    "Geography": "Geography and Travel",
+    "Travel": "Geography and Travel",
     "Geography & Travel": "Geography and Travel",
     "Art/Music/Literature": "Art, Music and Literature",
     "Art, Music & Literature": "Art, Music and Literature",
@@ -69,20 +68,18 @@ DOMAIN_CANONICAL = {
 }
 ALLOWED_DOMAINS = set(DOMAIN_CANONICAL.values())
 
-TOPICS_PER_DOMAIN = 1         # what you show per domain
-GEN_POOL_PER_DOMAIN = 14        # ask model for more, then filter
-RECENT_SERVE_LOOKBACK_DAYS = 14 # avoid repeating served topics across refresh
+TOPICS_PER_DOMAIN = 1
+GEN_POOL_PER_DOMAIN = 14
+RECENT_SERVE_LOOKBACK_DAYS = 14
 
 
 class GenerateReq(BaseModel):
     user_id: str
-    # how many recent queries to use as context for the model (same-domain only)
     history_limit: int = 30
 
 
 class GenerateProfileReq(BaseModel):
     user_id: str
-    # generate for multiple domains user asked about recently (profile mode)
     limit: int = 80
 
 
@@ -92,12 +89,18 @@ class ClickReq(BaseModel):
 
 
 def _require_env():
-    if not GEMINI_API_KEY:
-        raise HTTPException(status_code=500, detail="Missing GEMINI_API_KEY in .env")
     if not SUPABASE_URL or not SUPABASE_SERVICE_ROLE_KEY:
-        raise HTTPException(status_code=500, detail="Missing SUPABASE_URL or SUPABASE_SERVICE_ROLE_KEY in .env")
+        raise HTTPException(status_code=500, detail="Missing SUPABASE credentials in .env")
     if supabase is None:
         raise HTTPException(status_code=500, detail="Supabase client is not initialized")
+    if not (LLAMA_RUNPOD_URL or RUNPOD_RUN_ENDPOINT):
+        raise HTTPException(
+            status_code=500,
+            detail="No Llama endpoint configured: set LLAMA_RUNPOD_URL (direct) or RUNPOD_RUN_ENDPOINT (job-mode) in .env",
+        )
+    if RUNPOD_RUN_ENDPOINT and not RUNPOD_API_KEY:
+        # Job-mode requires auth in your MultimodalLlamachat setup
+        raise HTTPException(status_code=500, detail="RUNPOD_API_KEY missing")
 
 
 def _utc_now_iso() -> str:
@@ -109,68 +112,197 @@ def _canon_domain(d: str | None) -> str:
     return DOMAIN_CANONICAL.get(raw, "general")
 
 
-async def _gemini_completion(messages: list[dict], temperature: float = 0.55, max_tokens: int = 450) -> str:
-    if not GEMINI_API_KEY:
-        raise HTTPException(status_code=500, detail="Missing GEMINI_API_KEY in .env")
+# ✅ UPDATED: RunPod Llama API Integration
+async def _runpod_llama_completion(messages: list[dict], temperature: float = 0.55, max_tokens: int = 450) -> str:
+    """
+    Call your RunPod-hosted Llama model.
+    Handles both OpenAI-compatible endpoints and custom RunPod endpoints.
+    """
+    # Preferred: RunPod serverless job-mode (matches MultimodalLlamachat.py)
+    if RUNPOD_RUN_ENDPOINT:
+        prompt_lines: list[str] = []
+        for m in messages or []:
+            if not isinstance(m, dict):
+                continue
+            role = (m.get("role") or "user").upper()
+            content = m.get("content")
+            if content is None:
+                continue
+            if not isinstance(content, str):
+                content = str(content)
+            content = content.strip()
+            if not content:
+                continue
+            prompt_lines.append(f"{role}: {content}")
+        prompt_lines.append("ASSISTANT:")
+        prompt = "\n".join(prompt_lines)
 
-    # If GEMINI_BASE_URL is already the full generateContent endpoint, DO NOT append anything.
-    endpoint = f"{GEMINI_BASE_URL}/models/{GEMINI_MODEL}:generateContent"  # e.g. https://.../v1beta/models/gemini-2.0-flash:generateContent
+        headers = {RUNPOD_AUTH_HEADER or "Authorization": f"Bearer {RUNPOD_API_KEY}"}
+        payload = {"input": {"prompt": prompt, "stop": ["<|eot_id|>"]}}
 
-    # Gemini uses X-goog-api-key (or ?key=)
+        try:
+            async with httpx.AsyncClient(timeout=httpx.Timeout(connect=10.0, read=30.0, write=10.0, pool=10.0)) as client:
+                run_resp = await client.post(RUNPOD_RUN_ENDPOINT, json=payload, headers=headers)
+        except httpx.RequestError as e:
+            raise HTTPException(status_code=502, detail=f"RunPod run request failed: {e}")
+
+        if run_resp.status_code >= 400:
+            raise HTTPException(status_code=502, detail=f"RunPod /run returned {run_resp.status_code}: {run_resp.text[:200]}")
+
+        try:
+            run_data = run_resp.json()
+        except Exception:
+            raise HTTPException(status_code=502, detail="Invalid JSON from RunPod /run")
+
+        job_id = run_data.get("id") or run_data.get("jobId") or run_data.get("job_id")
+        if not job_id:
+            immediate_output = (run_data.get("output") or {}).get("response") or run_data.get("response")
+            if immediate_output:
+                return str(immediate_output).strip()
+            raise HTTPException(status_code=502, detail="RunPod /run response missing job id")
+
+        status_base = RUNPOD_STATUS_ENDPOINT.strip() if RUNPOD_STATUS_ENDPOINT else ""
+        if not status_base:
+            if RUNPOD_RUN_ENDPOINT.endswith("/run"):
+                status_base = RUNPOD_RUN_ENDPOINT[: -len("/run")] + "/status"
+            else:
+                status_base = RUNPOD_RUN_ENDPOINT.rstrip("/") + "/status"
+
+        t0 = time.perf_counter()
+        last_status = ""
+        while (time.perf_counter() - t0) < RUNPOD_MAX_WAIT_SEC:
+            url = f"{status_base}/{job_id}"
+            try:
+                async with httpx.AsyncClient(timeout=httpx.Timeout(connect=10.0, read=20.0, write=10.0, pool=10.0)) as client:
+                    st_resp = await client.get(url, headers=headers)
+            except httpx.RequestError as e:
+                last_status = f"request_error: {e}"
+                await asyncio.sleep(RUNPOD_POLL_INTERVAL_SEC)
+                continue
+
+            if st_resp.status_code >= 400:
+                last_status = f"http_{st_resp.status_code}"
+                await asyncio.sleep(RUNPOD_POLL_INTERVAL_SEC)
+                continue
+
+            try:
+                st_data = st_resp.json()
+            except Exception:
+                last_status = "bad_json"
+                await asyncio.sleep(RUNPOD_POLL_INTERVAL_SEC)
+                continue
+
+            status = (st_data.get("status") or st_data.get("state") or "").upper()
+            last_status = status or last_status
+            if status == "COMPLETED":
+                out = st_data.get("output") or {}
+                if isinstance(out, dict):
+                    ans = out.get("response") or out.get("answer") or out.get("reply")
+                    if ans:
+                        return str(ans).strip()
+                if isinstance(out, str) and out:
+                    return out.strip()
+                ans2 = st_data.get("response") or st_data.get("answer") or st_data.get("reply")
+                if ans2:
+                    return str(ans2).strip()
+                raise HTTPException(status_code=502, detail="RunPod status completed but no output.response")
+            if status in {"FAILED", "ERROR", "CANCELLED"}:
+                raise HTTPException(status_code=502, detail=f"RunPod job {status}")
+
+            await asyncio.sleep(RUNPOD_POLL_INTERVAL_SEC)
+
+        raise HTTPException(status_code=504, detail=f"RunPod job timed out (last_status={last_status})")
+
+    # Back-compat: direct HTTP endpoint
+    if not LLAMA_RUNPOD_URL:
+        raise HTTPException(status_code=500, detail="LLAMA_RUNPOD_URL is not configured")
+    
     headers = {
         "Content-Type": "application/json",
-        "X-goog-api-key": GEMINI_API_KEY,
     }
-
-    # Convert OpenAI-like messages -> Gemini contents
-    # Gemini roles are typically "user" and "model".
-    contents = []
-    system_texts = []
-
-    for m in messages:
-        role = (m.get("role") or "user").lower()
-        text = (m.get("content") or "").strip()
-        if not text:
-            continue
-
-        if role == "system":
-            system_texts.append(text)
-        elif role == "assistant":
-            contents.append({"role": "model", "parts": [{"text": text}]})
-        else:
-            contents.append({"role": "user", "parts": [{"text": text}]})
-
-    payload = {
-        "contents": contents,
-        "generationConfig": {
+    
+    # Add API key if configured (some direct endpoints use X-API-Key)
+    if RUNPOD_API_KEY:
+        headers["X-API-Key"] = RUNPOD_API_KEY  # Standard RunPod header
+    
+    # Detect endpoint type from URL
+    is_openai_compatible = "/v1/chat/completions" in LLAMA_RUNPOD_URL.lower()
+    
+    if is_openai_compatible:
+        # OpenAI-compatible format (vLLM, Text Generation Inference with OpenAI shim)
+        payload = {
+            "model": LLAMA_MODEL_NAME,
+            "messages": messages,
             "temperature": float(temperature),
-            "maxOutputTokens": int(max_tokens),
-        },
-    }
-
-    # If you used system messages, attach them as systemInstruction (supported in v1beta)
-    if system_texts:
-        payload["systemInstruction"] = {"parts": [{"text": "\n".join(system_texts)}]}
-
+            "max_tokens": int(max_tokens),
+            "stream": False,
+        }
+    else:
+        # Custom RunPod endpoint format (common pattern)
+        # Adjust based on your RunPod endpoint's expected payload
+        payload = {
+            "input": {
+                "messages": messages,
+                "parameters": {
+                    "temperature": float(temperature),
+                    "max_new_tokens": int(max_tokens),
+                    "do_sample": True,
+                    "top_p": 0.9,
+                    "repetition_penalty": 1.1,
+                }
+            }
+        }
+    
     try:
-        async with httpx.AsyncClient(timeout=60) as client:
-            res = await client.post(endpoint, headers=headers, json=payload)
+        async with httpx.AsyncClient(timeout=90) as client:  # Longer timeout for Llama
+            res = await client.post(LLAMA_RUNPOD_URL, headers=headers, json=payload)
             res.raise_for_status()
             data = res.json()
     except httpx.HTTPError as e:
-        # If Google returns useful JSON error, include it
-        detail = str(e)
+        detail = f"{e}"
         try:
-            detail += f" | body={res.text}"
+            if res.status_code == 401:
+                detail += " | Authentication failed (check RUNPOD_API_KEY)"
+            elif res.status_code == 404:
+                detail += " | Endpoint not found (check LLAMA_RUNPOD_URL)"
+            elif res.status_code == 422:
+                detail += " | Invalid payload format"
+            detail += f" | status={res.status_code}, response={res.text[:500]}"
         except Exception:
             pass
-        raise HTTPException(status_code=502, detail=f"Gemini request failed: {detail}")
-
-    # Extract text from Gemini response
-    # Typical shape: candidates[0].content.parts[0].text
+        raise HTTPException(
+            status_code=502,
+            detail=f"RunPod Llama request failed: {detail}"
+        )
+    except Exception as e:
+        raise HTTPException(
+            status_code=500,
+            detail=f"Unexpected error calling RunPod: {str(e)}"
+        )
+    
+    # Parse response based on endpoint type
     try:
-        return (data["candidates"][0]["content"]["parts"][0]["text"]).strip()
-    except Exception:
+        if is_openai_compatible:
+            # OpenAI format: choices[0].message.content
+            return data["choices"][0]["message"]["content"].strip()
+        else:
+            # Common RunPod custom endpoint formats
+            if "output" in data and "response" in data["output"]:
+                return data["output"]["response"].strip()
+            elif "generated_text" in data:
+                return data["generated_text"].strip()
+            elif "text" in data:
+                return data["text"].strip()
+            elif isinstance(data, str):
+                return data.strip()
+            else:
+                # Fallback: try to find any text field
+                print(f"⚠️ Unrecognized RunPod response format: {list(data.keys())}")
+                return str(data).strip()
+    except (KeyError, IndexError, TypeError) as e:
+        print(f"❌ Error parsing RunPod response: {e}")
+        print(f"   Response keys: {data.keys() if isinstance(data, dict) else 'N/A'}")
+        print(f"   Full response: {data}")
         return ""
 
 
@@ -200,23 +332,23 @@ def _auto_query(domain: str, topic: str) -> str:
 
 
 def _group_domains(active_rows: list[dict]) -> list[dict]:
-    """
-    Return:
-    [{"domain":"Cooking & Food","topics":[{"id":"...","topic":"..."}, ...]}]
-    """
     by_dom: dict[str, list[dict]] = {}
     for r in active_rows:
         dom = r.get("domain") or "general"
         by_dom.setdefault(dom, []).append({"id": r.get("id"), "topic": r.get("topic")})
-
-    # Keep stable order (only 1 domain in query-mode, but still fine)
+    
     out = []
     for d in sorted(by_dom.keys()):
         out.append({"domain": d, "topics": by_dom[d][:TOPICS_PER_DOMAIN]})
     return out
 
 
-# --------------------- SUPABASE HELPERS ---------------------
+# --------------------- SUPABASE HELPERS (UNCHANGED) ---------------------
+# [All helper functions remain exactly as in your original code]
+# _get_latest_query, _get_user_domains_profile, _get_clicked_topics, 
+# _get_active_rows, _get_active_topics_for_domain, _get_recently_served_topics,
+# _dismiss_active_for_user, _insert_active_topics, _get_domain_history_for_prompt
+# (Copy these directly from your existing smartrec.py - no changes needed)
 
 def _get_latest_query(user_id: str) -> dict | None:
     qres = (
@@ -239,9 +371,6 @@ def _get_latest_query(user_id: str) -> dict | None:
 
 
 def _get_user_domains_profile(user_id: str, limit: int) -> list[str]:
-    """
-    Profile mode: domains user asked about recently (unique)
-    """
     qres = (
         supabase.table("queries")
         .select("detected_domain, created_at")
@@ -276,8 +405,6 @@ def _get_clicked_topics(user_id: str, domain: str) -> set[str]:
 
 
 def _get_active_rows(user_id: str) -> list[dict]:
-    # Active = not clicked and not dismissed (if column exists, we filter below safely)
-    # We'll fetch a bit wider and filter in Python if needed.
     res = (
         supabase.table("recommendations")
         .select("id, domain, topic, clicked_at, dismissed_at, created_at")
@@ -287,7 +414,6 @@ def _get_active_rows(user_id: str) -> list[dict]:
         .execute()
     )
     rows = res.data or []
-    # keep only not dismissed
     return [r for r in rows if r.get("dismissed_at") is None]
 
 
@@ -309,11 +435,6 @@ def _get_active_topics_for_domain(user_id: str, domain: str) -> set[str]:
 
 
 def _get_recently_served_topics(user_id: str, domain: str, lookback_days: int = RECENT_SERVE_LOOKBACK_DAYS) -> set[str]:
-    """
-    Topics served recently (clicked OR not clicked), to avoid repeat across refresh.
-    Requires NOT deleting history rows. Works best with dismissed_at approach.
-    """
-    # fetch last N rows and filter by created_at cutoff
     res = (
         supabase.table("recommendations")
         .select("topic, created_at")
@@ -325,7 +446,7 @@ def _get_recently_served_topics(user_id: str, domain: str, lookback_days: int = 
     )
     rows = res.data or []
     cutoff = datetime.now(timezone.utc) - timedelta(days=lookback_days)
-
+    
     out = set()
     for r in rows:
         t = (r.get("topic") or "").strip()
@@ -333,29 +454,20 @@ def _get_recently_served_topics(user_id: str, domain: str, lookback_days: int = 
             continue
         ca = r.get("created_at")
         try:
-            # supabase returns ISO; Python can parse via fromisoformat in most cases
             dt = datetime.fromisoformat(ca.replace("Z", "+00:00")) if isinstance(ca, str) else None
         except Exception:
             dt = None
-
-        # If can't parse, still include to be safe (prevents repeats)
+        
         if dt is None or dt >= cutoff:
             out.add(t.lower())
     return out
 
 
 def _dismiss_active_for_user(user_id: str):
-    """
-    Refresh behavior:
-    - Best: set dismissed_at for all currently active rows (keeps history to prevent repeats)
-    - Fallback: delete active rows if dismissed_at column doesn't exist
-    """
     try:
-        # If dismissed_at column exists, this update works.
         supabase.table("recommendations").update({"dismissed_at": _utc_now_iso()})\
             .eq("user_id", user_id).is_("clicked_at", "null").is_("dismissed_at", "null").execute()
     except Exception:
-        # fallback: old behavior
         supabase.table("recommendations").delete().eq("user_id", user_id).is_("clicked_at", "null").execute()
 
 
@@ -395,60 +507,58 @@ def _get_domain_history_for_prompt(user_id: str, domain: str, limit: int) -> lis
     return out
 
 
-# --------------------- TOPIC GENERATION ---------------------
+# --------------------- TOPIC GENERATION (Uses RunPod Llama) ---------------------
 
 async def _gen_topics_for_domain_query_anchored(user_id: str, domain: str, latest_query_text: str, history: list[dict], need: int) -> list[str]:
     """
-    Generate topics strictly within domain, inspired by latest_query_text.
-    Filters out clicked, active, and recently served topics.
+    Generate topics using YOUR RunPod-hosted Llama model
     """
     clicked = _get_clicked_topics(user_id, domain)
     active = _get_active_topics_for_domain(user_id, domain)
     recent = _get_recently_served_topics(user_id, domain)
+    
+    # ✅ SYSTEM PROMPT for Llama (optimized for RunPod)
+    system_prompt = f"""You are AskVox SmartRec, an AI that generates educational topic suggestions.
+Return ONLY valid JSON in this exact format: {{"topics": ["topic 1", "topic 2", ...]}}
 
-    prompt = f"""
-You are AskVox SmartRec.
-Return ONLY valid JSON.
-
-Detected domain: "{domain}"
-User's latest query in this domain:
-"{latest_query_text}"
-
-Task:
-Generate topic suggestions that feel like "next things to learn" after the query.
-They MUST be strongly related to the query AND remain STRICTLY within "{domain}".
-
-Return format:
-{{"topics":[...] }}
-
-Constraints:
+CRITICAL RULES:
+- Generate topics that are "next things to learn" after the user's query
+- Topics MUST stay STRICTLY within the "{domain}" domain
 - Return exactly {GEN_POOL_PER_DOMAIN} topics
-- Each topic: 3–8 words
-- Make topics specific, not generic
+- Each topic: 3-8 words
+- Make topics specific and actionable (e.g., "How solar flares affect Earth's magnetic field")
 - Do NOT repeat the user's exact wording
-- No "Basics / Introduction / Overview" style topics
-- Avoid punctuation-heavy titles
-- Mix variety: techniques, comparisons, mistakes, troubleshooting, creative variations
+- NO generic topics like "Basics of X" or "Introduction to Y"
+- Mix variety: techniques, comparisons, common mistakes, troubleshooting, creative applications
+- Avoid punctuation-heavy titles (no colons, semicolons, or excessive commas)
+- If unsure, skip the topic rather than risk irrelevance"""
+    
+    user_prompt = f"""USER'S CONTEXT:
+Detected domain: "{domain}"
+Latest query: "{latest_query_text}"
 
-Context (recent queries in this domain, newest first):
-{json.dumps(history[:12], ensure_ascii=False)}
-""".strip()
+Recent queries in this domain (newest first):
+{json.dumps(history[:12], ensure_ascii=False, indent=2)}
 
-    raw = await _gemini_completion(
+TASK:
+Generate exactly {GEN_POOL_PER_DOMAIN} topic suggestions that feel like natural "what to learn next" extensions.
+Return ONLY the JSON object with "topics" array. NO other text."""
+    
+    raw = await _runpod_llama_completion(
         [
-            {"role": "system", "content": "Return JSON only."},
-            {"role": "user", "content": prompt},
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": user_prompt},
         ],
-        temperature=0.6,
-        max_tokens=450,
+        temperature=0.7,  # Slightly higher for creativity
+        max_tokens=500,
     )
-
+    
     parsed = _safe_parse_json(raw)
     topics = parsed.get("topics") or []
-
+    
     out: list[str] = []
     seen = set()
-
+    
     for t in topics:
         if not isinstance(t, str):
             continue
@@ -456,28 +566,30 @@ Context (recent queries in this domain, newest first):
         if not tt:
             continue
         key = tt.lower()
-
-        # Filter repeats
+        
+        # Filter repeats and invalid topics
         if key in seen or key in clicked or key in active or key in recent:
             continue
-
-        # Prevent too-short / too-long titles
+        
         wcount = len(tt.split())
         if wcount < 3 or wcount > 8:
             continue
-
+        
+        # Additional quality filters
+        if tt.startswith(("What is", "How to", "Why does", "Explain")):
+            continue  # Too question-like
+        if any(bad in tt.lower() for bad in ["basics", "introduction", "overview", "101", "guide"]):
+            continue
+        
         seen.add(key)
         out.append(tt)
         if len(out) >= need:
             break
-
+    
     return out
 
 
 async def _ensure_topics_for_domain(user_id: str, domain: str, latest_query_text: str, history_limit: int):
-    """
-    Ensure TOPICS_PER_DOMAIN active topics exist for domain.
-    """
     current = (
         supabase.table("recommendations")
         .select("id, topic, dismissed_at, clicked_at")
@@ -486,15 +598,14 @@ async def _ensure_topics_for_domain(user_id: str, domain: str, latest_query_text
         .is_("clicked_at", "null")
         .execute()
     ).data or []
-
-    # active = clicked_at is null AND dismissed_at is null
+    
     active_current = [r for r in current if r.get("dismissed_at") is None]
     missing = TOPICS_PER_DOMAIN - len(active_current)
     if missing <= 0:
         return
-
+    
     history = _get_domain_history_for_prompt(user_id, domain, history_limit)
-
+    
     new_topics = await _gen_topics_for_domain_query_anchored(
         user_id=user_id,
         domain=domain,
@@ -505,30 +616,75 @@ async def _ensure_topics_for_domain(user_id: str, domain: str, latest_query_text
     _insert_active_topics(user_id, domain, new_topics)
 
 
-# --------------------- ROUTES ---------------------
+async def _smartrec_click_background(user_id: str, session_id: str, auto_q: str, domain: str, latest_text: str):
+    """Run slow work for /smartrec/click after the HTTP response is returned."""
+    # Refill topic in same domain (uses Llama)
+    try:
+        await _ensure_topics_for_domain(user_id, domain, latest_text, 25)
+    except Exception:
+        pass
+
+    # Generate assistant reply (uses Llama)
+    try:
+        reply = await _runpod_llama_completion(
+            [
+                {
+                    "role": "system",
+                    "content": (
+                        "You are AskVox, a safe educational AI tutor. "
+                        "Explain clearly, be factual, and respond in plain text suitable for TTS. "
+                        "Do NOT use Markdown, asterisks, code fences, tables, or bullets. "
+                        "Keep responses concise (2-4 sentences) and focused on education."
+                    ),
+                },
+                {"role": "user", "content": auto_q},
+            ],
+            temperature=0.3,
+            max_tokens=600,
+        )
+    except Exception:
+        reply = ""
+
+    if reply:
+        try:
+            supabase.table("chat_messages").insert({
+                "session_id": session_id,
+                "user_id": user_id,
+                "role": "assistant",
+                "content": reply,
+                "display_name": "AskVox",
+            }).execute()
+        except Exception:
+            pass
+
+
+# --------------------- ROUTES (UPDATED) ---------------------
 
 @router.post("/generate")
 async def generate(req: GenerateReq):
     """
-    Query-mode (what you asked for):
-    - Domain shown MUST be based on the user's latest query detected domain
-    - Topics MUST be based on domain + latest query
-    - Refresh always generates a new list
+    Generate SmartRec topics for user's latest query domain
+    - Uses detected_domain from queries table (set by domain_classifier)
+    - Generates topics with YOUR RunPod-hosted Llama model
     """
-    _require_env()
-
+    _require_env()  # Now checks RunPod config too
+    
     latest = _get_latest_query(req.user_id)
     if not latest:
         return {"domains": []}
-
+    
     domain = latest["domain"]
     latest_text = latest["text"]
-
-    # refresh behavior: dismiss active recs (keep history) so we can avoid repeats
+    
+    # Validate domain (security)
+    if not validate_domain(domain):
+        raise HTTPException(status_code=400, detail=f"Invalid domain: {domain}")
+    
+    # Refresh: dismiss active recs to avoid repeats
     _dismiss_active_for_user(req.user_id)
-
+    
     await _ensure_topics_for_domain(req.user_id, domain, latest_text, req.history_limit)
-
+    
     active_rows = _get_active_rows(req.user_id)
     active_rows = [r for r in active_rows if (r.get("domain") or "general") == domain]
     return {"domains": _group_domains(active_rows)}
@@ -536,16 +692,13 @@ async def generate(req: GenerateReq):
 
 @router.get("/list")
 def list_recommendations(user_id: str):
-    """
-    List current active topics for the LATEST domain.
-    (Keeps frontend consistent with query-mode.)
-    """
+    """List current active topics for latest domain"""
     _require_env()
-
+    
     latest = _get_latest_query(user_id)
     if not latest:
         return {"domains": []}
-
+    
     domain = latest["domain"]
     active_rows = _get_active_rows(user_id)
     active_rows = [r for r in active_rows if (r.get("domain") or "general") == domain]
@@ -554,43 +707,32 @@ def list_recommendations(user_id: str):
 
 @router.post("/generate_profile")
 async def generate_profile(req: GenerateProfileReq):
-    """
-    Optional: profile mode
-    - generate topics for multiple domains user asked about recently
-    - still query-anchored per domain (uses most recent query in that domain)
-    """
+    """Generate topics for multiple domains user asked about recently"""
     _require_env()
-
+    
     domains = _get_user_domains_profile(req.user_id, req.limit)
     if not domains:
         return {"domains": []}
-
+    
     _dismiss_active_for_user(req.user_id)
-
+    
     for dom in domains:
-        # need a latest query for this domain
-        # grab from recent queries
         hist = _get_domain_history_for_prompt(req.user_id, dom, 20)
         if not hist:
             continue
         latest_text = hist[0]["text"]
         await _ensure_topics_for_domain(req.user_id, dom, latest_text, 25)
-
+    
     active_rows = _get_active_rows(req.user_id)
     active_rows = [r for r in active_rows if (r.get("domain") or "general") in set(domains)]
     return {"domains": _group_domains(active_rows)}
 
 
 @router.post("/click")
-async def click(req: ClickReq):
-    """
-    Click behavior:
-    - marks clicked_at permanently
-    - immediately refills 1 new topic in same domain (still query-anchored)
-    - creates a chat session and pushes the auto query into queries/chat_messages
-    """
+async def click(req: ClickReq, background_tasks: BackgroundTasks):
+    """Handle topic click - create chat session, then generate response asynchronously"""
     _require_env()
-
+    
     rec_res = (
         supabase.table("recommendations")
         .select("id, domain, topic, clicked_at, dismissed_at")
@@ -602,28 +744,27 @@ async def click(req: ClickReq):
     rec = rec_res.data
     if not rec:
         raise HTTPException(status_code=404, detail="Recommendation not found")
-
+    
     domain = _canon_domain(rec.get("domain"))
     topic = rec.get("topic") or ""
-
-    # mark clicked permanently
+    
+    # Mark clicked permanently
     supabase.table("recommendations").update({"clicked_at": _utc_now_iso()}).eq("id", rec["id"]).execute()
 
-    # refill: anchor to latest query in this domain (if none, anchor to clicked topic text)
+    # Prepare refill context (but don't run generation yet)
     hist = _get_domain_history_for_prompt(req.user_id, domain, 25)
     latest_text = hist[0]["text"] if hist else topic
 
-    await _ensure_topics_for_domain(req.user_id, domain, latest_text, 25)
-
-    # existing behavior: create chat session + messages
+    # Create chat session FIRST (so UI can navigate even if model is slow)
     auto_q = _auto_query(domain, topic)
-
+    
     sess_res = supabase.table("chat_sessions").insert({"user_id": req.user_id, "title": f"{topic[:30]}..."}).execute()
     session_row = (sess_res.data or [None])[0]
     if not session_row or not session_row.get("id"):
         raise HTTPException(status_code=500, detail="Failed to create chat session")
     session_id = session_row["id"]
-
+    
+    # Save query with detected_domain
     supabase.table("queries").insert({
         "session_id": session_id,
         "user_id": req.user_id,
@@ -631,7 +772,7 @@ async def click(req: ClickReq):
         "transcribed_text": auto_q,
         "detected_domain": domain,
     }).execute()
-
+    
     supabase.table("chat_messages").insert({
         "session_id": session_id,
         "user_id": req.user_id,
@@ -640,54 +781,42 @@ async def click(req: ClickReq):
         "display_name": "User",
     }).execute()
 
-    reply = await _gemini_completion(
-        [
-            {
-                "role": "system",
-                "content": (
-                    "You are AskVox, a safe educational AI tutor. "
-                    "Explain clearly, be factual, and respond in plain text suitable for TTS. "
-                    "Do NOT use Markdown, asterisks, code fences, tables, or bullets."
-                ),
-            },
-            {"role": "user", "content": auto_q},
-        ],
-        temperature=0.3,
-        max_tokens=600,
+    # Return immediately; generate reply + refill in the background.
+    background_tasks.add_task(
+        _smartrec_click_background,
+        req.user_id,
+        session_id,
+        auto_q,
+        domain,
+        latest_text,
     )
-
-    if reply:
-        supabase.table("chat_messages").insert({
-            "session_id": session_id,
-            "user_id": req.user_id,
-            "role": "assistant",
-            "content": reply,
-            "display_name": "AskVox",
-        }).execute()
-
-    # return updated active list for the latest domain
+    
+    # Return updated active list for the latest domain
     active_rows = _get_active_rows(req.user_id)
     active_rows = [r for r in active_rows if (r.get("domain") or "general") == domain]
     return {
         "session_id": session_id,
         "domain": domain,
         "topic": topic,
+        "pending_reply": True,
         "domains": _group_domains(active_rows),
     }
 
 @router.get("/list_profile")
 def list_profile(user_id: str, limit: int = 200):
-    """
-    Profile list mode (NO model call):
-    - shows active topics for ALL domains the user asked about recently
-    - does not generate anything
-    """
+    """List active topics for all domains user asked about recently"""
     _require_env()
-
+    
     domains = _get_user_domains_profile(user_id, limit)
     if not domains:
         return {"domains": []}
-
+    
     active_rows = _get_active_rows(user_id)
     active_rows = [r for r in active_rows if (r.get("domain") or "general") in set(domains)]
     return {"domains": _group_domains(active_rows)}
+
+
+@router.get("/domains")
+def get_domains():
+    """Get list of all supported domains"""
+    return {"domains": sorted(list(ALLOWED_DOMAINS))}

@@ -179,29 +179,53 @@ const NewsContent: React.FC<NewsContentProps> = ({ sidebarOpen, onAskQuestion })
     const elements: React.ReactNode[] = [];
     let listBuffer: React.ReactNode[] = [];
 
-    // Function to handle inline Bold **text** and [1]
+    const sourcesForCitations = (citationSources.length > 0 ? citationSources : sourcesForDisplay) as SourceItem[];
+
+    // Function to handle inline Bold **text** and citations like [1] or [implied from 1, 2]
     const processInline = (str: string) => {
-        const parts = str.split(/(\*\*.+?\*\*|\[\d+\])/g);
+        const parts = str.split(/(\*\*.+?\*\*|\[(?:implied from\s*)?\d+(?:\s*,\s*\d+)*\])/gi);
         return parts.map((part, i) => {
             if (part.startsWith('**') && part.endsWith('**')) {
                 return <strong key={i}>{part.slice(2, -2)}</strong>;
             }
-            if (/^\[\d+\]$/.test(part)) {
-                const num = part.replace(/[\[\]]/g, '');
-                // Find the source URL for this number if available
-                const sourceUrl = citationSources[parseInt(num) - 1]?.url;
+            if (/^\[(?:implied from\s*)?\d+(?:\s*,\s*\d+)*\]$/i.test(part)) {
+                const implied = /^\[\s*implied from/i.test(part);
+                const nums = part.match(/\d+/g) ?? [];
+                if (nums.length === 0) return part;
+
                 return (
-                    <a 
-                        key={i} 
-                        href={sourceUrl} 
-                        target="_blank" 
-                        rel="noreferrer" 
-                        className="citation-pill"
-                        title={citationSources[parseInt(num)-1]?.title || `Source ${num}`}
-                        onClick={(e) => e.stopPropagation()}
-                    >
-                        {num}
-                    </a>
+                    <span key={i} style={{ whiteSpace: 'nowrap' }}>
+                        {implied ? <span style={{ opacity: 0.75 }}>implied from </span> : null}
+                        {nums.map((n, idx) => {
+                            const num = parseInt(n, 10);
+                            const src = Number.isFinite(num) ? sourcesForCitations[num - 1] : undefined;
+                            const href = src?.url;
+                            const title = src?.title || `Source ${n}`;
+                            const pill = href ? (
+                                <a
+                                    key={`${i}-${n}-${idx}`}
+                                    href={href}
+                                    target="_blank"
+                                    rel="noreferrer"
+                                    className="citation-pill"
+                                    title={title}
+                                    onClick={(e) => e.stopPropagation()}
+                                >
+                                    {n}
+                                </a>
+                            ) : (
+                                <span key={`${i}-${n}-${idx}`} className="citation-pill" style={{ opacity: 0.55, cursor: 'default' }}>
+                                    {n}
+                                </span>
+                            );
+                            return (
+                                <React.Fragment key={`${i}-frag-${n}-${idx}`}>
+                                    {pill}
+                                    {idx < nums.length - 1 ? <span style={{ opacity: 0.7 }}>, </span> : null}
+                                </React.Fragment>
+                            );
+                        })}
+                    </span>
                 );
             }
             return part;

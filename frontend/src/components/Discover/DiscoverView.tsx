@@ -3,9 +3,15 @@ import './DiscoverNews.css';
 import { Globe, TrendingUp, ChevronDown, RefreshCw } from 'lucide-react'; 
 import NewsCard from './NewsCard';
 import RightWidgetPanel from './RightWidgetPanel';
-import type { WeatherSummary, Standing, MatchItem } from './RightWidgetPanel';
+import type { WeatherSummary } from './RightWidgetPanel';
 import type { NewsArticle } from '../../services/newsApi';
 import { fetchNews } from '../../services/newsApi';
+import {
+    fetchOpenMeteoForecast,
+    reverseGeocodeBigDataCloud,
+    formatLocationLabel,
+    weatherCodeToInfo,
+} from '../../services/weatherApi';
 
 // --- HELPERS ---
 
@@ -85,12 +91,144 @@ const DiscoverView: React.FC<DiscoverViewProps> = ({ withNavOffset, category }) 
     const [isLoading, setIsLoading] = useState<boolean>(true);
     const [currentTime, setCurrentTime] = useState<number>(() => Date.now());
 
+    // Weather state (right widget)
+    const [weather, setWeather] = useState<WeatherSummary>(() => ({
+        location: 'Locating…',
+        temp: Number.NaN,
+        condition: '—',
+        icon: 'cloudy',
+        high: Number.NaN,
+        low: Number.NaN,
+        weekly: [],
+    }));
+    const [weatherError, setWeatherError] = useState<string | null>(null);
+
     // Ref for click-outside detection
     const countryMenuRef = useRef<HTMLDivElement>(null);
 
     useEffect(() => {
         const timer = setInterval(() => setCurrentTime(Date.now()), 60000); 
         return () => clearInterval(timer);
+    }, []);
+
+    useEffect(() => {
+        let cancelled = false;
+        const controller = new AbortController();
+
+        const CACHE_KEY = 'discover_weather_cache_v1';
+        const CACHE_TTL_MS = 10 * 60 * 1000; // 10 min
+
+        const readCache = (): WeatherSummary | null => {
+            try {
+                const raw = localStorage.getItem(CACHE_KEY);
+                if (!raw) return null;
+                const parsed = JSON.parse(raw) as { ts: number; weather: WeatherSummary };
+                if (!parsed?.ts || !parsed?.weather) return null;
+                if (Date.now() - parsed.ts > CACHE_TTL_MS) return null;
+                return parsed.weather;
+            } catch {
+                return null;
+            }
+        };
+
+        const writeCache = (w: WeatherSummary) => {
+            try {
+                localStorage.setItem(CACHE_KEY, JSON.stringify({ ts: Date.now(), weather: w }));
+            } catch {
+                // ignore
+            }
+        };
+
+        const getCoords = (): Promise<{ latitude: number; longitude: number }> => {
+            return new Promise((resolve, reject) => {
+                if (!('geolocation' in navigator)) {
+                    reject(new Error('Geolocation not supported'));
+                    return;
+                }
+                const timeoutId = window.setTimeout(() => reject(new Error('Location timeout')), 12000);
+                navigator.geolocation.getCurrentPosition(
+                    (pos) => {
+                        window.clearTimeout(timeoutId);
+                        resolve({ latitude: pos.coords.latitude, longitude: pos.coords.longitude });
+                    },
+                    (err) => {
+                        window.clearTimeout(timeoutId);
+                        reject(err);
+                    },
+                    { enableHighAccuracy: false, maximumAge: 60_000, timeout: 10_000 }
+                );
+            });
+        };
+
+        const toWeekday = (isoDate: string) => {
+            // isoDate from Open-Meteo daily.time is yyyy-mm-dd
+            const d = new Date(`${isoDate}T00:00:00`);
+            return d.toLocaleDateString(undefined, { weekday: 'short' });
+        };
+
+        const run = async () => {
+            setWeatherError(null);
+            // Show cache immediately (fast), then refresh in background
+            const cached = readCache();
+            if (cached && !cancelled) setWeather(cached);
+
+            const { latitude, longitude } = await getCoords();
+            const [place, forecast] = await Promise.all([
+                reverseGeocodeBigDataCloud({ latitude, longitude, signal: controller.signal }),
+                fetchOpenMeteoForecast({ latitude, longitude, signal: controller.signal }),
+            ]);
+
+            const currentTemp = forecast.current?.temperature_2m;
+            const currentCode = forecast.current?.weather_code;
+            const currentInfo = typeof currentCode === 'number' ? weatherCodeToInfo(currentCode) : { label: '—', icon: 'cloudy' as const };
+
+            const maxT = forecast.daily?.temperature_2m_max?.[0];
+            const minT = forecast.daily?.temperature_2m_min?.[0];
+
+            const weekly = (forecast.daily?.time || []).slice(0, 5).map((dayIso, idx) => {
+                const max = forecast.daily?.temperature_2m_max?.[idx];
+                const min = forecast.daily?.temperature_2m_min?.[idx];
+                const avg = typeof max === 'number' && typeof min === 'number' ? Math.round((max + min) / 2) : Number.NaN;
+
+				const dayCode = forecast.daily?.weather_code?.[idx];
+				const dayInfo = typeof dayCode === 'number' ? weatherCodeToInfo(dayCode) : undefined;
+				return { day: toWeekday(dayIso), temp: avg, icon: dayInfo?.icon };
+            });
+
+            const w: WeatherSummary = {
+                location: formatLocationLabel(place),
+                temp: typeof currentTemp === 'number' ? Math.round(currentTemp) : Number.NaN,
+                condition: currentInfo.label,
+				icon: currentInfo.icon,
+                high: typeof maxT === 'number' ? Math.round(maxT) : Number.NaN,
+                low: typeof minT === 'number' ? Math.round(minT) : Number.NaN,
+                weekly,
+            };
+
+            if (!cancelled) {
+                setWeather(w);
+                writeCache(w);
+            }
+        };
+
+        run().catch((err) => {
+            const msg = typeof err?.message === 'string' ? err.message : 'Failed to load weather';
+            if (cancelled) return;
+            setWeatherError(msg);
+            setWeather((prev) => {
+                // Keep whatever we have; but make the UI informative
+                return {
+                    ...prev,
+                    location: prev.location && prev.location !== 'Locating…' ? prev.location : 'Location needed',
+                    condition: 'Allow location to show weather',
+                };
+            });
+        });
+
+        return () => {
+            cancelled = true;
+            controller.abort();
+        };
     }, []);
 
 
@@ -195,10 +333,6 @@ const DiscoverView: React.FC<DiscoverViewProps> = ({ withNavOffset, category }) 
         return sets;
     }, [displayedArticles, toCard]); 
 
-    // ... (Weather/Standing Data code omitted for brevity - keep your existing code) ...
-    const weather: WeatherSummary = { location: 'Serangoon North Estate', temp: 27, condition: 'Cloudy', high: 31, low: 24, weekly: [{ day: 'Mon', temp: 31 }, { day: 'Tue', temp: 30 }, { day: 'Wed', temp: 30 }, { day: 'Thu', temp: 29 }, { day: 'Fri', temp: 29 }] };
-    const standings: Standing[] = [{ position: 1, club: 'Arsenal', badgeUrl: '/assets/club/arsenal.png', points: 30 }, { position: 2, club: 'Man City', badgeUrl: '/assets/club/manchester-city.png', points: 25 }, { position: 3, club: 'Chelsea', badgeUrl: '/assets/club/chelsea.png', points: 24 }, { position: 4, club: 'Aston Villa', badgeUrl: '/assets/club/aston-villa.png', points: 24 }, { position: 5, club: 'Brighton', badgeUrl: '/assets/club/brighton.png', points: 22 }, { position: 6, club: 'Sunderland', badgeUrl: '/assets/club/sunderland.png', points: 22 }, { position: 7, club: 'Man United', badgeUrl: '/assets/club/manchester-united.png', points: 21 }];
-    const upcoming: MatchItem[] = [{ home: 'Fulham', homeBadgeUrl: '/assets/club/fulham.png', away: 'Man City', awayBadgeUrl: '/assets/club/manchester-city.png', dateLabel: 'Tomorrow', timeLabel: '3:30 am' }, { home: 'Bournemouth', homeBadgeUrl: '/assets/club/bournemouth.png', away: 'Everton', awayBadgeUrl: '/assets/club/everton.png', dateLabel: 'Tomorrow', timeLabel: '3:30 am' }, { home: 'Newcastle', homeBadgeUrl: '/assets/club/newcastle-united.png', away: 'Tottenham', awayBadgeUrl: '/assets/club/tottenham-hotspur.png', dateLabel: 'Tomorrow', timeLabel: '4:15 am' }, { home: 'Brighton', homeBadgeUrl: '/assets/club/brighton.png', away: 'Aston Villa', awayBadgeUrl: '/assets/club/aston-villa.png', dateLabel: 'Thu, 4 Dec', timeLabel: '3:30 am' }];
     const containerStyle: React.CSSProperties = withNavOffset ? { paddingLeft: 80 } : {};
 
     // Helper to get label for current country
@@ -318,7 +452,12 @@ const DiscoverView: React.FC<DiscoverViewProps> = ({ withNavOffset, category }) 
                 </div>
 
                 <div className="discover-right-panel">
-                    <RightWidgetPanel weather={weather} standings={standings} upcoming={upcoming} />
+					<RightWidgetPanel weather={weather} />
+					{weatherError ? (
+						<div style={{ color: 'rgba(255,255,255,0.54)', fontSize: 12, marginTop: 8, paddingLeft: 6 }}>
+							{weatherError}
+						</div>
+					) : null}
                 </div>
             </div>
         </div>

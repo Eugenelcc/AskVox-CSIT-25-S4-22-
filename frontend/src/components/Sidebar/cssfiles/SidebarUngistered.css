@@ -267,8 +267,16 @@
     overflow-y: auto;
     padding-right: 6px;
     max-height: 560px;
+    /* hide scrollbar visuals */
+    scrollbar-width: none;           /* Firefox */
+    -ms-overflow-style: none;        /* IE 10+ */
   }
   
+  .av-chatList::-webkit-scrollbar {  /* Chrome/Safari */
+    width: 0px;
+    height: 0px;
+  }
+
   .av-chatRow {
     display: grid;
     grid-template-columns: 1fr auto;

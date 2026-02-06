@@ -101,6 +101,7 @@ export default function Sidebar({
   const [query, setQuery] = useState("");
 
   const [foldersOpen, setFoldersOpen] = useState(true);
+  const [myChatsOpen, setMyChatsOpen] = useState(true);
   const [openFolderIds, setOpenFolderIds] = useState<Record<string, boolean>>({});
 
   const [folderMenu, setFolderMenu] = useState<{ id: string; x: number; y: number } | null>(null);
@@ -313,12 +314,18 @@ export default function Sidebar({
         <div className="av-divider" style={{ marginTop: 14 }} />
 
         <div className="av-sectionHeader" style={{ marginTop: 6 }}>
-          <div className="av-sectionHeader__left">
-            <ChevronUp size={22} />
+          <div
+            className="av-sectionHeader__left"
+            onClick={() => setMyChatsOpen((v) => !v)}
+            role="button"
+            tabIndex={0}
+          >
+            {myChatsOpen ? <ChevronUp size={22} /> : <ChevronDown size={22} />}
             <div className="av-sectionHeader__title">My Chats</div>
           </div>
         </div>
 
+        {myChatsOpen && (
         <div className="av-chatList">
           {filteredSessions.map((s) => {
             const previewForChat = draftStyle?.kind === "chat" && draftStyle.id === s.id ? draftStyle : null;
@@ -359,6 +366,7 @@ export default function Sidebar({
             );
           })}
         </div>
+        )}
 
         {/* Folder Menu */}
         {folderMenu && (

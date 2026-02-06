@@ -1,6 +1,6 @@
 
 
-import { type FC, useEffect, useState } from "react";
+import { type FC, useEffect, useMemo, useState } from "react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import "./ChatMessages.css";
@@ -23,8 +23,47 @@ function cleanMarkdown(md: string): string {
   return out.trim();
 }
 
+function normalizeMarkdownImageSrc(src: string | undefined): string | null {
+  if (!src) return null;
+  const trimmed = String(src).trim();
+  if (!trimmed) return null;
+  // Ignore non-URLs like "Arsenal" or "logo.png" produced by the model.
+  const isHttp = /^https?:\/\//i.test(trimmed);
+  const isData = /^data:image\//i.test(trimmed);
+  if (!isHttp && !isData) return null;
+
+  // Avoid mixed-content blocks when app is served over https.
+  if (isHttp && trimmed.startsWith("http://") && window.location.protocol === "https:") {
+    return trimmed.replace(/^http:\/\//i, "https://");
+  }
+  return trimmed;
+}
+
 const ChatMessages: FC<ChatMessagesProps> = ({ messages, isLoading }) => {
   const [openSourcesForMsg, setOpenSourcesForMsg] = useState<string | number | null>(null);
+  const markdownComponents = useMemo(
+    () => ({
+      img: ({ src, alt }: { src?: string; alt?: string }) => {
+        const normalized = normalizeMarkdownImageSrc(src);
+        if (!normalized) return alt ? <span>{alt}</span> : null;
+
+        return (
+          <img
+            src={normalized}
+            alt={alt ?? ""}
+            loading="lazy"
+            referrerPolicy="no-referrer"
+            onError={(e) => {
+              // Hide broken images to avoid the browser "broken file" icon.
+              const target = e.currentTarget as HTMLImageElement;
+              target.style.display = "none";
+            }}
+          />
+        );
+      },
+    }),
+    []
+  );
 
   useEffect(() => {
     const container = document.querySelector(".uv-chat-scroll-outer") as HTMLElement | null;
@@ -51,7 +90,7 @@ const ChatMessages: FC<ChatMessagesProps> = ({ messages, isLoading }) => {
                 {isAssistant ? (
                   <>
                     <div className="av-md">
-                      <ReactMarkdown remarkPlugins={[remarkGfm]}>
+                      <ReactMarkdown remarkPlugins={[remarkGfm]} components={markdownComponents}>
                         {cleanMarkdown(m.content)}
                       </ReactMarkdown>
                     </div>
