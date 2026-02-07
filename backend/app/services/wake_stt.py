@@ -60,6 +60,26 @@ def _log(msg: str) -> None:
         pass
 
 
+# Helpful one-time boot diagnostics (shows up in Railway logs when WAKE_DEBUG=1)
+try:
+    _log(
+        "🧭 [Wake] boot "
+        + json.dumps(
+            {
+                "wake_engine": WAKE_ENGINE,
+                "vosk_installed": bool(vosk),
+                "whisper_installed": bool(whisper),
+                "vosk_model_path_env": VOSK_MODEL_PATH,
+                "vosk_model_dirname": VOSK_MODEL_DIRNAME,
+                "vosk_auto_download": VOSK_AUTO_DOWNLOAD,
+                "vosk_model_download_dir": VOSK_MODEL_DOWNLOAD_DIR,
+            }
+        )
+    )
+except Exception:
+    pass
+
+
 def _normalize(text: str) -> str:
     return re.sub(r"[^a-z0-9 ]", "", text.lower()).strip()
 
@@ -128,6 +148,29 @@ def _candidate_vosk_paths() -> List[str]:
         seen.add(p)
         out.append(p)
     return out
+
+
+@router.get("/health")
+async def wake_health():
+    """Lightweight diagnostics for production.
+
+    Use this on Railway to confirm if Vosk is installed and whether the model exists.
+    """
+    paths = _candidate_vosk_paths()
+    exists = {p: bool(p and os.path.isdir(p)) for p in paths}
+    return {
+        "wake_engine": WAKE_ENGINE,
+        "wake_debug": WAKE_DEBUG,
+        "vosk_installed": bool(vosk),
+        "whisper_installed": bool(whisper),
+        "vosk_model_dirname": VOSK_MODEL_DIRNAME,
+        "vosk_model_path_env": VOSK_MODEL_PATH,
+        "vosk_auto_download": VOSK_AUTO_DOWNLOAD,
+        "vosk_model_zip_url_set": bool(VOSK_MODEL_ZIP_URL),
+        "vosk_model_download_dir": VOSK_MODEL_DOWNLOAD_DIR,
+        "candidate_paths": paths,
+        "candidate_paths_exist": exists,
+    }
 
 
 def _download_and_extract_vosk_model() -> str:
