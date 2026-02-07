@@ -19,7 +19,8 @@ export function useWakeWordBackend({
   enabled = true,
   chunkDurationMs = 500,
   silenceDurationMs = 1200,
-  silenceThreshold = 0.008,
+  // Slightly more sensitive default for real-world mics (avoids never-starting segments on quiet inputs).
+  silenceThreshold = 0.004,
   maxSegmentMs = 5000,
 }: UseWakeProps) {
   const [status, setStatus] = useState<'idle' | 'listening' | 'awaiting_command'>('idle');
@@ -45,8 +46,10 @@ export function useWakeWordBackend({
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ text, kind }),
-      }).catch(() => {});
-    } catch {}
+      }).catch(() => { /* ignore */ });
+    } catch {
+      /* ignore */
+    }
   };
 
   const flushSegment = async () => {
@@ -68,7 +71,7 @@ export function useWakeWordBackend({
 
     const seg = currentSegRef.current ?? segCounterRef.current++;
     const durMs = Math.round((length / Math.max(1, sr)) * 1000);
-    try { postLog(`[seg ${seg}] send sr=${sr} samples=${length} dur=${durMs}ms bytes=${merged.byteLength}`, 'upload'); } catch {}
+    try { postLog(`[seg ${seg}] send sr=${sr} samples=${length} dur=${durMs}ms bytes=${merged.byteLength}`, 'upload'); } catch { /* ignore */ }
 
     try {
       const { data: sessionRes } = await supabase.auth.getSession();
@@ -88,7 +91,7 @@ export function useWakeWordBackend({
       const score: number = data.score ?? 0;
 
       if (text) postLog(text, 'final');
-      try { postLog(`[seg ${seg}] result wake=${wake} score=${score}`, 'result'); } catch {}
+      try { postLog(`[seg ${seg}] result wake=${wake} score=${score}`, 'result'); } catch { /* ignore */ }
 
       if (wake) {
         postLog(`wake (score=${score})`, 'wake');
@@ -110,7 +113,7 @@ export function useWakeWordBackend({
         setStatus('listening');
       }
     } catch (e) {
-      try { postLog(`[seg ${seg}] error ${String(e)}`, 'error'); } catch {}
+      try { postLog(`[seg ${seg}] error ${String(e)}`, 'error'); } catch { /* ignore */ }
     }
   };
 
@@ -191,7 +194,7 @@ export function useWakeWordBackend({
         // Prepend pre-roll so we don't clip the first syllable
         pcmChunksRef.current = [...preRollRef.current];
         preRollRef.current = [];
-        try { postLog(`[seg ${currentSegRef.current}] start`, 'seg'); } catch {}
+        try { postLog(`[seg ${currentSegRef.current}] start`, 'seg'); } catch { /* ignore */ }
       }
 
       if (hadSpeechRef.current) {
@@ -213,7 +216,7 @@ export function useWakeWordBackend({
       if (hadSpeechRef.current && segStartAtRef.current) {
         const elapsed = Date.now() - segStartAtRef.current;
         if (elapsed >= maxSegmentMs) {
-          try { postLog(`[seg ${currentSegRef.current}] force-flush after ${elapsed}ms`, 'seg'); } catch {}
+          try { postLog(`[seg ${currentSegRef.current}] force-flush after ${elapsed}ms`, 'seg'); } catch { /* ignore */ }
           void flushSegment();
           hadSpeechRef.current = false;
           silenceStartRef.current = null;
@@ -232,17 +235,26 @@ export function useWakeWordBackend({
     let cancelled = false;
     (async () => {
       if (!enabled) return;
+      // One-time proof that the hook is alive in production.
+      try { postLog('wake listening enabled', 'wake'); } catch { /* ignore */ }
       statusRef.current = 'listening';
       setStatus('listening');
-      await setupAudio();
-      if (cancelled) return;
-      monitorSilence();
+      try {
+        await setupAudio();
+        if (cancelled) return;
+        monitorSilence();
+      } catch (e) {
+        // Common causes: mic permission denied, insecure context, Safari gesture requirements.
+        try { postLog(`wake setup failed: ${String(e)}`, 'wake_error'); } catch { /* ignore */ }
+        statusRef.current = 'idle';
+        setStatus('idle');
+      }
     })();
     return () => {
       cancelled = true;
-      try { processorRef.current?.disconnect(); } catch {}
+      try { processorRef.current?.disconnect(); } catch { /* ignore */ }
       processorRef.current = null;
-      try { streamRef.current?.getTracks().forEach(t => t.stop()); } catch {}
+      try { streamRef.current?.getTracks().forEach(t => t.stop()); } catch { /* ignore */ }
       streamRef.current = null;
       audioCtxRef.current?.close();
       audioCtxRef.current = null;
@@ -250,6 +262,8 @@ export function useWakeWordBackend({
       statusRef.current = 'idle';
       setStatus('idle');
     };
+    // setupAudio/monitorSilence intentionally omitted: they use refs and should not re-trigger due to identity changes.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [enabled]);
 
   return { status };
