@@ -575,6 +575,10 @@ const UnregisteredMain = ({
   useWakeWordBackend({
     enabled: micEnabled && !isVoiceMode,
     onWake: enterVoiceMode,
+    chunkDurationMs: 250,
+    silenceDurationMs: 900,
+    silenceThreshold: 0.0025,
+    maxSegmentMs: 5000,
   });
 
   const hasMessages = messages.length > 0;
@@ -617,7 +621,7 @@ const UnregisteredMain = ({
           {!hasMessages && (
             <div className="av-chatbar-caption">
               <h3 className="orb-caption">
-                Say <span className="visual-askvox">"Hey AskVox"</span> to begin or type below.
+                Say <span className="visual-askvox">"Hey Ask Vox"</span> to begin or type below.
               </h3>
             </div>
           )}

@@ -475,7 +475,11 @@ async def transcribe_pcm(
             }
 
         # Guards: minimum duration and minimum RMS energy
-        MIN_DURATION = 0.8  # seconds
+        # Keep this configurable; short wake phrases can be < 0.8s in real use.
+        try:
+            MIN_DURATION = float(os.getenv("MIN_WAKE_SECONDS", "0.6"))
+        except Exception:
+            MIN_DURATION = 0.6
         rms = float(np.sqrt(np.mean(audio ** 2))) if audio.size else 0.0
         user_phrase = await _resolve_user_wake_phrase(request)
         if dur < MIN_DURATION:

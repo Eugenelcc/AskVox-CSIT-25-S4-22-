@@ -5,8 +5,8 @@ type UseWakeProps = {
   onWake?: (score: number) => void;
   onCommand?: (text: string) => void;
   enabled?: boolean;
-  chunkDurationMs?: number;   // default 500
-  silenceDurationMs?: number; // default 2000
+  chunkDurationMs?: number;   // default 250
+  silenceDurationMs?: number; // default 900
   silenceThreshold?: number;  // default 0.02 (RMS)
   maxSegmentMs?: number;      // default 5000 (force flush if no silence)
 };
@@ -17,10 +17,10 @@ export function useWakeWordBackend({
   onWake,
   onCommand,
   enabled = true,
-  chunkDurationMs = 500,
-  silenceDurationMs = 1200,
+  chunkDurationMs = 250,
+  silenceDurationMs = 900,
   // Slightly more sensitive default for real-world mics (avoids never-starting segments on quiet inputs).
-  silenceThreshold = 0.004,
+  silenceThreshold = 0.0025,
   maxSegmentMs = 5000,
 }: UseWakeProps) {
   const [status, setStatus] = useState<'idle' | 'listening' | 'awaiting_command'>('idle');
@@ -36,6 +36,16 @@ export function useWakeWordBackend({
   const muteUntilRef = useRef<number>(0);
   const preRollRef = useRef<Float32Array[]>([]);
   const PRE_ROLL_MS = 400;
+
+  const lastRmsLogAtRef = useRef<number>(0);
+  const resumeAttemptAtRef = useRef<number>(0);
+  const debugRms = (() => {
+    try {
+      return globalThis.localStorage?.getItem('askvox.wakeDebug') === '1';
+    } catch {
+      return false;
+    }
+  })();
 
   const hadSpeechRef = useRef(false);
   const silenceStartRef = useRef<number | null>(null);
@@ -60,7 +70,7 @@ export function useWakeWordBackend({
 
     const sr = audioCtx.sampleRate | 0;
     const length = pcmChunksRef.current.reduce((n, a) => n + a.length, 0);
-    if (length < sr * 0.8) { // skip <800ms for better ASR
+    if (length < sr * 0.6) { // skip very short clips (often low-quality for ASR)
       pcmChunksRef.current = [];
       return;
     }
@@ -83,15 +93,24 @@ export function useWakeWordBackend({
         headers,
         body: merged.buffer,
       });
-      if (!resp.ok) return;
-      const data = await resp.json();
+      if (!resp.ok) {
+        try { postLog(`[seg ${seg}] http ${resp.status}`, 'error'); } catch { /* ignore */ }
+        return;
+      }
+      const data = await resp.json().catch(() => ({} as any));
       const text: string = data.text ?? '';
       const command: string = data.command ?? '';
       const wake: boolean = !!data.wake_match;
       const score: number = data.score ?? 0;
+      const reason: string = data.reason ?? '';
 
       if (text) postLog(text, 'final');
-      try { postLog(`[seg ${seg}] result wake=${wake} score=${score}`, 'result'); } catch { /* ignore */ }
+      try {
+        postLog(
+          `[seg ${seg}] result wake=${wake} score=${score}${reason ? ` reason=${reason}` : ''}`,
+          'result'
+        );
+      } catch { /* ignore */ }
 
       if (wake) {
         postLog(`wake (score=${score})`, 'wake');
@@ -122,9 +141,10 @@ export function useWakeWordBackend({
 
     const stream = await navigator.mediaDevices.getUserMedia({
       audio: {
-        echoCancellation: false,
-        noiseSuppression: false,
-        autoGainControl: false,
+        // Prefer reliability across devices for wake capture.
+        echoCancellation: true,
+        noiseSuppression: true,
+        autoGainControl: true,
         channelCount: 1,
         sampleRate: 16000,
       } as MediaTrackConstraints,
@@ -133,6 +153,15 @@ export function useWakeWordBackend({
     streamRef.current = stream;
 
     const audioCtx = new AudioContext({ sampleRate: 16000 });
+    if (audioCtx.state === 'suspended') {
+      try {
+        await audioCtx.resume();
+        postLog('audio context resumed', 'wake');
+      } catch {
+        // Some browsers require a user gesture; monitorSilence will retry.
+        postLog('audio context is suspended (needs user gesture)', 'wake_error');
+      }
+    }
     const source = audioCtx.createMediaStreamSource(stream);
 
     const gainNode = audioCtx.createGain();
@@ -141,7 +170,7 @@ export function useWakeWordBackend({
     const analyser = audioCtx.createAnalyser();
     analyser.fftSize = 2048;
 
-    const processor = audioCtx.createScriptProcessor(4096, 1, 1);
+    const processor = audioCtx.createScriptProcessor(2048, 1, 1);
 
     source.connect(gainNode);
     gainNode.connect(analyser);
@@ -186,6 +215,23 @@ export function useWakeWordBackend({
       let sum = 0; for (let i = 0; i < buf.length; i++) sum += buf[i] * buf[i];
       const rms = Math.sqrt(sum / buf.length);
       const isSilent = rms < silenceThreshold;
+
+      // Periodic telemetry: confirms the loop is alive and mic RMS changes in production.
+      const now = Date.now();
+      if (debugRms && now - lastRmsLogAtRef.current > 5000) {
+        lastRmsLogAtRef.current = now;
+        try { postLog(`[rms] ${rms.toFixed(4)} silent=${isSilent} hadSpeech=${hadSpeechRef.current}`, 'rms'); } catch { /* ignore */ }
+      }
+
+      // If AudioContext is suspended, retry resume occasionally.
+      const ctx = audioCtxRef.current;
+      if (ctx?.state === 'suspended' && now - resumeAttemptAtRef.current > 3000) {
+        resumeAttemptAtRef.current = now;
+        void ctx.resume().then(
+          () => postLog('audio context resumed (retry)', 'wake'),
+          () => postLog('audio context still suspended', 'wake_error')
+        );
+      }
 
       if (!hadSpeechRef.current && !isSilent) {
         hadSpeechRef.current = true;

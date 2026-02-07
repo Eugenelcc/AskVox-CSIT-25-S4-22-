@@ -1387,6 +1387,10 @@ export default function Dashboard({
   useWakeWordBackend({
     enabled: micEnabled && !isVoiceMode,
     onWake: enterVoiceMode,
+    chunkDurationMs: 250,
+    silenceDurationMs: 900,
+    silenceThreshold: 0.0025,
+    maxSegmentMs: 5000,
   });
 
   const openCreateFolderModal = (chatId: string | null = null) => {
@@ -1726,7 +1730,7 @@ export default function Dashboard({
         <h3 className="orb-caption">
           Hi {profile?.username ?? "User"}, say{" "}
           <span className="visual-askvox">
-            {`"${(profile?.wake_word?.trim?.() || "Hey AskVox")}"`}
+            {`"${(profile?.wake_word?.trim?.() || "Hey Ask Vox")}"`}
           </span>{" "}
           to begin or type below.
         </h3>
