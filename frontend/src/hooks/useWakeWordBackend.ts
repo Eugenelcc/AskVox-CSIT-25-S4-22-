@@ -49,6 +49,7 @@ export function useWakeWordBackend({
 
   const hadSpeechRef = useRef(false);
   const silenceStartRef = useRef<number | null>(null);
+  const trailingSilenceMsRef = useRef<number>(0);
 
   const postLog = (text: string, kind: string) => {
     try {
@@ -70,7 +71,11 @@ export function useWakeWordBackend({
 
     const sr = audioCtx.sampleRate | 0;
     const length = pcmChunksRef.current.reduce((n, a) => n + a.length, 0);
-    if (length < sr * 0.6) { // skip very short clips (often low-quality for ASR)
+    // Wake phrases can be short; allow down to ~450ms.
+    if (length < sr * 0.45) {
+      const segPreview = currentSegRef.current ?? segCounterRef.current;
+      const durMs = Math.round((length / Math.max(1, sr)) * 1000);
+      try { postLog(`[seg ${segPreview}] drop dur=${durMs}ms (too short)`, 'upload'); } catch { /* ignore */ }
       pcmChunksRef.current = [];
       return;
     }
@@ -179,7 +184,8 @@ export function useWakeWordBackend({
 
     processor.onaudioprocess = (e) => {
       if (!enabled) return;
-      if (Date.now() < muteUntilRef.current) return;
+      const now = Date.now();
+      if (now < muteUntilRef.current) return;
       const ch0 = e.inputBuffer.getChannelData(0);
       const copy = new Float32Array(ch0.length);
       copy.set(ch0);
@@ -194,9 +200,56 @@ export function useWakeWordBackend({
         total -= removed?.length || 0;
       }
 
-      // During active segment, also buffer into the main PCM accumulator
-      if (!hadSpeechRef.current) return;
-      pcmChunksRef.current.push(copy);
+      // RMS-based VAD using the actual mic samples.
+      let sum = 0;
+      for (let i = 0; i < copy.length; i++) sum += copy[i] * copy[i];
+      const rms = Math.sqrt(sum / Math.max(1, copy.length));
+      const isSilent = rms < silenceThreshold;
+      const frameMs = (copy.length / Math.max(1, sr)) * 1000;
+
+      // Start segment on first detected speech.
+      if (!hadSpeechRef.current && !isSilent) {
+        hadSpeechRef.current = true;
+        silenceStartRef.current = null;
+        trailingSilenceMsRef.current = 0;
+        currentSegRef.current = segCounterRef.current++;
+        segStartAtRef.current = now;
+        pcmChunksRef.current = [...preRollRef.current, copy];
+        preRollRef.current = [];
+        try { postLog(`[seg ${currentSegRef.current}] start`, 'seg'); } catch { /* ignore */ }
+        return;
+      }
+
+      // If we're in a segment, buffer audio and decide when to flush.
+      if (hadSpeechRef.current) {
+        pcmChunksRef.current.push(copy);
+
+        if (isSilent) {
+          trailingSilenceMsRef.current += frameMs;
+          if (trailingSilenceMsRef.current >= silenceDurationMs) {
+            void flushSegment();
+            hadSpeechRef.current = false;
+            silenceStartRef.current = null;
+            trailingSilenceMsRef.current = 0;
+            currentSegRef.current = null;
+            segStartAtRef.current = null;
+            return;
+          }
+        } else {
+          trailingSilenceMsRef.current = 0;
+        }
+
+        if (segStartAtRef.current && now - segStartAtRef.current >= maxSegmentMs) {
+          try { postLog(`[seg ${currentSegRef.current}] force-flush after ${now - segStartAtRef.current}ms`, 'seg'); } catch { /* ignore */ }
+          void flushSegment();
+          hadSpeechRef.current = false;
+          silenceStartRef.current = null;
+          trailingSilenceMsRef.current = 0;
+          currentSegRef.current = null;
+          segStartAtRef.current = null;
+          return;
+        }
+      }
     };
 
     audioCtxRef.current = audioCtx;
@@ -233,43 +286,7 @@ export function useWakeWordBackend({
         );
       }
 
-      if (!hadSpeechRef.current && !isSilent) {
-        hadSpeechRef.current = true;
-        currentSegRef.current = segCounterRef.current++;
-        segStartAtRef.current = Date.now();
-        // Prepend pre-roll so we don't clip the first syllable
-        pcmChunksRef.current = [...preRollRef.current];
-        preRollRef.current = [];
-        try { postLog(`[seg ${currentSegRef.current}] start`, 'seg'); } catch { /* ignore */ }
-      }
-
-      if (hadSpeechRef.current) {
-        if (isSilent) {
-          if (!silenceStartRef.current) silenceStartRef.current = Date.now();
-          const elapsed = Date.now() - (silenceStartRef.current || 0);
-          if (elapsed >= silenceDurationMs) {
-            void flushSegment();
-            hadSpeechRef.current = false;
-            silenceStartRef.current = null;
-            currentSegRef.current = null;
-          }
-        } else {
-          silenceStartRef.current = null;
-        }
-      }
-
-      // Force flush if segment runs too long without silence
-      if (hadSpeechRef.current && segStartAtRef.current) {
-        const elapsed = Date.now() - segStartAtRef.current;
-        if (elapsed >= maxSegmentMs) {
-          try { postLog(`[seg ${currentSegRef.current}] force-flush after ${elapsed}ms`, 'seg'); } catch { /* ignore */ }
-          void flushSegment();
-          hadSpeechRef.current = false;
-          silenceStartRef.current = null;
-          currentSegRef.current = null;
-          segStartAtRef.current = null;
-        }
-      }
+      // Segmenting/VAD is handled in the ScriptProcessor callback.
 
       setTimeout(tick, chunkDurationMs);
     };
