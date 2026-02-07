@@ -197,9 +197,49 @@ async def _ensure_vosk_model_path() -> Optional[str]:
 
 GREETINGS = {"hey", "hi", "hello", "yo", "ok", "okay"}
 
+# Vosk often cannot recognize made-up brand words (e.g. "askvox") because they're not in the model vocabulary.
+# Provide alias phrases that are more likely to decode, and match against the best alias.
+_DEFAULT_WAKE_ALIASES = ["ask vox", "ask box", "ask fox"]
+WAKE_ALIASES = os.getenv("WAKE_ALIASES", "").strip()
+
 
 def _core_words(wake_norm: str) -> List[str]:
     return [w for w in wake_norm.split() if w and w not in GREETINGS]
+
+
+def _wake_alias_norms(user_phrase: str) -> List[str]:
+    """Return normalized wake phrase variants.
+
+    Example: "Hey AskVox" -> ["hey askvox", "hey ask vox", "hey ask box", "hey ask fox"].
+    """
+    base = _normalize(user_phrase)
+    if not base:
+        return []
+
+    extra_raw: List[str] = []
+
+    # Common brand split: askvox -> ask vox
+    if "askvox" in base.replace(" ", ""):
+        extra_raw.append(base.replace("askvox", "ask vox"))
+        for tail in _DEFAULT_WAKE_ALIASES:
+            extra_raw.append(re.sub(r"\baskvox\b", tail, base))
+
+    # Allow env-provided aliases (pipe/comma/semicolon separated).
+    if WAKE_ALIASES:
+        parts = re.split(r"[|,;\n]+", WAKE_ALIASES)
+        parts = [p.strip() for p in parts if p and p.strip()]
+        for p in parts:
+            extra_raw.append(re.sub(r"\baskvox\b", p, base))
+
+    norms: List[str] = []
+    seen = set()
+    for s in [base, *extra_raw]:
+        n = _normalize(s)
+        if not n or n in seen:
+            continue
+        seen.add(n)
+        norms.append(n)
+    return norms
 
 
 def _build_initial_prompt(wake_phrase: str) -> str:
@@ -300,9 +340,8 @@ def _float32_to_int16_bytes(audio: np.ndarray) -> bytes:
 
 
 def _build_vosk_grammar(wake_phrase: str) -> str:
-    wake_norm = _normalize(wake_phrase)
     parts: List[str] = []
-    if wake_norm:
+    for wake_norm in _wake_alias_norms(wake_phrase):
         parts.append(wake_norm)
         parts.extend(wake_norm.split())
     parts.extend(sorted(GREETINGS))
@@ -317,6 +356,18 @@ def _build_vosk_grammar(wake_phrase: str) -> str:
         seen.add(p)
         uniq.append(p)
     return json.dumps(uniq)
+
+
+def _best_wake_match(wake_window: str, wake_phrase: str) -> tuple[int, str]:
+    """Return (score, alias_norm) for the best alias."""
+    best_score = 0
+    best_alias = _normalize(wake_phrase)
+    for alias in _wake_alias_norms(wake_phrase):
+        s = int(fuzz.partial_ratio(wake_window, alias))
+        if s > best_score:
+            best_score = s
+            best_alias = alias
+    return best_score, best_alias
 
 
 def _vosk_transcribe(text_audio_i16: bytes, sr: int, wake_phrase: str) -> str:
@@ -439,11 +490,10 @@ async def transcribe_pcm(
         _log(f"🗒️  [Wake] ({engine}) raw='{raw_text}'")
         _log(f"🧼  [Wake] norm='{text}'")
 
-        wake_norm = _normalize(user_phrase)
         wake_window = _extract_wake_window(text, max_words=5)
-        score = int(fuzz.partial_ratio(wake_window, wake_norm))
+        score, best_alias = _best_wake_match(wake_window, user_phrase)
         wake_match = score >= WAKE_THRESHOLD
-        wake_words = [w for w in wake_norm.split() if w]
+        wake_words = [w for w in best_alias.split() if w]
         core_words = [w for w in wake_words if w not in GREETINGS]
         core_present = sum(1 for w in core_words if w in wake_window)
         if len(core_words) > 0:
@@ -468,7 +518,7 @@ async def transcribe_pcm(
             wake_match = True
 
         _log(
-            f"🔍 [Wake] phrase='{user_phrase}' window='{wake_window}' "
+            f"🔍 [Wake] phrase='{user_phrase}' best_alias='{best_alias}' window='{wake_window}' "
             f"score={score} core_score={core_score} core_present={core_present}/{len(core_words)} "
             f"earliest_core_pos={earliest_core_pos} match={wake_match}"
         )
@@ -483,9 +533,9 @@ async def transcribe_pcm(
         }))
 
         command = text
-        if wake_match and wake_norm:
+        if wake_match and best_alias:
             tokens2 = text.split()
-            wake_tokens = wake_norm.split()
+            wake_tokens = best_alias.split()
             while tokens2 and wake_tokens and tokens2[0] == wake_tokens[0]:
                 tokens2.pop(0)
                 wake_tokens.pop(0)
