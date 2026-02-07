@@ -521,7 +521,7 @@ async def transcribe_pcm(
                 if not model_path:
                     raise RuntimeError("Vosk model not available (set VOSK_MODEL_PATH or enable VOSK_AUTO_DOWNLOAD)")
                 pcm_i16 = _float32_to_int16_bytes(audio)
-                raw_text = _vosk_transcribe(pcm_i16, 16000, user_phrase)
+                raw_text = await asyncio.to_thread(_vosk_transcribe, pcm_i16, 16000, user_phrase)
                 text = _normalize(raw_text)
             except Exception as e:
                 _log(f"⚠️  [Wake] Vosk failed, falling back to Whisper: {e}")
