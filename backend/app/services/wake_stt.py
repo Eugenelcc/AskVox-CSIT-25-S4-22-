@@ -4,6 +4,7 @@ import json
 import os
 import re
 import time
+import zipfile
 from typing import Optional, List
 
 import numpy as np
@@ -32,7 +33,14 @@ WAKE_MAX_BYTES = int(os.getenv("WAKE_MAX_BYTES", "2000000"))
 WAKE_MAX_SECONDS = float(os.getenv("WAKE_MAX_SECONDS", "8"))
 WAKE_PHRASE_CACHE_TTL_SECONDS = int(os.getenv("WAKE_PHRASE_CACHE_TTL_SECONDS", "60"))
 
-VOSK_MODEL_PATH = os.getenv("VOSK_MODEL_PATH", "/opt/vosk-model-small-en-us-0.15")
+VOSK_MODEL_DIRNAME = os.getenv("VOSK_MODEL_DIRNAME", "vosk-model-small-en-us-0.15").strip() or "vosk-model-small-en-us-0.15"
+VOSK_MODEL_PATH = os.getenv("VOSK_MODEL_PATH", "").strip()  # may be empty; we'll probe defaults
+VOSK_AUTO_DOWNLOAD = os.getenv("VOSK_AUTO_DOWNLOAD", "1").strip().lower() in {"1", "true", "yes"}
+VOSK_MODEL_ZIP_URL = os.getenv(
+    "VOSK_MODEL_ZIP_URL",
+    "https://alphacephei.com/vosk/models/vosk-model-small-en-us-0.15.zip",
+).strip()
+VOSK_MODEL_DOWNLOAD_DIR = os.getenv("VOSK_MODEL_DOWNLOAD_DIR", "/tmp").strip() or "/tmp"
 WHISPER_MODEL = os.getenv("WHISPER_MODEL", "base")
 WHISPER_LANGUAGE = os.getenv("WHISPER_LANGUAGE", "en")
 WHISPER_TEMPERATURE = float(os.getenv("WHISPER_TEMPERATURE", "0.0"))
@@ -62,6 +70,8 @@ def _extract_wake_window(text: str, max_words: int = 5) -> str:
 
 _model: Optional[object] = None
 _vosk_model: Optional[object] = None
+_vosk_model_path_runtime: Optional[str] = None
+_vosk_prepare_lock = asyncio.Lock()
 
 _wake_sem = asyncio.Semaphore(max(1, WAKE_CONCURRENCY))
 
@@ -91,12 +101,98 @@ def _get_vosk_model():
     if _vosk_model is None:
         if vosk is None:
             raise RuntimeError("vosk is not installed; ensure vosk is in requirements")
-        if not VOSK_MODEL_PATH or not os.path.isdir(VOSK_MODEL_PATH):
-            raise RuntimeError(f"Vosk model path not found: {VOSK_MODEL_PATH}")
-        _log(f"🛎️  [Wake] Loading Vosk model: {VOSK_MODEL_PATH}")
-        _vosk_model = vosk.Model(VOSK_MODEL_PATH)
+        model_path = _vosk_model_path_runtime or VOSK_MODEL_PATH
+        if not model_path or not os.path.isdir(model_path):
+            raise RuntimeError(f"Vosk model path not found: {model_path or '(empty)'}")
+        _log(f"🛎️  [Wake] Loading Vosk model: {model_path}")
+        _vosk_model = vosk.Model(model_path)
         _log("✅ [Wake] Vosk model loaded")
     return _vosk_model
+
+
+def _candidate_vosk_paths() -> List[str]:
+    # Prefer explicit env var, then Docker-baked path, then runtime download dir.
+    cands = [
+        (_vosk_model_path_runtime or "").strip(),
+        (VOSK_MODEL_PATH or "").strip(),
+        f"/opt/{VOSK_MODEL_DIRNAME}",
+        os.path.join(VOSK_MODEL_DOWNLOAD_DIR, VOSK_MODEL_DIRNAME),
+        f"/tmp/{VOSK_MODEL_DIRNAME}",
+    ]
+    out: List[str] = []
+    seen = set()
+    for p in cands:
+        p = (p or "").strip()
+        if not p or p in seen:
+            continue
+        seen.add(p)
+        out.append(p)
+    return out
+
+
+def _download_and_extract_vosk_model() -> str:
+    # Blocking function; call via asyncio.to_thread.
+    os.makedirs(VOSK_MODEL_DOWNLOAD_DIR, exist_ok=True)
+    zip_path = os.path.join(VOSK_MODEL_DOWNLOAD_DIR, "vosk-model.zip")
+    _log(f"⬇️  [Wake] Downloading Vosk model zip -> {zip_path}")
+    with httpx.Client(timeout=httpx.Timeout(connect=10.0, read=120.0, write=30.0, pool=10.0)) as client:
+        r = client.get(VOSK_MODEL_ZIP_URL)
+        r.raise_for_status()
+        with open(zip_path, "wb") as f:
+            f.write(r.content)
+    _log(f"📦 [Wake] Extracting Vosk model zip -> {VOSK_MODEL_DOWNLOAD_DIR}")
+    with zipfile.ZipFile(zip_path, "r") as z:
+        z.extractall(VOSK_MODEL_DOWNLOAD_DIR)
+    try:
+        os.remove(zip_path)
+    except Exception:
+        pass
+    expected = os.path.join(VOSK_MODEL_DOWNLOAD_DIR, VOSK_MODEL_DIRNAME)
+    if os.path.isdir(expected):
+        return expected
+    # Fallback: pick first directory with 'vosk-model' prefix
+    try:
+        for name in os.listdir(VOSK_MODEL_DOWNLOAD_DIR):
+            if name.startswith("vosk-model"):
+                cand = os.path.join(VOSK_MODEL_DOWNLOAD_DIR, name)
+                if os.path.isdir(cand):
+                    return cand
+    except Exception:
+        pass
+    raise RuntimeError("Vosk model extraction completed but model directory was not found")
+
+
+async def _ensure_vosk_model_path() -> Optional[str]:
+    """Ensure a Vosk model directory exists and return its path.
+
+    Works for both Docker (pre-baked /opt) and Railway/Nixpacks (auto-download to /tmp).
+    """
+    global _vosk_model_path_runtime
+
+    for p in _candidate_vosk_paths():
+        if p and os.path.isdir(p):
+            _vosk_model_path_runtime = p
+            return p
+
+    if not VOSK_AUTO_DOWNLOAD:
+        return None
+    if not VOSK_MODEL_ZIP_URL:
+        return None
+
+    async with _vosk_prepare_lock:
+        # Re-check after acquiring lock
+        for p in _candidate_vosk_paths():
+            if p and os.path.isdir(p):
+                _vosk_model_path_runtime = p
+                return p
+        try:
+            model_dir = await asyncio.to_thread(_download_and_extract_vosk_model)
+            _vosk_model_path_runtime = model_dir
+            _log(f"✅ [Wake] Vosk model ready at: {model_dir}")
+            return model_dir
+        except Exception as e:
+            _log(f"⚠️  [Wake] Vosk model auto-download failed: {e}")
+            return None
 
 
 GREETINGS = {"hey", "hi", "hello", "yo", "ok", "okay"}
@@ -313,6 +409,9 @@ async def transcribe_pcm(
         engine = WAKE_ENGINE
         if engine == "vosk":
             try:
+                model_path = await _ensure_vosk_model_path()
+                if not model_path:
+                    raise RuntimeError("Vosk model not available (set VOSK_MODEL_PATH or enable VOSK_AUTO_DOWNLOAD)")
                 pcm_i16 = _float32_to_int16_bytes(audio)
                 raw_text = _vosk_transcribe(pcm_i16, 16000, user_phrase)
                 text = _normalize(raw_text)
