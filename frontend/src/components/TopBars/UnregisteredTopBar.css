@@ -63,6 +63,12 @@ body { margin: 0; }
     border-color: #ff951c;
     transform: translateY(-1px);
   }
+
+  .uv-top-btn-icon {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+  }
   
 
 

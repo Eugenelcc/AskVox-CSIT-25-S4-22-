@@ -68,10 +68,14 @@ export default function Dashboard({
   session,
   paid,
   initialTab,
+  micEnabled,
+  setMicEnabled,
 }: {
   session: Session;
   paid?: boolean;
   initialTab?: string;
+  micEnabled: boolean;
+  setMicEnabled: (next: boolean | ((prev: boolean) => boolean)) => void;
 }) {
   const navigate = useNavigate();
   const location = useLocation();
@@ -1197,6 +1201,7 @@ export default function Dashboard({
             // Send to Sealion (server should route to SeaLion model), pass query linkage
             console.log("🌊 [VoiceMode] route=sealionchats payload=", transcript);
             const sealionRes = await fetch(`${API_BASE_URL}/geminichats/`, {
+              //`${API_BASE_URL}/geminichats/`
               method: "POST",
               headers: { "Content-Type": "application/json" },
               body: JSON.stringify({
@@ -1213,20 +1218,33 @@ export default function Dashboard({
             const sealionData = await sealionRes.json();
             const replyText = sealionData.answer || sealionData.response || sealionData.reply || "";
             if (replyText) {
-              // Append assistant reply to history to keep context growing
+              // Append assistant reply, then reveal with a typewriter effect.
               const botMsgId = globalThis.crypto?.randomUUID?.() ?? `vbot-${Date.now()}-${Math.random()}`;
               setMessages(prev => [
                 ...prev,
                 {
                   id: botMsgId,
                   senderId: LLAMA_ID,
-                  content: replyText,
+                  content: "",
                   createdAt: new Date().toISOString(),
                   displayName: "AskVox",
                 },
               ]);
-              // Fire TTS and let it handle re-arming on 'ended'
+
+              // Kick off TTS immediately (sets ttsActiveRef before first await).
               void speakWithGoogleTTS(replyText);
+
+              // Reveal text in the UI without blocking the voice loop.
+              void (async () => {
+                const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
+                const step = 4;
+                for (let i = 0; i <= replyText.length; i += step) {
+                  const partial = replyText.slice(0, i);
+                  setMessages(prev => prev.map(m => (m.id === botMsgId ? { ...m, content: partial } : m)));
+                  await sleep(12);
+                }
+                setMessages(prev => prev.map(m => (m.id === botMsgId ? { ...m, content: replyText } : m)));
+              })();
             } else {
               // No reply; resume listening so the loop continues
               if (voiceModeRef.current) { setTimeout(() => { if (voiceModeRef.current) void startVoiceRecording(); }, 250); }
@@ -1307,6 +1325,7 @@ export default function Dashboard({
   };
 
   const enterVoiceMode = () => {
+    if (!micEnabled) return;
     // Hide chat UI; show BlackHole only
     setIsVoiceMode(true);
     voiceModeRef.current = true;
@@ -1356,9 +1375,17 @@ export default function Dashboard({
     voiceSessionIdRef.current = null;
   };
 
+  useEffect(() => {
+    // Hard-stop any active mic flows when toggled off.
+    if (!micEnabled && voiceModeRef.current) {
+      exitVoiceMode();
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [micEnabled]);
+
   // Wake detection: when wake triggers, enter voice mode
   useWakeWordBackend({
-    enabled: !isVoiceMode,
+    enabled: micEnabled && !isVoiceMode,
     onWake: enterVoiceMode,
   });
 
@@ -1590,7 +1617,19 @@ export default function Dashboard({
             flexDirection: 'column'
           }}>
         
-        {paid ? <PaidTopBar session={session} /> : <RegisteredTopBar session={session} />}
+        {paid ? (
+          <PaidTopBar
+            session={session}
+            micEnabled={micEnabled}
+            onToggleMic={() => setMicEnabled((v) => !v)}
+          />
+        ) : (
+          <RegisteredTopBar
+            session={session}
+            micEnabled={micEnabled}
+            onToggleMic={() => setMicEnabled((v) => !v)}
+          />
+        )}
 
         <main className="uv-main">
           {/* SETTINGS MODE */}
@@ -1696,6 +1735,7 @@ export default function Dashboard({
     <ChatBar
       onSubmit={handleSubmit}
       disabled={isSending}
+      micEnabled={micEnabled}
       onQuizClick={() => setIsQuizOpen(true)}
     />
 

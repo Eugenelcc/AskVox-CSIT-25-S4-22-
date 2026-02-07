@@ -25,12 +25,32 @@ import InstituteVerification from './pages/subscription/InstituteVerification.ts
 import PreferenceSelect from './pages/onboarding/PreferenceSelect'
 
 
+const MIC_STORAGE_KEY = 'askvox.micEnabled'
+
+
 function App() {
   const [session, setSession] = useState<Session | null>(null)
   const [loading, setLoading] = useState(true)
   const [isPaid, setIsPaid] = useState<boolean>(false)
   const [isAdmin, setIsAdmin] = useState<boolean>(false)
   const [needsPreference, setNeedsPreference] = useState<boolean>(false)
+  const [micEnabled, setMicEnabled] = useState<boolean>(() => {
+    try {
+      const raw = window.localStorage.getItem(MIC_STORAGE_KEY)
+      if (raw === null) return false
+      return raw === 'true'
+    } catch {
+      return false
+    }
+  })
+
+  useEffect(() => {
+    try {
+      window.localStorage.setItem(MIC_STORAGE_KEY, String(micEnabled))
+    } catch (err) {
+      void err
+    }
+  }, [micEnabled])
 
   useEffect(() => {
     let cancelled = false
@@ -73,9 +93,9 @@ function App() {
           .maybeSingle()
         const pref = (data?.learning_preference ?? '').toString().trim().toLowerCase()
         const missing = !(pref === 'secondary' || pref === 'tertiary' || pref === 'university' || pref === 'leisure')
-        if (!cancelled) setNeedsPreference(missing && !isAdmin)
+        if (!cancelled) setNeedsPreference(missing)
       } catch {
-        if (!cancelled) setNeedsPreference(!isAdmin)
+        if (!cancelled) setNeedsPreference(true)
       }
     }
 
@@ -122,7 +142,9 @@ function App() {
       if (window.location && window.location.hash === '#') {
         window.history.replaceState(null, '', window.location.pathname)
       }
-    } catch {}
+    } catch (err) {
+      void err
+    }
   }, [loading])
 
   if (loading) {
@@ -142,7 +164,7 @@ function App() {
           element={
             session
               ? (isAdmin ? <Navigate to="/platformadmin/dashboard" /> : (needsPreference ? <Navigate to="/onboarding/preferences" /> : <Navigate to="/newchat" />))
-              : <UnregisteredMain session={session} />
+              : <UnregisteredMain session={session} micEnabled={micEnabled} setMicEnabled={setMicEnabled} />
           }
         />
 
@@ -157,11 +179,19 @@ function App() {
         <Route
           path="/reguserhome"
           element={
-            session
-              ? (isAdmin
-                  ? <Navigate to="/platformadmin/dashboard" />
-                  : (needsPreference ? <Navigate to="/onboarding/preferences" /> : (isPaid ? <PaidMain session={session} /> : <RegisterMain session={session} />)))
-              : <UnregisteredMain session={session} />
+            session ? (
+              isAdmin ? (
+                <Navigate to="/platformadmin/dashboard" />
+              ) : needsPreference ? (
+                <Navigate to="/onboarding/preferences" />
+              ) : isPaid ? (
+                <PaidMain session={session} micEnabled={micEnabled} setMicEnabled={setMicEnabled} />
+              ) : (
+                <RegisterMain session={session} micEnabled={micEnabled} setMicEnabled={setMicEnabled} />
+              )
+            ) : (
+              <UnregisteredMain session={session} micEnabled={micEnabled} setMicEnabled={setMicEnabled} />
+            )
           }
         />
         {/* New Chat route */}
@@ -169,7 +199,7 @@ function App() {
           path="/newchat"
           element={
             session
-              ? (isAdmin ? <Navigate to="/platformadmin/dashboard" /> : <RegisterMain session={session} />)
+              ? (isAdmin ? <Navigate to="/platformadmin/dashboard" /> : <RegisterMain session={session} micEnabled={micEnabled} setMicEnabled={setMicEnabled} />)
               : <Navigate to="/login" />
           }
         />
@@ -180,26 +210,26 @@ function App() {
           path="/chats/:sessionId"
           element={
             session
-              ? (isAdmin ? <Navigate to="/platformadmin/dashboard" /> : <RegisterMain session={session} />)
+              ? (isAdmin ? <Navigate to="/platformadmin/dashboard" /> : <RegisterMain session={session} micEnabled={micEnabled} setMicEnabled={setMicEnabled} />)
               : <Navigate to="/login" />
           }
         />
         <Route
           path="/paiduserhome"
-          element={session ? (isAdmin ? <Navigate to="/platformadmin/dashboard" /> : <PaidMain session={session} />) : <Navigate to="/login" />}
+          element={session ? (isAdmin ? <Navigate to="/platformadmin/dashboard" /> : <PaidMain session={session} micEnabled={micEnabled} setMicEnabled={setMicEnabled} />) : <Navigate to="/login" />}
         />
         <Route
           path="/discover"
-          element={session ? <RegisterMain session={session} paid={isPaid} initialTab="discover" /> : <Navigate to="/login" />}
+          element={session ? <RegisterMain session={session} paid={isPaid} initialTab="discover" micEnabled={micEnabled} setMicEnabled={setMicEnabled} /> : <Navigate to="/login" />}
         />
         {/* Discover → Detailed News Content (render within RegisteredMain to avoid layout flash) */}
         <Route
           path="/discover/news/:id"
-          element={session ? <RegisterMain session={session} paid={isPaid} initialTab="discover" /> : <Navigate to="/login" />}
+          element={session ? <RegisterMain session={session} paid={isPaid} initialTab="discover" micEnabled={micEnabled} setMicEnabled={setMicEnabled} /> : <Navigate to="/login" />}
         />
         <Route
           path="/discover/news"
-          element={session ? <RegisterMain session={session} paid={isPaid} initialTab="discover" /> : <Navigate to="/login" />}
+          element={session ? <RegisterMain session={session} paid={isPaid} initialTab="discover" micEnabled={micEnabled} setMicEnabled={setMicEnabled} /> : <Navigate to="/login" />}
         />
         
         <Route 

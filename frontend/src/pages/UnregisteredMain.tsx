@@ -18,7 +18,15 @@ const LLAMA_ID = 212020 as const;
 const API_BASE_URL = import.meta.env.VITE_API_URL || "http://localhost:8000";
 
 // ✅ 2. Update Component to accept 'session' prop
-const UnregisteredMain = ({ session }: { session: Session | null }) => {
+const UnregisteredMain = ({
+  session,
+  micEnabled,
+  setMicEnabled,
+}: {
+  session: Session | null;
+  micEnabled: boolean;
+  setMicEnabled: (next: boolean | ((prev: boolean) => boolean)) => void;
+}) => {
   
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [isSending, setIsSending] = useState(false);
@@ -444,8 +452,20 @@ const UnregisteredMain = ({ session }: { session: Session | null }) => {
             const replyText = sealionData.answer || sealionData.response || sealionData.reply || "";
             if (replyText) {
               const botMsgId = globalThis.crypto?.randomUUID?.() ?? `vbot-${Date.now()}-${Math.random()}`;
-              setMessages(prev => [...prev, { id: botMsgId, senderId: LLAMA_ID, content: replyText, createdAt: new Date().toISOString() }]);
+              setMessages(prev => [...prev, { id: botMsgId, senderId: LLAMA_ID, content: "", createdAt: new Date().toISOString() }]);
+
+              // Start TTS immediately and type out the response in parallel.
               void speakWithGoogleTTS(replyText);
+              void (async () => {
+                const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
+                const step = 4;
+                for (let i = 0; i <= replyText.length; i += step) {
+                  const partial = replyText.slice(0, i);
+                  setMessages(prev => prev.map(m => (m.id === botMsgId ? { ...m, content: partial } : m)));
+                  await sleep(12);
+                }
+                setMessages(prev => prev.map(m => (m.id === botMsgId ? { ...m, content: replyText } : m)));
+              })();
             } else {
               if (voiceModeRef.current) { setTimeout(() => { if (voiceModeRef.current) void startVoiceRecording(); }, 250); }
             }
@@ -510,6 +530,7 @@ const UnregisteredMain = ({ session }: { session: Session | null }) => {
   };
 
   const enterVoiceMode = () => {
+    if (!micEnabled) return;
     setIsVoiceMode(true);
     voiceModeRef.current = true;
     voiceGuestSessionIdRef.current = null;
@@ -542,9 +563,17 @@ const UnregisteredMain = ({ session }: { session: Session | null }) => {
     voiceAudioCtxRef.current = null;
   };
 
+  useEffect(() => {
+    // Hard-stop any active mic flows when toggled off.
+    if (!micEnabled && voiceModeRef.current) {
+      exitVoiceMode();
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [micEnabled]);
+
   // Wake detection: when wake triggers, enter voice mode; disable during voice mode
   useWakeWordBackend({
-    enabled: !isVoiceMode,
+    enabled: micEnabled && !isVoiceMode,
     onWake: enterVoiceMode,
   });
 
@@ -556,7 +585,11 @@ const UnregisteredMain = ({ session }: { session: Session | null }) => {
       <Background />
       
       {/* ✅ 3. Pass the session to the TopBar */}
-      <UnregisteredTopBar session={session} />
+      <UnregisteredTopBar
+        session={session}
+        micEnabled={micEnabled}
+        onToggleMic={() => setMicEnabled((v) => !v)}
+      />
 
       <main className="uv-main">
         {(!hasMessages || isVoiceMode) && (
@@ -588,7 +621,7 @@ const UnregisteredMain = ({ session }: { session: Session | null }) => {
               </h3>
             </div>
           )}
-          <ChatBar onSubmit={handleSubmit} disabled={isSending} />
+          <ChatBar onSubmit={handleSubmit} disabled={isSending} micEnabled={micEnabled} />
         </div>
       )}
     </div>

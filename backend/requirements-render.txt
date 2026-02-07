@@ -132,3 +132,6 @@ numpy==2.3.5
 
 
 openai-whisper==20231117
+
+# Wake word engine (offline keyword spotting)
+vosk==0.3.45
