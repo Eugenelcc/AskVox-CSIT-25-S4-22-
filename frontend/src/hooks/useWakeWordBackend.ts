@@ -50,6 +50,10 @@ export function useWakeWordBackend({
   const hadSpeechRef = useRef(false);
   const silenceStartRef = useRef<number | null>(null);
   const trailingSilenceMsRef = useRef<number>(0);
+  const audioFramesSeenRef = useRef<number>(0);
+  const noiseFloorRmsRef = useRef<number>(0);
+  const effectiveThresholdRef = useRef<number>(silenceThreshold);
+  const lastCalibLogAtRef = useRef<number>(0);
 
   const postLog = (text: string, kind: string) => {
     try {
@@ -204,14 +208,40 @@ export function useWakeWordBackend({
       let sum = 0;
       for (let i = 0; i < copy.length; i++) sum += copy[i] * copy[i];
       const rms = Math.sqrt(sum / Math.max(1, copy.length));
-      const isSilent = rms < silenceThreshold;
+      // Calibrate an approximate noise floor when we're not in a segment.
+      // This avoids "never starts" issues on quiet mics / aggressive processing.
+      if (!hadSpeechRef.current) {
+        const prev = noiseFloorRmsRef.current || rms;
+        noiseFloorRmsRef.current = prev * 0.98 + rms * 0.02;
+        const adaptive = noiseFloorRmsRef.current * 3.0 + 0.0005;
+        effectiveThresholdRef.current = Math.max(silenceThreshold, adaptive);
+        if (debugRms && now - lastCalibLogAtRef.current > 5000) {
+          lastCalibLogAtRef.current = now;
+          try {
+            postLog(
+              `[calib] noise=${noiseFloorRmsRef.current.toFixed(4)} thr=${effectiveThresholdRef.current.toFixed(4)} rms=${rms.toFixed(4)}`,
+              'rms'
+            );
+          } catch { /* ignore */ }
+        }
+      }
+
+      const isSilent = rms < effectiveThresholdRef.current;
       const frameMs = (copy.length / Math.max(1, sr)) * 1000;
+
+      // One-time proof that the audio callback is running.
+      if (audioFramesSeenRef.current === 0) {
+        try { postLog('mic frames flowing (onaudioprocess active)', 'wake'); } catch { /* ignore */ }
+      }
+      audioFramesSeenRef.current += 1;
 
       // Start segment on first detected speech.
       if (!hadSpeechRef.current && !isSilent) {
         hadSpeechRef.current = true;
         silenceStartRef.current = null;
         trailingSilenceMsRef.current = 0;
+        // Reset noise floor once we enter speech.
+        noiseFloorRmsRef.current = 0;
         currentSegRef.current = segCounterRef.current++;
         segStartAtRef.current = now;
         pcmChunksRef.current = [...preRollRef.current, copy];
