@@ -158,11 +158,21 @@ async def wake_health():
     """
     paths = _candidate_vosk_paths()
     exists = {p: bool(p and os.path.isdir(p)) for p in paths}
+    preview_phrase = USER_WAKE_PHRASE
+    try:
+        preview_aliases = _wake_alias_norms(preview_phrase)
+    except Exception:
+        preview_aliases = []
+
     return {
         "wake_engine": WAKE_ENGINE,
         "wake_debug": WAKE_DEBUG,
         "vosk_installed": bool(vosk),
         "whisper_installed": bool(whisper),
+        "wake_phrase_default": preview_phrase,
+        "wake_aliases_env": WAKE_ALIASES,
+        "wake_aliases_default": _DEFAULT_WAKE_ALIASES,
+        "wake_aliases_preview_norm": preview_aliases,
         "vosk_model_dirname": VOSK_MODEL_DIRNAME,
         "vosk_model_path_env": VOSK_MODEL_PATH,
         "vosk_auto_download": VOSK_AUTO_DOWNLOAD,
