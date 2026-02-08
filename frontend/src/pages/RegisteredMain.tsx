@@ -683,7 +683,7 @@ export default function Dashboard({
   };
 
   // Reload messages from Supabase for the given session
-  const refreshActiveSessionMessages = async (sessionId?: string | null) => {
+  const refreshActiveSessionMessages = useCallback(async (sessionId?: string | null) => {
     try {
       const sid = sessionId ?? activeSessionId;
       if (!sid) return;
@@ -708,7 +708,7 @@ export default function Dashboard({
       console.warn("Failed to refresh chat messages after voice mode", e);
     }
     return null;
-  };
+  }, [activeSessionId, session.user.id]);
 
   // SmartRec: poll until assistant reply arrives (backend inserts it asynchronously)
   useEffect(() => {
@@ -745,7 +745,7 @@ export default function Dashboard({
       cancelled = true;
       if (handle) window.clearTimeout(handle);
     };
-  }, [isSmartRecPending, activeSessionId, isNewChat]);
+  }, [isSmartRecPending, activeSessionId, isNewChat, refreshActiveSessionMessages]);
 
   // Keep component state in sync with /newchat and /chats/:sessionId
   useEffect(() => {
@@ -758,7 +758,7 @@ export default function Dashboard({
       setMessages([]);
       return;
     }
-    const match = path.match(/^\/chats\/([a-f0-9\-]+)$/i);
+    const match = path.match(/^\/chats\/([a-f0-9-]+)$/i);
     if (match) {
       const sid = match[1];
       setIsNewChat(false);
@@ -767,7 +767,7 @@ export default function Dashboard({
       setSidebarOpen(true);
       void refreshActiveSessionMessages(sid);
     }
-  }, [location.pathname]);
+  }, [location.pathname, refreshActiveSessionMessages]);
 
 
   const handleSubmit = async (
@@ -1828,10 +1828,10 @@ export default function Dashboard({
             onOpenSession={(sid, pendingReply) => {
               setActiveTab("chats");
               setSidebarOpen(true);
-              setActiveSessionId(sid);
-              setIsNewChat(false);
-              setMessages([]);
               setIsSmartRecPending(!!pendingReply);
+              // Use the canonical navigation + state updates used elsewhere
+              // so SmartRec works consistently for both registered and paid routes.
+              handleSelectSession(sid);
               window.setTimeout(() => {
                 void refreshActiveSessionMessages(sid);
               }, 80);
