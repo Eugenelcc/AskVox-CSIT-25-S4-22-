@@ -1,6 +1,6 @@
 
 from __future__ import annotations
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel, Field
 import re
 from typing import List, Literal, Optional, Dict, Any, Tuple
@@ -2542,7 +2542,10 @@ async def persist_assistant_message(
 # ENDPOINT
 # -----------------------
 @router.post("/cloud_plus", response_model=ChatResponse)
-async def chat_cloud_plus(req: ChatRequest):
+async def chat_cloud_plus(req: ChatRequest, request: Request):
+    from app.services.rate_limit import enforce_chat_rate_limit
+
+    await enforce_chat_rate_limit(request, req.user_id)
     article_title = req.article_title
     article_url = req.article_url
     article_context = None

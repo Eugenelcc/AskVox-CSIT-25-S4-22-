@@ -4,7 +4,7 @@ from typing import List, Literal
 
 import httpx
 from dotenv import load_dotenv
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel
 
 
@@ -25,6 +25,8 @@ if not GEMINI_API_KEY:
 
 
 router = APIRouter(prefix="/geminichats", tags=["geminichat"])  # keep route stable for frontend
+
+from app.services.rate_limit import enforce_chat_rate_limit
 
 Role = Literal["user", "assistant"]
 
@@ -117,7 +119,8 @@ async def gemini_generate(message: str, history: List[HistoryItem]) -> str:
 
 
 @router.post("/", response_model=ChatResponse)
-async def chat(req: ChatRequest):
+async def chat(req: ChatRequest, request: Request):
+    await enforce_chat_rate_limit(request, req.user_id)
     # Log prompt and attempt to ensure history is present. If client didn't send
     # history but provided a session_id, reconstruct from Supabase chat_messages.
     try:

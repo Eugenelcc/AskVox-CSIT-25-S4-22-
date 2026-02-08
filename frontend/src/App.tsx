@@ -57,14 +57,28 @@ function App() {
 
     const checkPaid = async (userId: string) => {
       try {
-        const { data } = await supabase
-          .from('subscriptions')
-          .select('is_active,end_date')
-          .eq('user_id', userId)
-          .order('end_date', { ascending: false })
-          .limit(1)
-          .maybeSingle()
-        if (!cancelled) setIsPaid(Boolean(data?.is_active))
+        const [subRes, profileRes] = await Promise.all([
+          supabase
+            .from('subscriptions')
+            .select('is_active,end_date')
+            .eq('user_id', userId)
+            .order('end_date', { ascending: false })
+            .limit(1)
+            .maybeSingle(),
+          // Allow manual override: profiles.role = 'paid_user'
+          supabase
+            .from('profiles')
+            .select('role')
+            .eq('id', userId)
+            .maybeSingle(),
+        ])
+
+        const subPaid = Boolean(subRes?.data?.is_active)
+        const rawRole = (profileRes?.data as any)?.role
+        const role = (rawRole ?? '').toString().trim().toLowerCase()
+        const rolePaid = role === 'paid_user' || role === 'paid'
+
+        if (!cancelled) setIsPaid(subPaid || rolePaid)
       } catch {
         if (!cancelled) setIsPaid(false)
       }
@@ -199,7 +213,15 @@ function App() {
           path="/newchat"
           element={
             session
-              ? (isAdmin ? <Navigate to="/platformadmin/dashboard" /> : <RegisterMain session={session} micEnabled={micEnabled} setMicEnabled={setMicEnabled} />)
+              ? (
+                  isAdmin ? (
+                    <Navigate to="/platformadmin/dashboard" />
+                  ) : isPaid ? (
+                    <PaidMain session={session} micEnabled={micEnabled} setMicEnabled={setMicEnabled} />
+                  ) : (
+                    <RegisterMain session={session} micEnabled={micEnabled} setMicEnabled={setMicEnabled} />
+                  )
+                )
               : <Navigate to="/login" />
           }
         />
@@ -210,7 +232,15 @@ function App() {
           path="/chats/:sessionId"
           element={
             session
-              ? (isAdmin ? <Navigate to="/platformadmin/dashboard" /> : <RegisterMain session={session} micEnabled={micEnabled} setMicEnabled={setMicEnabled} />)
+              ? (
+                  isAdmin ? (
+                    <Navigate to="/platformadmin/dashboard" />
+                  ) : isPaid ? (
+                    <PaidMain session={session} micEnabled={micEnabled} setMicEnabled={setMicEnabled} />
+                  ) : (
+                    <RegisterMain session={session} micEnabled={micEnabled} setMicEnabled={setMicEnabled} />
+                  )
+                )
               : <Navigate to="/login" />
           }
         />

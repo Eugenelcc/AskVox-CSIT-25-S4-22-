@@ -1,4 +1,4 @@
-import { useState, useEffect, useMemo, useRef } from "react";
+import { useState, useEffect, useMemo, useRef, useCallback } from "react";
 import { useLocation, useNavigate } from "react-router-dom";
 import { supabase } from "../supabaseClient";
 import type { Session } from "@supabase/supabase-js";
@@ -103,7 +103,13 @@ export default function Dashboard({
   const voiceSessionIdRef = useRef<string | null>(null);
   
   // Sidebar & Navigation State
-  const [sessions, setSessions] = useState<{id: string, title: string, article_context?: ArticleContext | null}[]>([]); // all chats the user has created, shown in the sidebar
+  const [sessions, setSessions] = useState<{
+    id: string;
+    title: string;
+    article_context?: ArticleContext | null;
+    color?: string;
+    emoji?: string;
+  }[]>([]); // all chats the user has created, shown in the sidebar
   const [activeSessionId, setActiveSessionId] = useState<string | null>(null); // currently selected chat session
   const [activeTab, setActiveTab] = useState<string>(
     initialTab ?? (location.pathname === "/discover" ? "discover" : (location.pathname === "/newchat" ? "newchat" : "newchat"))
@@ -115,7 +121,9 @@ export default function Dashboard({
   const [folders, setFolders] = useState<{
     id: string;   
     name: string;
-    items: { id: string; title: string }[];
+    color?: string;
+    emoji?: string;
+    items: { id: string; title: string; color?: string; emoji?: string }[];
   }[]>([]);
   // Folder modal state
   const [isFolderModalOpen, setFolderModalOpen] = useState(false);
@@ -129,6 +137,96 @@ export default function Dashboard({
     () => new Set(folders.flatMap(f => f.items.map(i => i.id))),
     [folders]
   );
+
+  type CustomizeStyle = { color?: string; emoji?: string };
+  type CustomizeStore = {
+    folders: Record<string, CustomizeStyle>;
+    chats: Record<string, CustomizeStyle>;
+  };
+
+  const customizeStoreKey = useMemo(
+    () => `askvox:customize:v1:${session.user.id}`,
+    [session.user.id]
+  );
+
+  const readCustomizeStore = useCallback((): CustomizeStore => {
+    try {
+      const raw = localStorage.getItem(customizeStoreKey);
+      if (!raw) return { folders: {}, chats: {} };
+      const parsed: unknown = JSON.parse(raw);
+      const p = parsed as { folders?: unknown; chats?: unknown };
+      return {
+        folders: (p?.folders && typeof p.folders === "object") ? (p.folders as Record<string, CustomizeStyle>) : {},
+        chats: (p?.chats && typeof p.chats === "object") ? (p.chats as Record<string, CustomizeStyle>) : {},
+      };
+    } catch {
+      return { folders: {}, chats: {} };
+    }
+  }, [customizeStoreKey]);
+
+  const writeCustomizeStore = useCallback((next: CustomizeStore) => {
+    try {
+      localStorage.setItem(customizeStoreKey, JSON.stringify(next));
+    } catch {
+      // ignore
+    }
+  }, [customizeStoreKey]);
+
+  const upsertFolderStyleLocal = useCallback((folderId: string, style: CustomizeStyle) => {
+    const store = readCustomizeStore();
+    store.folders[folderId] = {
+      color: style.color,
+      emoji: style.emoji,
+    };
+    writeCustomizeStore(store);
+  }, [readCustomizeStore, writeCustomizeStore]);
+
+  const upsertChatStyleLocal = useCallback((chatId: string, style: CustomizeStyle) => {
+    const store = readCustomizeStore();
+    store.chats[chatId] = {
+      color: style.color,
+      emoji: style.emoji,
+    };
+    writeCustomizeStore(store);
+  }, [readCustomizeStore, writeCustomizeStore]);
+
+  const mergeStyle = useCallback(
+    (dbStyle: CustomizeStyle | undefined, localStyle: CustomizeStyle | undefined): CustomizeStyle => {
+      return {
+        color: dbStyle?.color ?? localStyle?.color,
+        emoji: dbStyle?.emoji ?? localStyle?.emoji,
+      };
+    },
+    []
+  );
+
+  type DbSessionRow = Record<string, unknown> & {
+    id: string;
+    title: string;
+    color?: string | null;
+    emoji?: string | null;
+  };
+
+  const applyChatStylesToRows = useCallback((rows: DbSessionRow[]) => {
+    const store = readCustomizeStore();
+    return (rows ?? []).map((s) => {
+      const dbStyle = { color: s?.color ?? undefined, emoji: s?.emoji ?? undefined };
+      const localStyle = store.chats?.[s.id];
+      const merged = mergeStyle(dbStyle, localStyle);
+      return {
+        ...s,
+        color: merged.color,
+        emoji: merged.emoji,
+      };
+    });
+  }, [readCustomizeStore, mergeStyle]);
+
+  const isMissingColumnError = (err: unknown) => {
+    const e = err as { code?: unknown; message?: unknown };
+    const code = typeof e?.code === "string" ? e.code : undefined;
+    const msg = typeof e?.message === "string" ? e.message : "";
+    return code === "42703" || (msg.toLowerCase().includes("column") && msg.toLowerCase().includes("does not exist"));
+  };
 
   // Chats not in folders
   const standaloneSessions = useMemo(
@@ -172,12 +270,16 @@ export default function Dashboard({
             .select('*,display_name')
             .eq('user_id', session.user.id)
             .order('created_at', { ascending: false })
-            .then(({ data: d2 }) => d2 && setSessions(d2));
+            .then(({ data: d2 }) => {
+              if (!d2) return;
+              setSessions(applyChatStylesToRows(d2 as DbSessionRow[]));
+            });
           return;
         }
-        data && setSessions(data);
+        if (!data) return;
+        setSessions(applyChatStylesToRows(data as DbSessionRow[]));
       });
-  }, [session.user.id]);
+  }, [session.user.id, applyChatStylesToRows]);
 
   useEffect(() => {
     if (!activeSessionId || isNewChat) return; 
@@ -198,44 +300,173 @@ export default function Dashboard({
     fetchMessages();
   }, [activeSessionId, isNewChat, session?.user?.id]);
 
-  const loadFolders = async () => {
+  type DbFolderRow = {
+    id: string;
+    name: string;
+    color?: string | null;
+    emoji?: string | null;
+    chat_session_folders?: Array<{
+      chat_sessions: {
+        id: string;
+        title: string;
+        color?: string | null;
+        emoji?: string | null;
+      };
+    }>;
+  };
+
+  const loadFolders = useCallback(async () => {
     if (!session?.user?.id) return;
 
-    const { data, error } = await supabase
-      .from("chat_folders")
-      .select(`
-        id,
-        name,
-        chat_session_folders (
-          chat_sessions (
-            id,
-            title
-          )
+    const store = readCustomizeStore();
+
+    const selectWithStyle = `
+      id,
+      name,
+      color,
+      emoji,
+      chat_session_folders (
+        chat_sessions (
+          id,
+          title,
+          color,
+          emoji
         )
-      `)
+      )
+    `;
+
+    const selectWithoutStyle = `
+      id,
+      name,
+      chat_session_folders (
+        chat_sessions (
+          id,
+          title
+        )
+      )
+    `;
+
+    let data: DbFolderRow[] | null = null;
+    let error: unknown = null;
+
+    const first = await supabase
+      .from("chat_folders")
+      .select(selectWithStyle)
       .eq("user_id", session.user.id);
+    data = first.data as DbFolderRow[] | null;
+    error = first.error ?? null;
+
+    if (error && isMissingColumnError(error)) {
+      const second = await supabase
+        .from("chat_folders")
+        .select(selectWithoutStyle)
+        .eq("user_id", session.user.id);
+      data = second.data as DbFolderRow[] | null;
+      error = second.error ?? null;
+    }
 
     if (error) {
       console.error("Failed to load folders", error);
       return;
     }
 
-    const formatted = data.map((f: any) => ({
-      id: f.id,
-      name: f.name,
-      items: f.chat_session_folders.map((link: any) => ({
-        id: link.chat_sessions.id,
-        title: link.chat_sessions.title,
-      })),
-    }));
+    const formatted = (data ?? []).map((f) => {
+      const dbFolderStyle = { color: f?.color ?? undefined, emoji: f?.emoji ?? undefined };
+      const localFolderStyle = store.folders?.[f.id];
+      const mergedFolderStyle = mergeStyle(dbFolderStyle, localFolderStyle);
+      return {
+        id: f.id,
+        name: f.name,
+        color: mergedFolderStyle.color,
+        emoji: mergedFolderStyle.emoji,
+        items: (f.chat_session_folders ?? []).map((link) => {
+          const sess = link.chat_sessions;
+          const dbChatStyle = { color: sess?.color ?? undefined, emoji: sess?.emoji ?? undefined };
+          const localChatStyle = store.chats?.[sess?.id];
+          const mergedChatStyle = mergeStyle(dbChatStyle, localChatStyle);
+          return {
+            id: sess.id,
+            title: sess.title,
+            color: mergedChatStyle.color,
+            emoji: mergedChatStyle.emoji,
+          };
+        }),
+      };
+    });
 
-  setFolders(formatted);
-};
+    setFolders(formatted);
+  }, [readCustomizeStore, session.user.id, mergeStyle]);
 
 
   useEffect(() => {
     loadFolders();
-  }, [session.user.id]);
+  }, [loadFolders]);
+
+  const handleSaveFolderStyle = async (
+    folderId: string,
+    style: { color?: string; emoji?: string }
+  ) => {
+    if (!session?.user?.id) return;
+    const { error } = await supabase
+      .from("chat_folders")
+      .update({
+        color: style.color ?? null,
+        emoji: style.emoji ?? null,
+      })
+      .eq("id", folderId)
+      .eq("user_id", session.user.id);
+
+    if (error) {
+      console.error("Failed to save folder style", error);
+      // Fallback: persist locally (still survives refresh)
+      if (isMissingColumnError(error) || String(error?.message ?? "").toLowerCase().includes("security")) {
+        upsertFolderStyleLocal(folderId, style);
+      } else {
+        return;
+      }
+    }
+
+    upsertFolderStyleLocal(folderId, style);
+    const normalized = { color: style.color ?? undefined, emoji: style.emoji ?? undefined };
+    setFolders((prev) => prev.map((f) => (f.id === folderId ? { ...f, ...normalized } : f)));
+  };
+
+  const handleSaveChatStyle = async (
+    chatId: string,
+    style: { color?: string; emoji?: string }
+  ) => {
+    if (!session?.user?.id) return;
+
+    const { error } = await supabase
+      .from("chat_sessions")
+      .update({
+        color: style.color ?? null,
+        emoji: style.emoji ?? null,
+      })
+      .eq("id", chatId)
+      .eq("user_id", session.user.id);
+
+    if (error) {
+      console.error("Failed to save chat style", error);
+      // Fallback: persist locally (still survives refresh)
+      if (isMissingColumnError(error) || String(error?.message ?? "").toLowerCase().includes("security")) {
+        upsertChatStyleLocal(chatId, style);
+      } else {
+        return;
+      }
+    }
+
+    upsertChatStyleLocal(chatId, style);
+
+    const normalized = { color: style.color ?? undefined, emoji: style.emoji ?? undefined };
+    setSessions((prev) => prev.map((s) => (s.id === chatId ? { ...s, ...normalized } : s)));
+    setFolders((prev) =>
+      prev.map((f) => ({
+        ...f,
+        items: f.items.map((it) => (it.id === chatId ? { ...it, ...normalized } : it)),
+      }))
+    );
+  };
 
 
 
@@ -391,7 +622,7 @@ export default function Dashboard({
       .eq("user_id", session.user.id)
       .order("created_at", { ascending: false });
 
-    if (allSessions) setSessions(allSessions);
+    if (allSessions) setSessions(applyChatStylesToRows(allSessions as DbSessionRow[]));
   };
 
    const handleRenameChat = async (chatId: string) => {
@@ -417,7 +648,7 @@ export default function Dashboard({
     .eq("user_id", session.user.id)
     .order("updated_at", { ascending: false });
 
-  if (allSessions) setSessions(allSessions);
+  if (allSessions) setSessions(applyChatStylesToRows(allSessions as DbSessionRow[]));
 };
 
   const handleDeleteChat = async (chatId: string) => {
@@ -591,7 +822,7 @@ export default function Dashboard({
         .eq('user_id', session.user.id)
         .order('updated_at', { ascending: false });
 
-      if (allSessions) setSessions(allSessions);
+      if (allSessions) setSessions(applyChatStylesToRows(allSessions as DbSessionRow[]));
     }
 
     // 2. Prepare Name
@@ -703,7 +934,7 @@ export default function Dashboard({
         .eq('user_id', session.user.id)
         .order('updated_at', { ascending: false });
       if (allSessions && allSessions.length) {
-        setSessions(withPinnedTop(allSessions, currentSessionId));
+        setSessions(withPinnedTop(applyChatStylesToRows(allSessions as DbSessionRow[]), currentSessionId));
       } else if (currentSessionId) {
         promoteSessionToTop(currentSessionId);
       }
@@ -1075,7 +1306,7 @@ export default function Dashboard({
                     .eq('user_id', session.user.id)
                     .order('updated_at', { ascending: false });
                   if (allSessions && allSessions.length) {
-                    setSessions(withPinnedTop(allSessions, currentSessionId));
+                    setSessions(withPinnedTop(applyChatStylesToRows(allSessions as DbSessionRow[]), currentSessionId));
                   } else if (currentSessionId) {
                     promoteSessionToTop(currentSessionId);
                   }
@@ -1120,7 +1351,7 @@ export default function Dashboard({
                     .eq('user_id', session.user.id)
                     .order('updated_at', { ascending: false });
                   if (allSessions && allSessions.length) {
-                    setSessions(withPinnedTop(allSessions, currentSessionId));
+                    setSessions(withPinnedTop(applyChatStylesToRows(allSessions as DbSessionRow[]), currentSessionId));
                   } else {
                     promoteSessionToTop(currentSessionId);
                   }
@@ -1568,9 +1799,8 @@ export default function Dashboard({
         onMoveOutOfFolder={handleMoveOutOfFolder}
         onDeleteChat={handleDeleteChat}
 
-           // ✅ add these so paid customise can save (you can implement later)
-        onSaveFolderStyle={(folderId, style) => console.log("save folder style", folderId, style)}
-        onSaveChatStyle={(chatId, style) => console.log("save chat style", chatId, style)}
+          onSaveFolderStyle={handleSaveFolderStyle}
+          onSaveChatStyle={handleSaveChatStyle}
 
       />
 
