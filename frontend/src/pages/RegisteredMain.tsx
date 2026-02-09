@@ -93,6 +93,8 @@ export default function Dashboard({
   const [isRecording, setIsRecording] = useState(false);
   const [isTranscribing, setIsTranscribing] = useState(false);
   const [isTtsPlaying, setIsTtsPlaying] = useState(false);
+  const [voiceUserCaption, setVoiceUserCaption] = useState("");
+  const [voiceAssistantCaption, setVoiceAssistantCaption] = useState("");
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
   const audioChunksRef = useRef<BlobPart[]>([]);
   const audioPlayRef = useRef<HTMLAudioElement | null>(null);
@@ -1184,6 +1186,10 @@ export default function Dashboard({
     try {
       const safeText = (ttsSanitizeRef.current?.(text)) ?? text;
       console.log("🔊 [TTS] requesting playback for:", safeText);
+      if (voiceModeRef.current) {
+        setVoiceUserCaption("");
+        setVoiceAssistantCaption(safeText);
+      }
       // Mark TTS active BEFORE stopping recorder to avoid re-arm race in onstop
       ttsActiveRef.current = true;
       setIsTtsPlaying(true);
@@ -1299,6 +1305,8 @@ export default function Dashboard({
 
         try {
           setIsTranscribing(true);
+          setVoiceUserCaption("");
+          setVoiceAssistantCaption("");
           const formData = new FormData();
           formData.append("file", audioBlob, "utterance.webm");
 
@@ -1308,6 +1316,7 @@ export default function Dashboard({
           const transcript: string = sttData.text ?? "";
           if (transcript) {
             console.log("🎙️  [VoiceMode STT] transcript:", transcript);
+            setVoiceUserCaption(transcript);
           }
 
           if (transcript) {
@@ -1493,6 +1502,8 @@ export default function Dashboard({
             const sealionData = await sealionRes.json();
             const replyText = sealionData.answer || sealionData.response || sealionData.reply || "";
             if (replyText) {
+              setVoiceUserCaption("");
+              setVoiceAssistantCaption("");
               // Append assistant reply, then reveal with a typewriter effect.
               const botMsgId = globalThis.crypto?.randomUUID?.() ?? `vbot-${Date.now()}-${Math.random()}`;
               setMessages(prev => [
@@ -1516,9 +1527,11 @@ export default function Dashboard({
                 for (let i = 0; i <= replyText.length; i += step) {
                   const partial = replyText.slice(0, i);
                   setMessages(prev => prev.map(m => (m.id === botMsgId ? { ...m, content: partial } : m)));
+                  setVoiceAssistantCaption(partial);
                   await sleep(12);
                 }
                 setMessages(prev => prev.map(m => (m.id === botMsgId ? { ...m, content: replyText } : m)));
+                setVoiceAssistantCaption(replyText);
               })();
             } else {
               // No reply; resume listening so the loop continues
@@ -1605,6 +1618,8 @@ export default function Dashboard({
     setIsVoiceMode(true);
     voiceModeRef.current = true;
     voiceSessionIdRef.current = null;
+    setVoiceUserCaption("");
+    setVoiceAssistantCaption("");
     // No chatbar, no messages list during voice mode
     setActiveSessionId(null);
     setIsNewChat(true);
@@ -1619,6 +1634,8 @@ export default function Dashboard({
     setIsVoiceMode(false);
     setIsNewChat(false);
     setIsTtsPlaying(false);
+    setVoiceUserCaption("");
+    setVoiceAssistantCaption("");
     try { (window as any).speechSynthesis?.cancel?.(); } catch {}
     // Stop recorder and playback when exiting
     try {
@@ -1950,14 +1967,35 @@ export default function Dashboard({
               {isVoiceMode ? (
                 <section className="uv-hero">
                   <BlackHole isActivated={isBlackHoleActive} />
-                  {(isRecording || isTranscribing) && (
-                    <h4
-                      className="orb-caption"
-                      style={{ fontSize: 22, opacity: 0.75, marginTop: 16 }}
-                    >
-                      Listening…
-                    </h4>
-                  )}
+                  <div className="av-voice-captions">
+                    <div className="av-voice-captions__user">
+                      {!!voiceUserCaption && (
+                        <h4 className="orb-caption" style={{ fontSize: 22, opacity: 0.6, textAlign: "center" }}>
+                          {voiceUserCaption}
+                        </h4>
+                      )}
+                    </div>
+
+                    <div className="av-voice-captions__assistant">
+                      {(() => {
+                        const listening =
+                          !voiceUserCaption &&
+                          !voiceAssistantCaption &&
+                          (isRecording || isTranscribing)
+                            ? "Listening…"
+                            : "";
+                        const text = voiceAssistantCaption || listening;
+                        if (!text) return null;
+                        return (
+                          <h4 className="orb-caption" style={{ fontSize: 22, opacity: 0.8 }}>
+                            {text}
+                          </h4>
+                        );
+                      })()}
+                    </div>
+
+                    <div className="av-voice-captions__spacer" />
+                  </div>
                 </section>
               ) : (
                 !activeSessionId && (

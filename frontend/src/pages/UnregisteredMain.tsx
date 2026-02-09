@@ -35,6 +35,8 @@ const UnregisteredMain = ({
   const [isRecording, setIsRecording] = useState(false);
   const [isTranscribing, setIsTranscribing] = useState(false);
   const [isTtsPlaying, setIsTtsPlaying] = useState(false);
+  const [voiceUserCaption, setVoiceUserCaption] = useState("");
+  const [voiceAssistantCaption, setVoiceAssistantCaption] = useState("");
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
   const audioChunksRef = useRef<BlobPart[]>([]);
   const audioPlayRef = useRef<HTMLAudioElement | null>(null);
@@ -283,6 +285,10 @@ const UnregisteredMain = ({
     try {
       const safeText = (ttsSanitizeRef.current?.(text)) ?? text;
       postLog(`TTS request: ${safeText}`, 'tts');
+      if (voiceModeRef.current) {
+        setVoiceUserCaption("");
+        setVoiceAssistantCaption(safeText);
+      }
       // Mark TTS active BEFORE stopping recorder to avoid re-arm race in onstop
       ttsActiveRef.current = true;
       setIsTtsPlaying(true);
@@ -379,6 +385,8 @@ const UnregisteredMain = ({
         const audioBlob = new Blob(audioChunksRef.current, { type: "audio/webm" });
         try {
           setIsTranscribing(true);
+          setVoiceUserCaption("");
+          setVoiceAssistantCaption("");
           const formData = new FormData();
           formData.append("file", audioBlob, "utterance.webm");
           const sttRes = await fetch(`${API_BASE_URL}/stt/`, { method: "POST", body: formData });
@@ -387,6 +395,7 @@ const UnregisteredMain = ({
           const transcript: string = sttData.text ?? "";
           if (transcript) postLog(transcript, 'stt');
           if (transcript) {
+            setVoiceUserCaption(transcript);
             const tnorm = transcript.toLowerCase();
             if (
               tnorm.includes("stop listening") ||
@@ -451,6 +460,8 @@ const UnregisteredMain = ({
             const sealionData = await sealionRes.json();
             const replyText = sealionData.answer || sealionData.response || sealionData.reply || "";
             if (replyText) {
+              setVoiceUserCaption("");
+              setVoiceAssistantCaption("");
               const botMsgId = globalThis.crypto?.randomUUID?.() ?? `vbot-${Date.now()}-${Math.random()}`;
               setMessages(prev => [...prev, { id: botMsgId, senderId: LLAMA_ID, content: "", createdAt: new Date().toISOString() }]);
 
@@ -462,9 +473,11 @@ const UnregisteredMain = ({
                 for (let i = 0; i <= replyText.length; i += step) {
                   const partial = replyText.slice(0, i);
                   setMessages(prev => prev.map(m => (m.id === botMsgId ? { ...m, content: partial } : m)));
+                  setVoiceAssistantCaption(partial);
                   await sleep(12);
                 }
                 setMessages(prev => prev.map(m => (m.id === botMsgId ? { ...m, content: replyText } : m)));
+                setVoiceAssistantCaption(replyText);
               })();
             } else {
               if (voiceModeRef.current) { setTimeout(() => { if (voiceModeRef.current) void startVoiceRecording(); }, 250); }
@@ -534,6 +547,8 @@ const UnregisteredMain = ({
     setIsVoiceMode(true);
     voiceModeRef.current = true;
     voiceGuestSessionIdRef.current = null;
+    setVoiceUserCaption("");
+    setVoiceAssistantCaption("");
     // In voice mode, hide chat input, show BlackHole, start with TTS confirmation
     void speakWithGoogleTTS("AskVox is listening", true);
   };
@@ -543,6 +558,8 @@ const UnregisteredMain = ({
     setIsVoiceMode(false);
     voiceGuestSessionIdRef.current = null;
     setIsTtsPlaying(false);
+    setVoiceUserCaption("");
+    setVoiceAssistantCaption("");
     try { (window as any).speechSynthesis?.cancel?.(); } catch {}
     try {
       if (mediaRecorderRef.current && mediaRecorderRef.current.state !== "inactive") {
@@ -600,9 +617,37 @@ const UnregisteredMain = ({
           <section className="uv-hero">
             <BlackHole isActivated={isBlackHoleActive} />
             {isVoiceMode && (
-              <h4 className="orb-caption" style={{ fontSize: 22, opacity: 0.75, marginTop: 16 }}>
-                {isRecording || isTranscribing ? "Listening…" : ""}
-              </h4>
+              <>
+                <div className="av-voice-captions">
+                  <div className="av-voice-captions__user">
+                    {!!voiceUserCaption && (
+                      <h4 className="orb-caption" style={{ fontSize: 22, opacity: 0.6, textAlign: "center" }}>
+                        {voiceUserCaption}
+                      </h4>
+                    )}
+                  </div>
+
+                  <div className="av-voice-captions__assistant">
+                    {(() => {
+                      const listening =
+                        !voiceUserCaption &&
+                        !voiceAssistantCaption &&
+                        (isRecording || isTranscribing)
+                          ? "Listening…"
+                          : "";
+                      const text = voiceAssistantCaption || listening;
+                      if (!text) return null;
+                      return (
+                        <h4 className="orb-caption" style={{ fontSize: 22, opacity: 0.8 }}>
+                          {text}
+                        </h4>
+                      );
+                    })()}
+                  </div>
+
+                  <div className="av-voice-captions__spacer" />
+                </div>
+              </>
             )}
           </section>
         )}

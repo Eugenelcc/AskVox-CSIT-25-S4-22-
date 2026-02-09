@@ -3,6 +3,8 @@ import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom'
 import { supabase } from './supabaseClient'
 import type { Session } from '@supabase/supabase-js'
 
+import Background from './components/background/background'
+
 import Login from './pages/auth/Login'
 import Register from './pages/auth/Register'
 import ConfirmedPage from './pages/auth/Confirmed'
@@ -118,22 +120,31 @@ function App() {
     }
 
     // Boot: do not block UI on paid check
-    supabase.auth.getSession().then(({ data: { session } }) => {
-      if (cancelled) return
-      setSession(session)
-      setLoading(false)
-      if (session?.user?.id) {
-        // reset admin flag for new session; checkAdmin will promote if needed
-        setIsAdmin(false)
-        checkPaid(session.user.id)
-        checkAdmin(session.user.id)
-        checkPreference(session.user.id)
-      }
-      else {
+    ;(async () => {
+      try {
+        const { data: { session } } = await supabase.auth.getSession()
+        if (cancelled) return
+        setSession(session)
+        if (session?.user?.id) {
+          // reset admin flag for new session; checkAdmin will promote if needed
+          setIsAdmin(false)
+          checkPaid(session.user.id)
+          checkAdmin(session.user.id)
+          checkPreference(session.user.id)
+        } else {
+          setIsPaid(false)
+          setIsAdmin(false)
+        }
+      } catch {
+        if (cancelled) return
+        setSession(null)
         setIsPaid(false)
         setIsAdmin(false)
+        setNeedsPreference(false)
+      } finally {
+        if (!cancelled) setLoading(false)
       }
-    })
+    })()
 
     const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => {
       if (cancelled) return
@@ -167,8 +178,11 @@ function App() {
 
   if (loading) {
     return (
-      <div style={{ color: 'white', textAlign: 'center', marginTop: '50vh' }}>
-        Loading AskVox...
+      <div style={{ minHeight: '100dvh', position: 'relative' }}>
+        <Background />
+        <div style={{ color: 'white', textAlign: 'center', marginTop: '50vh' }}>
+          Loading AskVox...
+        </div>
       </div>
     )
   }

@@ -123,6 +123,47 @@
     pointer-events: auto;
   }
 
+  /* Voice mode captions (grid: user left, assistant center) */
+  .av-voice-captions {
+    position: fixed;
+    left: var(--content-offset, 0px);
+    right: 0;
+    bottom: calc(16px + env(safe-area-inset-bottom) + var(--av-chatbar-h) + 14px);
+    z-index: 19;
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) minmax(0, 2fr) minmax(0, 1fr);
+    align-items: end;
+    gap: 16px;
+    padding: 0 48px;
+    pointer-events: none;
+  }
+
+  .av-voice-captions__user {
+    grid-column: 2;
+    justify-self: center;
+    max-width: 100%;
+  }
+
+  .av-voice-captions__assistant {
+    grid-column: 2;
+    justify-self: center;
+    max-width: 100%;
+  }
+
+  .av-voice-captions__spacer {
+    grid-column: 3;
+    justify-self: end;
+  }
+
+  .av-voice-captions .orb-caption {
+    white-space: normal;
+    overflow-wrap: anywhere;
+  }
+
+  .av-voice-captions > * {
+    pointer-events: auto;
+  }
+
   @media (max-width: 520px) {
     .uv-root {
       --av-chatbar-h: 68px;
