@@ -1605,6 +1605,12 @@ export default function Dashboard({
     // Promote the session back to the UI.
     if (sid) {
       setActiveSessionId(sid);
+      setActiveTab("chats");
+      setSidebarOpen(true);
+      // Critical: move off `/newchat` so the route-sync effect doesn't wipe state.
+      if (location.pathname !== `/chats/${sid}`) {
+        navigate(`/chats/${sid}`);
+      }
       window.setTimeout(() => { void refreshActiveSessionMessages(sid); }, 120);
     }
     // Clear the voice-mode session ref after we've captured sid.
