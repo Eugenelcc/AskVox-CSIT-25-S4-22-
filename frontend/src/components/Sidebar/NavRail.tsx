@@ -35,6 +35,35 @@ const ITEMS: NavItem[] = [
 export default function NavRail({ activeTab, onTabClick, onOpenSidebar, avatarPath }: NavRailProps) {
   const [avatarSrc, setAvatarSrc] = useState<string>("");
 
+  // Expose bottom-nav height via CSS var so other fixed elements (ChatBar, scroll areas)
+  // can position correctly only when NavRail is actually mounted.
+  useEffect(() => {
+    const root = document.documentElement;
+    const mq = window.matchMedia("(max-width: 768px)");
+
+    const apply = () => {
+      root.style.setProperty("--av-nav-h", mq.matches ? "72px" : "0px");
+    };
+
+    apply();
+    try {
+      mq.addEventListener("change", apply);
+      return () => {
+        mq.removeEventListener("change", apply);
+        root.style.setProperty("--av-nav-h", "0px");
+      };
+    } catch {
+      // Safari fallback
+      // eslint-disable-next-line deprecation/deprecation
+      mq.addListener(apply);
+      return () => {
+        // eslint-disable-next-line deprecation/deprecation
+        mq.removeListener(apply);
+        root.style.setProperty("--av-nav-h", "0px");
+      };
+    }
+  }, []);
+
   const handleClick = (tab: string) => {
     onTabClick(tab);
     onOpenSidebar?.(tab);

@@ -31,7 +31,7 @@ const PaidTopBar: FC<PaidTopBarProps> = ({ session, micEnabled, onToggleMic }) =
           title={micEnabled ? "Microphone enabled" : "Microphone disabled"}
         >
           {micEnabled ? <Mic size={16} /> : <MicOff size={16} />}
-          {micEnabled ? "Mic on" : "Mic off"}
+          <span className="uv-top-btn-text">{micEnabled ? "Mic on" : "Mic off"}</span>
         </button>
         <button
           className="uv-top-btn uv-top-btn-outline"

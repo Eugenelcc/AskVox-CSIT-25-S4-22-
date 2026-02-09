@@ -50,3 +50,14 @@
 .successInline{display:flex;align-items:center;gap:10px;margin-top:10px}
 .successDot{width:14px;height:14px;background:#FF951C;border-radius:50%}
 .successText{color:#FF951C}
+
+@media (max-width: 768px){
+	.wrap{padding:16px}
+	.headerRow{flex-wrap:wrap}
+	.planCard{flex-direction:column;align-items:flex-start;gap:12px}
+	.planCardMeta{flex-wrap:wrap}
+	.methodRow{flex-direction:column;align-items:flex-start}
+	.inputRow{grid-template-columns:1fr}
+	.historyItem{grid-template-columns:1fr;gap:6px}
+	.hStatus{justify-self:start}
+}

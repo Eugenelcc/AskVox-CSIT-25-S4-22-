@@ -223,6 +223,43 @@
   cursor: pointer;
 }
 
+@media (max-width: 768px) {
+  .page {
+    padding: 76px 14px 36px;
+  }
+
+  .title {
+    font-size: 28px;
+  }
+
+  .toggleWrap {
+    position: static;
+    margin: 12px auto 0;
+    justify-content: center;
+    width: fit-content;
+  }
+
+  .cards {
+    gap: 18px;
+    padding-top: 16px;
+  }
+
+  .availablePlanCard,
+  .currentPlanCard {
+    width: 100%;
+    max-width: 420px;
+    height: auto;
+  }
+
+  .currentPlanCard {
+    transform: none;
+  }
+
+  .cardInner {
+    padding: 24px 20px 20px;
+  }
+}
+
 .chooseBtn:hover {
   background: rgba(255, 255, 255, 0.07);
 }

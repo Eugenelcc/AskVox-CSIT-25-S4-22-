@@ -12,7 +12,7 @@
   .uv-hero {
     position: relative;
     width: 100%;
-    min-height: calc(100vh - 220px); /* adnust for top bar & chatbar */
+    min-height: calc(100dvh - 220px); /* adjust for top bar & chatbar */
   
     display: flex;
     flex-direction: column;
@@ -130,6 +130,20 @@
 
     .orb-caption {
       font-size: clamp(20px, 6vw, 30px);
+    }
+  }
+
+  @media (max-width: 768px) {
+    .uv-chat-scroll-outer {
+      top: 64px;
+    }
+
+    .uv-chat-area {
+      padding-bottom: calc(var(--av-chatbar-h) + var(--av-nav-h) + 32px);
+    }
+
+    .uv-chat-scroll-outer {
+      bottom: calc(12px + env(safe-area-inset-bottom) + var(--av-chatbar-h) + var(--av-nav-h) + 12px);
     }
   }
 

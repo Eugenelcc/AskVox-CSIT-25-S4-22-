@@ -194,6 +194,50 @@
     overflow: hidden;
     box-sizing: border-box;
   }
+
+  /* -------------------- 📱 Mobile overrides -------------------- */
+  @media (max-width: 768px) {
+    .av-chat-window {
+      width: calc(100% - 20px);
+      padding-top: 10px;
+    }
+
+    .av-chat-scroll {
+      gap: 18px;
+      padding-bottom: 16px;
+    }
+
+    .av-chat-bubble {
+      padding: 14px 14px;
+      border-radius: 22px;
+      font-size: 14px;
+    }
+
+    .av-image-card {
+      width: calc(50% - 6px);
+      height: auto;
+      aspect-ratio: 3 / 2;
+    }
+
+    .av-youtube-card {
+      padding: 10px;
+      border-radius: 14px;
+    }
+
+    .av-sources-modal {
+      top: 12px;
+      left: 12px;
+      right: 12px;
+      width: auto;
+      height: calc(100dvh - 24px);
+      border-radius: 18px;
+    }
+
+    .av-sources-title {
+      font-size: 22px;
+      margin: 4px 0 10px 4px;
+    }
+  }
   
   .av-sources-title {
     font-family: 'ABeeZee';
