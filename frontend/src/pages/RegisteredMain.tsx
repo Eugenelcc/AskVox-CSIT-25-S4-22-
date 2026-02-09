@@ -1051,9 +1051,6 @@ export default function Dashboard({
   ) => {
     setActiveTab("chats");
     setSidebarOpen(true);
-    if (location.pathname.startsWith("/discover")) {
-      navigate(paid ? "/paiduserhome" : "/reguserhome");
-    }
     setActiveSessionId(null);
     setIsNewChat(true);
 
@@ -1095,6 +1092,14 @@ export default function Dashboard({
       slug: article.slug,
       path: article.path,
     });
+
+    // Ensure we actually open the newly created chat session (works consistently for paid and registered routes).
+    if (sessionId) {
+      navigate(`/chats/${sessionId}`);
+    } else if (location.pathname.startsWith("/discover")) {
+      // Fallback: return home if session creation failed.
+      navigate(paid ? "/paiduserhome" : "/reguserhome");
+    }
   };
 
   const showSidebar = isSidebarOpen && activeTab === 'chats';
