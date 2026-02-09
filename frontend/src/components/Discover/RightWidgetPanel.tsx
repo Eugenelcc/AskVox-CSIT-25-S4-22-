@@ -3,7 +3,7 @@ import { ChevronDown, ChevronLeft, ChevronRight, ChevronUp, Cloud, CloudFog, Clo
 import './DiscoverNews.css';
 
 import type { WeatherIcon } from '../../services/weatherApi';
-import { fetchSportsScoreboard, type SportKey, type SportsEvent } from '../../services/sportsApi';
+import { fetchSportsScoreboard, fetchSportsStandings, type SportKey, type SportsEvent, type SportsStandingsResponse, type StandingsSportKey, type StandingsEntry } from '../../services/sportsApi';
 
 export interface WeeklyForecastItem {
 	day: string;
@@ -104,6 +104,19 @@ const RightWidgetPanel: React.FC<RightWidgetPanelProps> = ({
 	const [lastUpdated, setLastUpdated] = useState<string | null>(null);
 	const [sportsRefreshTick, setSportsRefreshTick] = useState<number>(0);
 
+	const standingsOrder: StandingsSportKey[] = useMemo(() => ['soccer', 'nba', 'nfl', 'mlb'], []);
+	const standingsLabels: Record<StandingsSportKey, string> = useMemo(
+		() => ({ soccer: 'Soccer', nba: 'NBA', nfl: 'NFL', mlb: 'Baseball' }),
+		[]
+	);
+	const [selectedStandingsSport, setSelectedStandingsSport] = useState<StandingsSportKey>('soccer');
+	const [selectedStandingsLeague, setSelectedStandingsLeague] = useState<string>(() => leagueOptionsBySport.soccer[0]?.code || 'eng.1');
+	const [standingsLoading, setStandingsLoading] = useState<boolean>(true);
+	const [standingsError, setStandingsError] = useState<string | null>(null);
+	const [standingsData, setStandingsData] = useState<SportsStandingsResponse | null>(null);
+	const [showStandings, setShowStandings] = useState<boolean>(true);
+	const [standingsRefreshTick, setStandingsRefreshTick] = useState<number>(0);
+
 	const formatKickoff = (iso: string | null | undefined): { dateLabel: string; timeLabel?: string } => {
 		if (!iso) return { dateLabel: '—' };
 		const d = new Date(iso);
@@ -173,6 +186,21 @@ const RightWidgetPanel: React.FC<RightWidgetPanelProps> = ({
 		}
 	};
 
+	const loadStandings = async (sport: StandingsSportKey, league: string, signal: AbortSignal) => {
+		setStandingsError(null);
+		setStandingsLoading(true);
+		try {
+			const data = await fetchSportsStandings({ sport, league, signal });
+			setStandingsData(data);
+		} catch (e: any) {
+			if (isAbortError(e)) return;
+			setStandingsError(typeof e?.message === 'string' ? e.message : 'Failed to load standings');
+			setStandingsData(null);
+		} finally {
+			setStandingsLoading(false);
+		}
+	};
+
 	useEffect(() => {
 		let cancelled = false;
 		const controller = new AbortController();
@@ -203,6 +231,23 @@ const RightWidgetPanel: React.FC<RightWidgetPanelProps> = ({
 		};
 	}, [selectedSport, selectedLeague, sportsRefreshTick]);
 
+	useEffect(() => {
+		let cancelled = false;
+		const controller = new AbortController();
+
+		loadStandings(selectedStandingsSport, selectedStandingsLeague, controller.signal).catch(() => {
+			// handled in loadStandings
+		});
+
+		return () => {
+			cancelled = true;
+			if (cancelled) {
+				// noop; keep TS happy
+			}
+			controller.abort();
+		};
+	}, [selectedStandingsSport, selectedStandingsLeague, standingsRefreshTick]);
+
 	const leagueLabel = useMemo(() => {
 		const opts = leagueOptionsBySport[selectedSport] || [];
 		return opts.find((o) => o.code === selectedLeague)?.label || selectedLeague;
@@ -220,6 +265,39 @@ const RightWidgetPanel: React.FC<RightWidgetPanelProps> = ({
 
 	const refreshNow = () => {
 		setSportsRefreshTick((t) => t + 1);
+	};
+
+	const refreshStandingsNow = () => {
+		setStandingsRefreshTick((t) => t + 1);
+	};
+
+	const selectStandingsSport = (sport: StandingsSportKey) => {
+		setSelectedStandingsSport(sport);
+		setSelectedStandingsLeague((prev) => {
+			const opts = leagueOptionsBySport[sport as unknown as SportKey] || [];
+			if (opts.some((o) => o.code === prev)) return prev;
+			return opts[0]?.code || prev;
+		});
+	};
+
+	const getStatNumber = (entry: StandingsEntry, keys: string[]): number | null => {
+		for (const key of keys) {
+			const v = entry.stats?.[key]?.value;
+			if (typeof v === 'number' && Number.isFinite(v)) return v;
+			if (typeof v === 'string' && v.trim() !== '' && !Number.isNaN(Number(v))) return Number(v);
+		}
+		return null;
+	};
+
+	const getStatDisplay = (entry: StandingsEntry, keys: string[]): string | null => {
+		for (const key of keys) {
+			const d = entry.stats?.[key]?.display;
+			if (typeof d === 'string' && d.trim() !== '') return d;
+			const v = entry.stats?.[key]?.value;
+			if (typeof v === 'string' && v.trim() !== '') return v;
+			if (typeof v === 'number' && Number.isFinite(v)) return String(v);
+		}
+		return null;
 	};
 
 	const setSportByIndex = (idx: number) => {
@@ -460,6 +538,140 @@ const RightWidgetPanel: React.FC<RightWidgetPanelProps> = ({
 						</div>
 					)}
 				</div>
+			</div>
+
+			{/* Standings */}
+			<div className="standings-card">
+				<div className="sports-header">
+					<div style={{ color: '#fff', fontSize: 14, fontWeight: 600 }}>Standings</div>
+					<div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+						<button
+							type="button"
+							className={standingsLoading ? 'sports-nav sports-nav--loading' : 'sports-nav'}
+							onClick={refreshStandingsNow}
+							disabled={standingsLoading}
+							aria-label="Refresh standings"
+							title="Refresh"
+						>
+							<RefreshCw size={16} className={standingsLoading ? 'spin' : undefined} />
+						</button>
+						<button
+							type="button"
+							className="sports-nav"
+							onClick={() => setShowStandings((s) => !s)}
+							aria-expanded={showStandings}
+							title={showStandings ? 'Hide standings' : 'Show standings'}
+						>
+							{showStandings ? <ChevronUp size={18} /> : <ChevronDown size={18} />}
+						</button>
+					</div>
+				</div>
+
+				<div className="sports-tabs" role="tablist" aria-label="Standings sport selector">
+					{standingsOrder.map((k) => (
+						<button
+							key={k}
+							type="button"
+							className={k === selectedStandingsSport ? 'sports-tab sports-tab--active' : 'sports-tab'}
+							onClick={() => selectStandingsSport(k)}
+						>
+							{standingsLabels[k]}
+						</button>
+					))}
+				</div>
+
+				<div className="league-tabs" role="tablist" aria-label="Standings league selector">
+					{(leagueOptionsBySport[selectedStandingsSport as unknown as SportKey] || []).map((opt) => (
+						<button
+							key={opt.code}
+							type="button"
+							className={opt.code === selectedStandingsLeague ? 'league-tab league-tab--active' : 'league-tab'}
+							onClick={() => setSelectedStandingsLeague(opt.code)}
+						>
+							{opt.label}
+						</button>
+					))}
+				</div>
+
+				{standingsError ? (
+					<div style={{ color: 'rgba(255,255,255,0.54)', fontSize: 12, padding: '8px 4px 0 4px' }}>
+						{standingsError}
+					</div>
+				) : null}
+
+				{showStandings ? (
+					<div style={{ marginTop: 12 }}>
+						{standingsLoading ? (
+							<div style={{ color: 'rgba(255,255,255,0.54)', fontSize: 12, padding: '8px 6px' }}>Loading standings…</div>
+						) : !standingsData || !Array.isArray(standingsData.tables) || standingsData.tables.length === 0 ? (
+							<div style={{ color: 'rgba(255,255,255,0.54)', fontSize: 12, padding: '8px 6px' }}>No standings available</div>
+						) : (
+							standingsData.tables.slice(0, 2).map((table, tIdx) => (
+								<div key={`${table.name}-${tIdx}`} style={{ marginBottom: 12 }}>
+									<div className="league-header" style={{ borderRadius: 20 }}>
+										<div>
+											<div className="league-title">{table.name}</div>
+											<div className="league-season" style={{ color: 'rgba(255,255,255,0.54)' }}>{standingsData.title}</div>
+										</div>
+									</div>
+									<div className="league-table">
+										{table.entries.slice(0, 10).map((row, idx) => {
+											const team = row.team || {};
+											const badge = team.logo || '/assets/club/placeholder.png';
+											const club = team.shortName || team.name || team.abbr || '—';
+											const points = getStatDisplay(row, ['points', 'pts']);
+											const wins = getStatDisplay(row, ['wins', 'win']);
+											const losses = getStatDisplay(row, ['losses', 'loss']);
+											const ties = getStatDisplay(row, ['ties', 'draws']);
+											const played = getStatDisplay(row, ['gamesPlayed', 'games', 'gp']);
+											const isSoccer = selectedStandingsSport === 'soccer';
+
+											const pct = getStatDisplay(row, ['winPercent', 'pct']);
+											let rightLabel: string | null = null;
+											if (isSoccer) {
+												rightLabel = played ? `GP ${played}` : null;
+											} else {
+												rightLabel = pct ? `PCT ${pct}` : null;
+											}
+
+											return (
+												<div className="league-row" key={`${row.rank}-${club}-${idx}`}>
+													<div className="league-pos">{row.rank ?? idx + 1}</div>
+													<div className="league-club">
+														<img src={badge} alt={club} style={{ width: 22, height: 22, borderRadius: 4 }} />
+														<div style={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
+															<span style={{ fontSize: 13 }}>{club}</span>
+															{played ? (
+																<span style={{ fontSize: 11, color: 'rgba(255,255,255,0.54)' }}>
+																	{isSoccer ? `GP ${played}` : played ? `GP ${played}` : null}
+																</span>
+															) : null}
+														</div>
+													</div>
+													<div className="league-points">
+														{isSoccer
+															? (points ?? '—')
+															: `${wins ?? '–'}-${losses ?? '–'}${ties && ties !== '0' ? `-${ties}` : ''}`}
+													</div>
+													{rightLabel ? (
+														<div style={{ width: 84, textAlign: 'right', color: 'rgba(255,255,255,0.54)', fontSize: 11 }}>
+															{rightLabel}
+														</div>
+													) : null}
+												</div>
+											);
+										})}
+									</div>
+								</div>
+							))
+						)
+					}
+					</div>
+				) : (
+					<div style={{ color: 'rgba(255,255,255,0.54)', fontSize: 12, padding: '8px 6px' }}>
+						Click the arrow to show standings
+					</div>
+				)}
 			</div>
 		</div>
 	);

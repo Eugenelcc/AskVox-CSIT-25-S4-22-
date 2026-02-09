@@ -9,6 +9,7 @@ from fastapi import APIRouter, HTTPException, Query
 router = APIRouter(prefix="/sports", tags=["sports"])
 
 SportKey = Literal["nba", "mlb", "soccer", "nfl"]
+StandingsSportKey = Literal["soccer", "nba", "nfl", "mlb"]
 
 
 SPORT_CONFIG: dict[SportKey, dict[str, str]] = {
@@ -17,6 +18,16 @@ SPORT_CONFIG: dict[SportKey, dict[str, str]] = {
     "nfl": {"sport": "football", "league": "nfl", "title": "NFL"},
     # Default soccer league: English Premier League (eng.1). Override with ?league=...
     "soccer": {"sport": "soccer", "league": "eng.1", "title": "Soccer"},
+}
+
+
+STANDINGS_CONFIG: dict[StandingsSportKey, dict[str, str]] = {
+    # Soccer standings are league-specific (eng.1, esp.1, ...)
+    "soccer": {"sport": "soccer", "league": "eng.1", "title": "Soccer"},
+    # NBA standings (league can also be wnba)
+    "nba": {"sport": "basketball", "league": "nba", "title": "NBA"},
+    "nfl": {"sport": "football", "league": "nfl", "title": "NFL"},
+    "mlb": {"sport": "baseball", "league": "mlb", "title": "MLB"},
 }
 
 
@@ -50,6 +61,14 @@ def _pick_logo(team_obj: dict[str, Any]) -> Optional[str]:
     logo = team_obj.get("logo")
     if isinstance(logo, str) and logo:
         return logo
+
+    # Some objects (e.g., F1 athletes) provide a nested media object.
+    for nested_key in ("flag", "headshot", "image"):
+        nested = _as_dict(team_obj.get(nested_key))
+        href = nested.get("href")
+        if isinstance(href, str) and href:
+            return href
+
     logos = _as_list(team_obj.get("logos"))
     for entry in logos:
         e = _as_dict(entry)
@@ -75,6 +94,96 @@ def _parse_competitor(competitor_obj: dict[str, Any]) -> dict[str, Any]:
         "logo": _pick_logo(team),
         "score": score_val,
     }
+
+
+def _stat_map(stats: Any) -> dict[str, dict[str, Any]]:
+    out: dict[str, dict[str, Any]] = {}
+    for s in _as_list(stats):
+        sd = _as_dict(s)
+        name = sd.get("name")
+        if not isinstance(name, str) or not name:
+            continue
+        entry: dict[str, Any] = {}
+        if "value" in sd:
+            entry["value"] = sd.get("value")
+        if isinstance(sd.get("displayValue"), str):
+            entry["display"] = sd.get("displayValue")
+        if isinstance(sd.get("abbreviation"), str):
+            entry["abbr"] = sd.get("abbreviation")
+        out[name] = entry
+    return out
+
+
+def _normalize_standings_entry(entry_obj: dict[str, Any], fallback_rank: int) -> dict[str, Any]:
+    team_obj = _as_dict(entry_obj.get("team"))
+    athlete_obj = _as_dict(entry_obj.get("athlete"))
+    # F1 Driver standings use `athlete` instead of `team`.
+    identity_obj = athlete_obj if athlete_obj else team_obj
+    stats = _stat_map(entry_obj.get("stats"))
+
+    rank_val: Optional[int] = None
+    for rank_key in ("rank", "position", "seed"):
+        v = stats.get(rank_key, {}).get("value")
+        if isinstance(v, (int, float)):
+            rank_val = int(v)
+            break
+        dv = stats.get(rank_key, {}).get("display")
+        if isinstance(dv, str) and dv.isdigit():
+            rank_val = int(dv)
+            break
+
+    return {
+        "rank": rank_val or fallback_rank,
+        "team": {
+            "name": identity_obj.get("displayName") if isinstance(identity_obj.get("displayName"), str) else None,
+            "shortName": (
+                identity_obj.get("shortDisplayName")
+                if isinstance(identity_obj.get("shortDisplayName"), str)
+                else (identity_obj.get("shortName") if isinstance(identity_obj.get("shortName"), str) else None)
+            ),
+            "abbr": identity_obj.get("abbreviation") if isinstance(identity_obj.get("abbreviation"), str) else None,
+            "logo": _pick_logo(identity_obj),
+        },
+        "stats": stats,
+    }
+
+
+def _extract_standings_tables(payload: dict[str, Any]) -> list[dict[str, Any]]:
+    """Extract one or more standings tables from ESPN site API standings payload.
+
+    The response shape varies by sport/league; we normalize it into a list of tables:
+    [{"name": <str>, "entries": [...]}, ...]
+    """
+    tables: list[dict[str, Any]] = []
+
+    def _entries_from(node: dict[str, Any]) -> list[dict[str, Any]]:
+        standings = _as_dict(node.get("standings"))
+        return _as_list(standings.get("entries"))
+
+    # Some leagues put entries at root: payload.standings.entries
+    root_entries = _entries_from(payload)
+    if root_entries:
+        normalized_entries = [
+            _normalize_standings_entry(_as_dict(e), idx + 1) for idx, e in enumerate(root_entries)
+        ]
+        tables.append({"name": payload.get("name") if isinstance(payload.get("name"), str) else "Standings", "entries": normalized_entries})
+        return tables
+
+    # Others have payload.children[*].standings.entries
+    for child in _as_list(payload.get("children")):
+        c = _as_dict(child)
+        entries = _entries_from(c)
+        if not entries:
+            continue
+        normalized_entries = [
+            _normalize_standings_entry(_as_dict(e), idx + 1) for idx, e in enumerate(entries)
+        ]
+        name = c.get("name") if isinstance(c.get("name"), str) else None
+        if not name:
+            name = c.get("abbreviation") if isinstance(c.get("abbreviation"), str) else "Standings"
+        tables.append({"name": name, "entries": normalized_entries})
+
+    return tables
 
 
 @router.get("/scoreboard/{sport_key}")
@@ -231,4 +340,46 @@ async def get_scoreboard(
         "live": live,
         "upcoming": upcoming,
         "recent": recent,
+    }
+
+
+@router.get("/standings/{sport_key}")
+async def get_standings(
+    sport_key: StandingsSportKey,
+    league: Optional[str] = Query(default=None, description="Override league (ESPN code) for soccer/nba. e.g. eng.1, esp.1, nba, wnba"),
+):
+    config = STANDINGS_CONFIG.get(sport_key)
+    if not config:
+        raise HTTPException(status_code=400, detail="Unsupported sport")
+
+    sport = config["sport"]
+    use_league = config["league"]
+    if sport_key in {"soccer", "nba"}:
+        use_league = league or use_league
+
+    url = f"https://site.api.espn.com/apis/v2/sports/{sport}/{use_league}/standings"
+
+    try:
+        async with httpx.AsyncClient(timeout=12.0, headers={"User-Agent": "AskVox/1.0"}) as client:
+            res = await client.get(url)
+    except httpx.RequestError as e:
+        raise HTTPException(status_code=502, detail=f"Sports upstream request failed: {e}") from e
+
+    if res.status_code != 200:
+        raise HTTPException(status_code=502, detail=f"Sports upstream returned {res.status_code}")
+
+    payload = _as_dict(res.json())
+    tables = _extract_standings_tables(payload)
+
+    # F1 tends to provide multiple tables (drivers/constructors) as children.
+    # If we still couldn't parse, return an informative error.
+    if not tables:
+        raise HTTPException(status_code=502, detail="Standings upstream response format not recognized")
+
+    return {
+        "sport": sport_key,
+        "league": use_league,
+        "title": f"{config['title']} Standings",
+        "fetchedAt": datetime.now(timezone.utc).isoformat(),
+        "tables": tables,
     }

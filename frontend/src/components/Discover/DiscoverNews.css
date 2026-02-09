@@ -274,6 +274,13 @@
   color: #FFFFFF;
 }
 
+.standings-card {
+  background: rgba(31,30,30,0.63);
+  border-radius: 31px;
+  padding: 16px;
+  color: #FFFFFF;
+}
+
 .sports-header {
   display: flex;
   align-items: baseline;
