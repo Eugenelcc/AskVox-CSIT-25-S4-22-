@@ -1,8 +1,11 @@
 .uv-root {
     position: relative;
-    min-height: 100vh;
+  min-height: 100dvh;
     color: #f5f5f5;
     overflow-x: hidden; /* allow vertical scrolling */
+
+  /* Used to place the greeting caption above the fixed chat bar */
+  --av-chatbar-h: 72px;
   }
   
   /* orb sits here */
@@ -72,11 +75,14 @@
   .orb-caption {
     font-family: "ABeeZee", system-ui, -apple-system, BlinkMacSystemFont,
       "Segoe UI", sans-serif;
-    font-size: 40px;
-    line-height: 1.4;
+    font-size: clamp(22px, 3.6vw, 40px);
+    line-height: 1.25;
     letter-spacing: 0.02em;
     color: #f0f0f0;
     text-align: center;
+    padding: 0 16px;
+    max-width: min(980px, calc(100vw - 32px));
+    margin: 0 auto;
   }
   
   
@@ -97,6 +103,34 @@
     align-items: center;
     flex-direction: column;
     padding-bottom: 20px;
+  }
+
+  /* Greeting caption on New Chat: keep it ABOVE the fixed ChatBar at any zoom */
+  .av-chatbar-caption {
+    position: fixed;
+    left: var(--content-offset, 0px);
+    right: 0;
+    bottom: calc(
+      16px + env(safe-area-inset-bottom) + var(--av-chatbar-h) + 14px
+    );
+    z-index: 19;
+    display: flex;
+    justify-content: center;
+    pointer-events: none;
+  }
+
+  .av-chatbar-caption > * {
+    pointer-events: auto;
+  }
+
+  @media (max-width: 520px) {
+    .uv-root {
+      --av-chatbar-h: 68px;
+    }
+
+    .orb-caption {
+      font-size: clamp(20px, 6vw, 30px);
+    }
   }
 
   .uv-news-context-card {
