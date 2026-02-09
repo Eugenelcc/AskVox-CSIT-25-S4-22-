@@ -135,3 +135,5 @@ openai-whisper==20231117
 
 # Wake word engine (offline keyword spotting)
 vosk==0.3.45
+
+setuptools>=67.0.0
