@@ -1,0 +1,62 @@
+.acc-avatarPicker {
+  max-width: 760px;
+  margin: 0 auto;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.acc-avatarPicker__title {
+  font-family: "ABeeZee", system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif;
+  font-size: 18px;
+  color: rgba(255, 255, 255, 0.92);
+  letter-spacing: 0.02em;
+}
+
+.acc-avatarGrid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 14px;
+  padding: 8px 0 4px;
+}
+
+.acc-avatarOption {
+  background: #1c1c1c;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: 18px;
+  padding: 10px;
+  cursor: pointer;
+  display: grid;
+  place-items: center;
+}
+
+.acc-avatarOption:hover {
+  border-color: rgba(255, 149, 28, 0.6);
+}
+
+.acc-avatarOption.is-selected {
+  border-color: rgba(255, 149, 28, 0.9);
+}
+
+.acc-avatarOption img {
+  width: 72px;
+  height: 72px;
+  display: block;
+}
+
+.acc-uploadRow {
+  display: flex;
+  gap: 12px;
+  align-items: center;
+  flex-wrap: wrap;
+}
+
+.acc-uploadInput {
+  color: rgba(255, 255, 255, 0.8);
+}
+
+@media (max-width: 840px) {
+  .acc-avatarGrid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}

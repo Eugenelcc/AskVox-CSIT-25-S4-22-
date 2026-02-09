@@ -1,0 +1,111 @@
+.acc-editForm {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  max-width: 720px;
+  margin: 0 auto;
+}
+
+.acc-editRow {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 10px 6px;
+}
+
+.acc-editLabel {
+  font-family: "ABeeZee", system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif;
+  font-size: 16px;
+  color: rgba(255, 255, 255, 0.9);
+}
+
+.acc-editValue {
+  font-family: "ABeeZee", system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif;
+  font-size: 16px;
+  color: rgba(255, 255, 255, 0.8);
+}
+
+.acc-editFormBody {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.acc-editInput {
+  width: 100%;
+  height: 54px;
+  background: #1c1c1c;
+  border: 1px solid #754b1c;
+  border-radius: 18px;
+  padding: 0 16px;
+  font-family: "ABeeZee", system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif;
+  font-size: 18px;
+  color: #fff;
+  outline: none;
+}
+
+.acc-editInput:focus {
+  border-color: rgba(255, 149, 28, 0.75);
+}
+
+.acc-editHelp {
+  font-family: "ABeeZee", system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif;
+  font-size: 14px;
+  color: rgba(255, 255, 255, 0.72);
+  line-height: 1.4;
+}
+
+.acc-editAlert {
+  border-radius: 14px;
+  padding: 10px 12px;
+  font-family: "ABeeZee", system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif;
+  font-size: 14px;
+}
+
+.acc-editAlert--error {
+  background: rgba(255, 80, 80, 0.12);
+  border: 1px solid rgba(255, 80, 80, 0.28);
+  color: rgba(255, 255, 255, 0.9);
+}
+
+.acc-editAlert--success {
+  background: rgba(60, 200, 120, 0.12);
+  border: 1px solid rgba(60, 200, 120, 0.28);
+  color: rgba(255, 255, 255, 0.9);
+}
+
+.acc-editActions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 10px;
+  margin-top: 4px;
+}
+
+.acc-editBtnPrimary,
+.acc-editBtnSecondary {
+  height: 42px;
+  border-radius: 14px;
+  padding: 0 16px;
+  font-family: "ABeeZee", system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif;
+  font-size: 16px;
+  cursor: pointer;
+}
+
+.acc-editBtnPrimary {
+  background: #434343;
+  border: 1px solid #754b1c;
+  color: #f0f0f0;
+}
+
+.acc-editBtnSecondary {
+  background: #1c1c1c;
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  color: rgba(255, 255, 255, 0.82);
+}
+
+.acc-editBtnPrimary:disabled,
+.acc-editBtnSecondary:disabled {
+  opacity: 0.65;
+  cursor: not-allowed;
+}

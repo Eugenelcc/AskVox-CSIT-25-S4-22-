@@ -27,6 +27,9 @@ import NewsContent from "../components/Discover/NewsContent/NewsContent";
 // Types
 import type { ChatMessage, DatabaseMessage, UserProfile } from "../types/database"; 
 import AccountDetails from './settings/AccountDetails';
+import { AccountEmailCard } from "./settings/AccountEmailPage";
+import { AccountPasswordCard } from "./settings/AccountPasswordPage";
+import { AccountAvatarCard } from "./settings/AccountAvatarPage";
 import DeleteAccount from './settings/DeleteAccount';
 import PaymentBilling from './settings/PaymentBilling';
 import WakeWord from './settings/WakeWord';
@@ -245,15 +248,27 @@ export default function Dashboard({
   // --- Data Fetching ---
   useEffect(() => {
     if (!session?.user?.id) return;
-    
+
+    const loadProfile = async () => {
+      const { data } = await supabase
+        .from('profiles')
+        .select('*')
+        .eq('id', session.user.id)
+        .single();
+      if (data) {
+        console.log("✅ Profile Loaded:", (data as any).username); // Debug Log
+        setProfile(data);
+      }
+    };
+
     // Fetch Profile
-    supabase.from('profiles').select('*').eq('id', session.user.id).single()
-      .then(({ data }) => {
-        if (data) {
-          console.log("✅ Profile Loaded:", data.username); // Debug Log
-          setProfile(data);
-        }
-      });
+    void loadProfile();
+
+    const onProfileUpdated = () => {
+      void loadProfile();
+    };
+
+    window.addEventListener("askvox:profile-updated", onProfileUpdated);
       
     // Fetch Sessions (most recent activity first). If 'updated_at' isn't available,
     // fall back to created_at to avoid breaking the list.
@@ -279,6 +294,9 @@ export default function Dashboard({
         if (!data) return;
         setSessions(applyChatStylesToRows(data as DbSessionRow[]));
       });
+    return () => {
+      window.removeEventListener("askvox:profile-updated", onProfileUpdated);
+    };
   }, [session.user.id, applyChatStylesToRows]);
 
   useEffect(() => {
@@ -543,6 +561,11 @@ export default function Dashboard({
       navigate(paid ? "/paiduserhome" : "/reguserhome");
     }
 
+    // Leaving settings deep-links: return to the appropriate home route
+    if (location.pathname.startsWith("/settings") && tab !== "settings") {
+      navigate(paid ? "/paiduserhome" : "/reguserhome");
+    }
+
     // Logo click in NavRail passes "reguserhome" — treat it as home/chats
     if (tab === "reguserhome") {
       setActiveTab("chats");
@@ -768,6 +791,22 @@ export default function Dashboard({
       void refreshActiveSessionMessages(sid);
     }
   }, [location.pathname, refreshActiveSessionMessages]);
+
+  // Deep-link support for settings routes while keeping NavRail/sidebars visible.
+  useEffect(() => {
+    const path = location.pathname;
+    const isAccountSettingsRoute =
+      path === "/settings/account" ||
+      path === "/settings/account/email" ||
+      path === "/settings/account/password" ||
+      path === "/settings/account/avatar";
+
+    if (!isAccountSettingsRoute) return;
+
+    setActiveTab("settings");
+    setSidebarOpen(true);
+    setActiveSettingsKey("account");
+  }, [location.pathname]);
 
 
   const handleSubmit = async (
@@ -1880,7 +1919,15 @@ export default function Dashboard({
           {/* SETTINGS MODE */}
           {activeTab === "settings" ? (
             activeSettingsKey === "account" ? (
-              <AccountDetails session={session} />
+              location.pathname === "/settings/account/email" ? (
+                <AccountEmailCard session={session} />
+              ) : location.pathname === "/settings/account/password" ? (
+                <AccountPasswordCard session={session} />
+              ) : location.pathname === "/settings/account/avatar" ? (
+                <AccountAvatarCard session={session} />
+              ) : (
+                <AccountDetails session={session} />
+              )
             ) : activeSettingsKey === "delete" ? (
               <DeleteAccount session={session} />
             ) : activeSettingsKey === "billing" ? (

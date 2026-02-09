@@ -12,10 +12,14 @@ import PaidMain from './pages/PaidMain'
 import UnregisteredMain from './pages/UnregisteredMain'
 import Upgrade from './pages/subscription/subscription_detail'
 import AccountSettingsPage from './pages/settings/AccountSettingsPage'
+import AccountEmailPage from './pages/settings/AccountEmailPage'
+import AccountPasswordPage from './pages/settings/AccountPasswordPage'
+import AccountAvatarPage from './pages/settings/AccountAvatarPage.tsx'
 import ForgotPassword from './pages/auth/ForgotPassword'
 import ResetPassword from './pages/auth/ResetPassword'
 import LogoutSuccess from './pages/auth/LogoutSuccess'
 import OAuthCallback from './pages/auth/OAuthCallback'
+import LinkCallback from './pages/auth/LinkCallback'
 import Payment from './pages/subscription/payment'
 import PlatformAdminDashboard from './pages/PlatformAdmin/dashboard'
 import FlaggedResponsePage from './pages/PlatformAdmin/FlaggedResponse' 
@@ -188,6 +192,7 @@ function App() {
         <Route path="/auth/confirmed" element={<ConfirmedPage />} />
         <Route path="/auth/check-email" element={<CheckEmailPage />} />
         <Route path="/auth/oauth-callback" element={<OAuthCallback />} />
+        <Route path="/auth/link-callback" element={<LinkCallback />} />
 
         {/* Protected Route */}
         <Route
@@ -273,7 +278,59 @@ function App() {
         />
         <Route
           path="/settings/account"
-          element={session ? <AccountSettingsPage session={session} isAdmin={isAdmin} /> : <Navigate to="/login" />}
+          element={
+            session
+              ? (
+                  isAdmin ? (
+                    <AccountSettingsPage session={session} isAdmin={isAdmin} />
+                  ) : (
+                    <RegisterMain session={session} paid={isPaid} initialTab="settings" micEnabled={micEnabled} setMicEnabled={setMicEnabled} />
+                  )
+                )
+              : <Navigate to="/login" />
+          }
+        />
+        <Route
+          path="/settings/account/email"
+          element={
+            session
+              ? (
+                  isAdmin ? (
+                    <AccountEmailPage session={session} isAdmin={isAdmin} />
+                  ) : (
+                    <RegisterMain session={session} paid={isPaid} initialTab="settings" micEnabled={micEnabled} setMicEnabled={setMicEnabled} />
+                  )
+                )
+              : <Navigate to="/login" />
+          }
+        />
+        <Route
+          path="/settings/account/password"
+          element={
+            session
+              ? (
+                  isAdmin ? (
+                    <AccountPasswordPage session={session} isAdmin={isAdmin} />
+                  ) : (
+                    <RegisterMain session={session} paid={isPaid} initialTab="settings" micEnabled={micEnabled} setMicEnabled={setMicEnabled} />
+                  )
+                )
+              : <Navigate to="/login" />
+          }
+        />
+        <Route
+          path="/settings/account/avatar"
+          element={
+            session
+              ? (
+                  isAdmin ? (
+                    <AccountAvatarPage session={session} isAdmin={isAdmin} />
+                  ) : (
+                    <RegisterMain session={session} paid={isPaid} initialTab="settings" micEnabled={micEnabled} setMicEnabled={setMicEnabled} />
+                  )
+                )
+              : <Navigate to="/login" />
+          }
         />
         {/* Legacy admin routes removed; use Platform Admin routes below */}
         <Route path="/forgot-password" element={<ForgotPassword />} />
