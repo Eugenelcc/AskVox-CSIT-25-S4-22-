@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { ChevronDown, ChevronLeft, ChevronRight, ChevronUp, Cloud, CloudFog, CloudLightning, CloudRain, RefreshCw, Snowflake, Sun } from 'lucide-react';
 import './DiscoverNews.css';
 
@@ -138,7 +138,7 @@ const RightWidgetPanel: React.FC<RightWidgetPanelProps> = ({
 	const getTeamName = (t?: { shortName?: string | null; name?: string | null } | null) =>
 		t?.shortName || t?.name || 'TBD';
 
-	const getLogo = (t?: { logo?: string | null } | null) => t?.logo || '/assets/club/placeholder.png';
+	const getLogo = (t?: { logo?: string | null } | null) => t?.logo || '/assets/club/placeholder.svg';
 
 	const renderSkeletonRows = (count: number) => {
 		return Array.from({ length: count }).map((_, idx) => (
@@ -159,12 +159,27 @@ const RightWidgetPanel: React.FC<RightWidgetPanelProps> = ({
 		));
 	};
 
-	const isAbortError = (err: unknown) => {
-		const anyErr = err as any;
-		return anyErr?.name === 'AbortError' || (typeof anyErr?.message === 'string' && anyErr.message.toLowerCase().includes('aborted'));
-	};
+	const getErrorMessage = useCallback((err: unknown): string => {
+		if (err instanceof Error && typeof err.message === 'string') return err.message;
+		if (typeof err === 'string') return err;
+		if (err && typeof err === 'object') {
+			const rec = err as Record<string, unknown>;
+			const msg = rec.message;
+			if (typeof msg === 'string') return msg;
+		}
+		return 'Unknown error';
+	}, []);
 
-	const loadSports = async (sport: SportKey, league: string, signal: AbortSignal) => {
+	const isAbortError = useCallback((err: unknown): boolean => {
+		if (err instanceof DOMException && err.name === 'AbortError') return true;
+		if (err && typeof err === 'object') {
+			const rec = err as Record<string, unknown>;
+			if (rec.name === 'AbortError') return true;
+		}
+		return getErrorMessage(err).toLowerCase().includes('aborted');
+	}, [getErrorMessage]);
+
+	const loadSports = useCallback(async (sport: SportKey, league: string, signal: AbortSignal) => {
 		setSportsError(null);
 		setSportsLoading(true);
 		try {
@@ -173,10 +188,10 @@ const RightWidgetPanel: React.FC<RightWidgetPanelProps> = ({
 			setUpcomingEvents(Array.isArray(data.upcoming) ? data.upcoming.slice(0, 6) : []);
 			setRecentEvents(Array.isArray(data.recent) ? data.recent.slice(0, 6) : []);
 			setLastUpdated(typeof data.fetchedAt === 'string' ? data.fetchedAt : new Date().toISOString());
-		} catch (e: any) {
+		} catch (err: unknown) {
 			// Abort happens on fast switching; don't show it as an error.
-			if (isAbortError(e)) return;
-			setSportsError(typeof e?.message === 'string' ? e.message : 'Failed to load sports');
+			if (isAbortError(err)) return;
+			setSportsError(getErrorMessage(err));
 			setLiveEvents([]);
 			setUpcomingEvents([]);
 			setRecentEvents([]);
@@ -184,55 +199,52 @@ const RightWidgetPanel: React.FC<RightWidgetPanelProps> = ({
 			// If aborted, we keep loading until the next request resolves.
 			setSportsLoading(false);
 		}
-	};
+	}, [getErrorMessage, isAbortError]);
 
-	const loadStandings = async (sport: StandingsSportKey, league: string, signal: AbortSignal) => {
+	const loadStandings = useCallback(async (sport: StandingsSportKey, league: string, signal: AbortSignal) => {
 		setStandingsError(null);
 		setStandingsLoading(true);
 		try {
 			const data = await fetchSportsStandings({ sport, league, signal });
 			setStandingsData(data);
-		} catch (e: any) {
-			if (isAbortError(e)) return;
-			setStandingsError(typeof e?.message === 'string' ? e.message : 'Failed to load standings');
+		} catch (err: unknown) {
+			if (isAbortError(err)) return;
+			setStandingsError(getErrorMessage(err));
 			setStandingsData(null);
 		} finally {
 			setStandingsLoading(false);
 		}
-	};
+	}, [getErrorMessage, isAbortError]);
+
+	const sportsIntervalRef = useRef<ReturnType<typeof window.setInterval> | null>(null);
 
 	useEffect(() => {
-		let cancelled = false;
 		const controller = new AbortController();
+		loadSports(selectedSport, selectedLeague, controller.signal).catch(() => {
+			// handled inside loadSports
+		});
 
-		const run = async () => {
-			await loadSports(selectedSport, selectedLeague, controller.signal);
-			if (cancelled) return;
-			// Poll for live updates.
-			const interval = window.setInterval(() => {
-				loadSports(selectedSport, selectedLeague, controller.signal).catch(() => {
-					// ignore (we surface errors on the next user interaction)
-				});
-			}, 30_000);
-			// Cleanup interval
-			(controller.signal as any).__sportsInterval = interval;
-		};
+		if (sportsIntervalRef.current) {
+			window.clearInterval(sportsIntervalRef.current);
+			sportsIntervalRef.current = null;
+		}
+		// Poll for live updates.
+		sportsIntervalRef.current = window.setInterval(() => {
+			loadSports(selectedSport, selectedLeague, controller.signal).catch(() => {
+				// ignore (we surface errors on the next user interaction)
+			});
+		}, 30_000);
 
-		run();
 		return () => {
-			cancelled = true;
-			try {
-				const interval = (controller.signal as any).__sportsInterval;
-				if (interval) window.clearInterval(interval);
-			} catch {
-				// ignore
+			if (sportsIntervalRef.current) {
+				window.clearInterval(sportsIntervalRef.current);
+				sportsIntervalRef.current = null;
 			}
 			controller.abort();
 		};
-	}, [selectedSport, selectedLeague, sportsRefreshTick]);
+	}, [loadSports, selectedLeague, selectedSport, sportsRefreshTick]);
 
 	useEffect(() => {
-		let cancelled = false;
 		const controller = new AbortController();
 
 		loadStandings(selectedStandingsSport, selectedStandingsLeague, controller.signal).catch(() => {
@@ -240,13 +252,9 @@ const RightWidgetPanel: React.FC<RightWidgetPanelProps> = ({
 		});
 
 		return () => {
-			cancelled = true;
-			if (cancelled) {
-				// noop; keep TS happy
-			}
 			controller.abort();
 		};
-	}, [selectedStandingsSport, selectedStandingsLeague, standingsRefreshTick]);
+	}, [loadStandings, selectedStandingsLeague, selectedStandingsSport, standingsRefreshTick]);
 
 	const leagueLabel = useMemo(() => {
 		const opts = leagueOptionsBySport[selectedSport] || [];
@@ -278,15 +286,6 @@ const RightWidgetPanel: React.FC<RightWidgetPanelProps> = ({
 			if (opts.some((o) => o.code === prev)) return prev;
 			return opts[0]?.code || prev;
 		});
-	};
-
-	const getStatNumber = (entry: StandingsEntry, keys: string[]): number | null => {
-		for (const key of keys) {
-			const v = entry.stats?.[key]?.value;
-			if (typeof v === 'number' && Number.isFinite(v)) return v;
-			if (typeof v === 'string' && v.trim() !== '' && !Number.isNaN(Number(v))) return Number(v);
-		}
-		return null;
 	};
 
 	const getStatDisplay = (entry: StandingsEntry, keys: string[]): string | null => {

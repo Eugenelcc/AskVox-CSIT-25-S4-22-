@@ -1,3 +1,4 @@
+setuptools>=67.0.0
 # --- Google / Gemini ---
 google-ai-generativelanguage==0.6.15
 google-api-core==2.28.1
@@ -136,4 +137,4 @@ openai-whisper==20231117
 # Wake word engine (offline keyword spotting)
 vosk==0.3.45
 
-setuptools>=67.0.0
+ 
