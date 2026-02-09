@@ -13,10 +13,11 @@ import httpx
 from app.core.config import settings
 from rapidfuzz import fuzz
 
+# ✅ Use faster-whisper instead of openai-whisper
 try:
-    import whisper
+    from faster_whisper import WhisperModel
 except Exception as e: 
-    whisper = None
+    WhisperModel = None
 
 try:
     import vosk
@@ -38,14 +39,18 @@ VOSK_MODEL_PATH = os.getenv("VOSK_MODEL_PATH", "").strip()  # may be empty; we'l
 VOSK_AUTO_DOWNLOAD = os.getenv("VOSK_AUTO_DOWNLOAD", "1").strip().lower() in {"1", "true", "yes"}
 VOSK_MODEL_ZIP_URL = os.getenv(
     "VOSK_MODEL_ZIP_URL",
-    "https://alphacephei.com/vosk/models/vosk-model-small-en-us-0.15.zip",
+    "https://alphacephei.com/vosk/models/vosk-model-small-en-us-0.15.zip  ",
 ).strip()
 VOSK_MODEL_DOWNLOAD_DIR = os.getenv("VOSK_MODEL_DOWNLOAD_DIR", "/tmp").strip() or "/tmp"
+
+# ✅ faster-whisper configuration
 WHISPER_MODEL = os.getenv("WHISPER_MODEL", "base")
+WHISPER_DEVICE = os.getenv("WHISPER_DEVICE", "cpu")  # cpu | cuda
+WHISPER_COMPUTE_TYPE = os.getenv("WHISPER_COMPUTE_TYPE", "int8")  # int8 | float16 | float32
+WHISPER_BEAM_SIZE = int(os.getenv("WHISPER_BEAM_SIZE", "1"))
 WHISPER_LANGUAGE = os.getenv("WHISPER_LANGUAGE", "en")
 WHISPER_TEMPERATURE = float(os.getenv("WHISPER_TEMPERATURE", "0.0"))
-WHISPER_BEAM_SIZE = int(os.getenv("WHISPER_BEAM_SIZE", "1"))
-WHISPER_NO_SPEECH = float(os.getenv("WHISPER_NO_SPEECH", "0.6"))
+
 CORE_ONLY_THRESHOLD = int(os.getenv("CORE_ONLY_THRESHOLD", "78"))
 
 router = APIRouter(prefix="/wake", tags=["wake"])
@@ -68,11 +73,14 @@ try:
             {
                 "wake_engine": WAKE_ENGINE,
                 "vosk_installed": bool(vosk),
-                "whisper_installed": bool(whisper),
+                "whisper_installed": bool(WhisperModel),
                 "vosk_model_path_env": VOSK_MODEL_PATH,
                 "vosk_model_dirname": VOSK_MODEL_DIRNAME,
                 "vosk_auto_download": VOSK_AUTO_DOWNLOAD,
                 "vosk_model_download_dir": VOSK_MODEL_DOWNLOAD_DIR,
+                "whisper_model": WHISPER_MODEL,
+                "whisper_device": WHISPER_DEVICE,
+                "whisper_compute_type": WHISPER_COMPUTE_TYPE,
             }
         )
     )
@@ -88,7 +96,7 @@ def _extract_wake_window(text: str, max_words: int = 5) -> str:
     return " ".join(text.split()[:max_words])
 
 
-_model: Optional[object] = None
+_model: Optional[WhisperModel] = None
 _vosk_model: Optional[object] = None
 _vosk_model_path_runtime: Optional[str] = None
 _vosk_prepare_lock = asyncio.Lock()
@@ -102,15 +110,19 @@ _wake_phrase_cache: dict[str, tuple[float, str]] = {}
 def _get_model():
     global _model
     if _model is None:
-        if whisper is None:
-            raise RuntimeError("whisper is not installed; ensure openai-whisper is in requirements")
+        if WhisperModel is None:
+            raise RuntimeError("faster-whisper is not installed; ensure faster-whisper is in requirements")
         try:
-            _log(f"🛎️  [Wake] Loading Whisper model: {WHISPER_MODEL}")
+            _log(f"🛎️  [Wake] Loading faster-whisper model: {WHISPER_MODEL} on {WHISPER_DEVICE}")
         except Exception:
             pass
-        _model = whisper.load_model(WHISPER_MODEL)
+        _model = WhisperModel(
+            WHISPER_MODEL,
+            device=WHISPER_DEVICE,
+            compute_type=WHISPER_COMPUTE_TYPE,
+        )
         try:
-            _log(f"✅ [Wake] Whisper model loaded: {WHISPER_MODEL}")
+            _log(f"✅ [Wake] faster-whisper model loaded: {WHISPER_MODEL}")
         except Exception:
             pass
     return _model
@@ -168,16 +180,16 @@ async def wake_health():
         "wake_engine": WAKE_ENGINE,
         "wake_debug": WAKE_DEBUG,
         "vosk_installed": bool(vosk),
-        "whisper_installed": bool(whisper),
+        "whisper_installed": bool(WhisperModel),
         "wake_phrase_default": preview_phrase,
-        "wake_aliases_env": WAKE_ALIASES,
-        "wake_aliases_default": _DEFAULT_WAKE_ALIASES,
-        "wake_aliases_preview_norm": preview_aliases,
         "vosk_model_dirname": VOSK_MODEL_DIRNAME,
         "vosk_model_path_env": VOSK_MODEL_PATH,
         "vosk_auto_download": VOSK_AUTO_DOWNLOAD,
         "vosk_model_zip_url_set": bool(VOSK_MODEL_ZIP_URL),
         "vosk_model_download_dir": VOSK_MODEL_DOWNLOAD_DIR,
+        "whisper_model": WHISPER_MODEL,
+        "whisper_device": WHISPER_DEVICE,
+        "whisper_compute_type": WHISPER_COMPUTE_TYPE,
         "candidate_paths": paths,
         "candidate_paths_exist": exists,
     }
@@ -305,7 +317,7 @@ def _build_initial_prompt(wake_phrase: str) -> str:
     spelled = " ".join(list(core.upper()))
     return (
         f"The assistant wake phrase is '{wake_phrase}'. "
-        f"If you hear it, transcribe it exactly. The name '{core}' is spelled {spelled} and pronounced 'nee-roo-bah'. "
+        f"If you hear it, transcribe it exactly. The name '{core}' is spelled {spelled}. "
         f"Do not substitute with similar words like 'hello' or 'new baba'."
     )
 
@@ -437,6 +449,32 @@ def _vosk_transcribe(text_audio_i16: bytes, sr: int, wake_phrase: str) -> str:
     return (res.get("text") or "").strip()
 
 
+def _whisper_transcribe(audio: np.ndarray, wake_phrase: str) -> str:
+    """Transcribe using faster-whisper."""
+    model = _get_model()
+    
+    # faster-whisper expects float32 audio normalized to [-1, 1]
+    audio_normalized = np.clip(audio, -1.0, 1.0).astype(np.float32)
+    
+    # Transcribe with faster-whisper
+    segments, info = model.transcribe(
+        audio_normalized,
+        language=WHISPER_LANGUAGE,
+        beam_size=WHISPER_BEAM_SIZE,
+        temperature=WHISPER_TEMPERATURE,
+        condition_on_previous_text=False,
+        initial_prompt=_build_initial_prompt(wake_phrase),
+        vad_filter=False,  # Disable VAD for wake word detection
+    )
+    
+    # Collect all segments into one text
+    text_parts = []
+    for segment in segments:
+        text_parts.append(segment.text)
+    
+    return " ".join(text_parts).strip()
+
+
 @router.post("/transcribe_pcm")
 async def transcribe_pcm(
     request: Request,
@@ -528,20 +566,8 @@ async def transcribe_pcm(
                 engine = "whisper"
 
         if engine == "whisper":
-            audio = np.array(audio, dtype=np.float32, copy=True)
-            model = _get_model()
-            result = model.transcribe(
-                audio,
-                fp16=False,
-                initial_prompt=_build_initial_prompt(user_phrase),
-                language=WHISPER_LANGUAGE,
-                temperature=WHISPER_TEMPERATURE,
-                beam_size=WHISPER_BEAM_SIZE,
-                no_speech_threshold=WHISPER_NO_SPEECH,
-                condition_on_previous_text=False,
-                suppress_tokens=[-1],
-            )
-            raw_text = result.get("text", "") or ""
+            audio_copy = np.array(audio, dtype=np.float32, copy=True)
+            raw_text = await asyncio.to_thread(_whisper_transcribe, audio_copy, user_phrase)
             text = _normalize(raw_text)
 
         _log(f"🗒️  [Wake] ({engine}) raw='{raw_text}'")

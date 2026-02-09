@@ -6,6 +6,13 @@
   overflow-y: auto;
 }
 
+/* Guest-only layout variables */
+.uv-root--guest {
+  --content-offset: 0px;
+  /* Used to place the greeting caption above the fixed chat bar */
+  --av-chatbar-h: 72px;
+}
+
 /* orb sits here */
 .uv-hero {
   position: relative;
@@ -87,4 +94,37 @@
   -webkit-background-clip: text;
   -webkit-text-fill-color: transparent;
   background-clip: text;
+}
+
+/* Container that holds the (fixed) ChatBar and optional caption */
+.uv-root--guest .uv-input-container {
+  position: relative;
+  bottom: 0;
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  flex-direction: column;
+  padding-bottom: 20px;
+}
+
+/* Greeting caption: keep it ABOVE the fixed ChatBar */
+.uv-root--guest .av-chatbar-caption {
+  position: fixed;
+  left: var(--content-offset, 0px);
+  right: 0;
+  bottom: calc(var(--av-chatbar-offset, 88px) + var(--av-chatbar-h) + 14px);
+  z-index: 130;
+  display: flex;
+  justify-content: center;
+  pointer-events: none;
+}
+
+.uv-root--guest .av-chatbar-caption > * {
+  pointer-events: auto;
+}
+
+@media (max-width: 520px) {
+  .uv-root--guest {
+    --av-chatbar-h: 68px;
+  }
 }

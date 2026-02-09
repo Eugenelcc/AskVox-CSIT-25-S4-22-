@@ -585,7 +585,7 @@ const UnregisteredMain = ({
   const isBlackHoleActive = isVoiceMode && (isRecording || isTranscribing || isTtsPlaying);
 
   return (
-    <div className="uv-root">
+    <div className="uv-root uv-root--guest">
       <Background />
       
       {/* ✅ 3. Pass the session to the TopBar */}

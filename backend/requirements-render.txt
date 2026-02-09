@@ -131,8 +131,9 @@ python-multipart==0.0.20
 # --- Optional: keep if you actually use it ---
 numpy==2.3.5
 
-
-#openai-whisper==20231117
+faster-whisper==1.0.3      # 4x faster, actively maintained Whisper implementation
+sounddevice==0.4.7         # Audio input handling
+soundfile==0.12.1          # Audio file I/O
 
 # Wake word engine (offline keyword spotting)
 vosk==0.3.45
