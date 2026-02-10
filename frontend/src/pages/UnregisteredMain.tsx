@@ -258,6 +258,29 @@ const UnregisteredMain = ({
       );
       // --- NEW LOGIC END ---
 
+      // Persist assistant response (best-effort) so the guest session shows full history.
+      try {
+        const { data: existing } = await supabase
+          .from('chat_messages')
+          .select('id')
+          .eq('session_id', currentSessionId)
+          .eq('role', 'assistant')
+          .eq('content', replyText)
+          .order('created_at', { ascending: false })
+          .limit(1);
+        if (!existing || existing.length === 0) {
+          await supabase.from('chat_messages').insert({
+            session_id: currentSessionId,
+            user_id: null,
+            role: 'assistant',
+            content: replyText,
+            display_name: 'AskVox',
+          });
+        }
+      } catch (e) {
+        console.warn('Failed to persist assistant chat_message (guest)', e);
+      }
+
 
       if (!replyText) {
         setMessages((prev) =>

@@ -85,6 +85,34 @@ export default function Dashboard({
 
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [isSending, setIsSending] = useState(false);
+
+  const messagesRef = useRef(messages);
+  useEffect(() => {
+    messagesRef.current = messages;
+  }, [messages]);
+
+  const pendingPollSessionRef = useRef<string | null>(null);
+
+  const pendingKey = useCallback((sid: string) => `av:pending:${sid}`, []);
+  const pendingPromptKey = useCallback((sid: string) => `av:pending_prompt:${sid}`, []);
+  const markPendingForSession = useCallback((sid: string, prompt: string) => {
+    try {
+      // Don't overwrite an existing marker; the earliest timestamp is most useful.
+      if (sessionStorage.getItem(pendingKey(sid))) return;
+      sessionStorage.setItem(pendingKey(sid), String(Date.now()));
+      sessionStorage.setItem(pendingPromptKey(sid), prompt);
+    } catch {
+      // ignore
+    }
+  }, [pendingKey, pendingPromptKey]);
+  const clearPendingForSession = useCallback((sid: string) => {
+    try {
+      sessionStorage.removeItem(pendingKey(sid));
+      sessionStorage.removeItem(pendingPromptKey(sid));
+    } catch {
+      // ignore
+    }
+  }, [pendingKey, pendingPromptKey]);
   const [isSmartRecPending, setIsSmartRecPending] = useState(false);
   const [profile, setProfile] = useState<UserProfile | null>(null);
   const [isQuizOpen, setIsQuizOpen] = useState(false);
@@ -105,6 +133,10 @@ export default function Dashboard({
   const ttsActiveRef = useRef(false);
   const ttsSanitizeRef = useRef<((t: string) => string) | null>(null);
   const voiceSessionIdRef = useRef<string | null>(null);
+  // When a brand-new session is created, we temporarily skip auto-refreshing messages
+  // because the first DB read can race ahead of the first chat_messages insert and
+  // wipe the optimistic message from the UI.
+  const bootstrappingSessionIdRef = useRef<string | null>(null);
 
   const voiceCaptionScrollRef = useRef<HTMLDivElement | null>(null);
   const voiceCaptionStickToBottomRef = useRef(true);
@@ -322,6 +354,10 @@ export default function Dashboard({
   useEffect(() => {
     if (!activeSessionId || isNewChat) return; 
 
+    // Avoid spawning multiple poll loops for the same session.
+    if (pendingPollSessionRef.current === activeSessionId) return;
+    if (bootstrappingSessionIdRef.current && bootstrappingSessionIdRef.current === activeSessionId) return;
+
     const fetchMessages = async () => {
        const { data } = await supabase.from("chat_messages").select("*").eq("session_id", activeSessionId).order("created_at", { ascending: true });
       if (data) {
@@ -509,6 +545,42 @@ export default function Dashboard({
 
 
   // --- Handlers ---
+
+  // If we deep-link or refresh on a session that has an article_context,
+  // hydrate `newsContext` automatically so follow-up questions keep the article.
+  useEffect(() => {
+    if (!activeSessionId || isNewChat) return;
+
+    const sess = sessions.find((s) => s.id === activeSessionId);
+    const articleCtx = sess?.article_context;
+
+    if (articleCtx?.title) {
+      const slug = articleCtx.title
+        .toLowerCase()
+        .replace(/[^a-z0-9]+/g, '-')
+        .replace(/(^-|-$)/g, '') || 'article';
+      setNewsContext({
+        sessionId: activeSessionId,
+        title: articleCtx.title,
+        imageUrl: articleCtx.imageUrl,
+        description: articleCtx.description,
+        publishedAt: articleCtx.publishedAt,
+        releasedMinutes: articleCtx.releasedMinutes,
+        all_sources: articleCtx.all_sources,
+        url: articleCtx.url,
+        slug,
+        path: "/discover/news",
+      });
+      return;
+    }
+
+    // If this session has no article context, clear any stale context from other sessions.
+    setNewsContext((prev) => {
+      if (!prev?.sessionId) return prev;
+      if (prev.sessionId === activeSessionId) return prev;
+      return null;
+    });
+  }, [activeSessionId, isNewChat, sessions]);
 
   const handleSelectSession = (sessionId: string) => {
     setActiveSessionId(sessionId);
@@ -790,6 +862,98 @@ export default function Dashboard({
     };
   }, [isSmartRecPending, activeSessionId, isNewChat, refreshActiveSessionMessages]);
 
+  // If we navigated/remounted while a request is still running, rehydrate the user's prompt
+  // and show the loading animation until an assistant reply appears in chat_messages.
+  useEffect(() => {
+    if (!activeSessionId || isNewChat) return;
+
+    let startedAt = 0;
+    try {
+      const raw = sessionStorage.getItem(pendingKey(activeSessionId));
+      startedAt = raw ? Number(raw) : 0;
+    } catch {
+      startedAt = 0;
+    }
+    if (!startedAt || !Number.isFinite(startedAt)) return;
+
+    pendingPollSessionRef.current = activeSessionId;
+
+    // If the pending marker is stale, clear it.
+    const ageMs = Date.now() - startedAt;
+    if (ageMs > 2 * 60 * 1000) {
+      clearPendingForSession(activeSessionId);
+      return;
+    }
+
+    // Ensure the user prompt is visible even if DB insert hasn't propagated yet.
+    try {
+      const p = sessionStorage.getItem(pendingPromptKey(activeSessionId)) || "";
+      if (p && (!messagesRef.current || messagesRef.current.length === 0)) {
+        setMessages([
+          {
+            id: `pending-${startedAt}`,
+            senderId: session.user.id,
+            content: p,
+            createdAt: new Date(startedAt).toISOString(),
+            displayName: profile?.username ?? "User",
+          },
+        ]);
+      }
+    } catch {
+      // ignore
+    }
+
+    setIsSending(true);
+    let cancelled = false;
+    let handle: number | null = null;
+    let attempts = 0;
+    const maxAttempts = 210; // ~3.5 minutes (RunPod can be slow)
+
+    const tick = async () => {
+      attempts += 1;
+      const sid = activeSessionId;
+      const mapped = await refreshActiveSessionMessages(sid);
+      if (cancelled) return;
+
+      const last = mapped && mapped.length ? mapped[mapped.length - 1] : null;
+      const done = last && last.senderId === LLAMA_ID && String(last.content || "").trim();
+      if (done) {
+        clearPendingForSession(sid);
+        setIsSending(false);
+        if (pendingPollSessionRef.current === sid) pendingPollSessionRef.current = null;
+        return;
+      }
+
+      if (attempts >= maxAttempts) {
+        clearPendingForSession(sid);
+        setIsSending(false);
+        if (pendingPollSessionRef.current === sid) pendingPollSessionRef.current = null;
+        return;
+      }
+
+      handle = window.setTimeout(tick, 1000);
+    };
+
+    handle = window.setTimeout(tick, 400);
+    return () => {
+      cancelled = true;
+      // Allow re-entering if session changes.
+      if (pendingPollSessionRef.current === activeSessionId) {
+        pendingPollSessionRef.current = null;
+      }
+      if (handle) window.clearTimeout(handle);
+    };
+  }, [
+    activeSessionId,
+    isNewChat,
+    refreshActiveSessionMessages,
+    session.user.id,
+    profile?.username,
+    pendingKey,
+    pendingPromptKey,
+    clearPendingForSession,
+  ]);
+
   // Keep component state in sync with /newchat and /chats/:sessionId
   useEffect(() => {
     const path = location.pathname;
@@ -808,7 +972,11 @@ export default function Dashboard({
       setActiveSessionId(sid);
       setActiveTab("chats");
       setSidebarOpen(true);
-      void refreshActiveSessionMessages(sid);
+      // If this is a freshly created session, don't immediately refresh from DB.
+      // We'll refresh right after the first user message insert completes.
+      if (!bootstrappingSessionIdRef.current || bootstrappingSessionIdRef.current !== sid) {
+        void refreshActiveSessionMessages(sid);
+      }
     }
   }, [location.pathname, refreshActiveSessionMessages]);
 
@@ -872,7 +1040,21 @@ export default function Dashboard({
       }
 
       currentSessionId = newSession.id;
+      bootstrappingSessionIdRef.current = currentSessionId;
       setActiveSessionId(currentSessionId);
+
+      // Mark pending immediately so if navigation remounts, the new instance can show prompt + loader.
+      markPendingForSession(currentSessionId, trimmed);
+
+      // ✅ Leave the /newchat route and enter the actual session route.
+      // Otherwise the app can remain visually stuck on the New Chat page.
+      setIsNewChat(false);
+      setActiveTab("chats");
+      setSidebarOpen(true);
+      const target = `/chats/${currentSessionId}`;
+      if (location.pathname !== target) {
+        navigate(target, { replace: true });
+      }
 
       // ✅ Refresh sidebar sessions from DB
       const { data: allSessions } = await supabase
@@ -882,6 +1064,11 @@ export default function Dashboard({
         .order('updated_at', { ascending: false });
 
       if (allSessions) setSessions(applyChatStylesToRows(allSessions as DbSessionRow[]));
+    }
+
+    // For existing sessions, mark as pending early too.
+    if (currentSessionId) {
+      markPendingForSession(currentSessionId, trimmed);
     }
 
     // 2. Prepare Name
@@ -969,13 +1156,25 @@ export default function Dashboard({
 
     
     // 4. Save USER message to Supabase (await to avoid race with initial fetch)
-    await supabase.from('chat_messages').insert({ 
+    const { error: userMsgInsertError } = await supabase.from('chat_messages').insert({ 
       session_id: currentSessionId, 
       user_id: session.user.id, 
       role: 'user', 
       content: trimmed,
       display_name: userName // <--- CRITICAL: Sending the name here
     });
+
+    // Now that the first user message is persisted, allow DB refresh.
+    if (bootstrappingSessionIdRef.current === currentSessionId) {
+      bootstrappingSessionIdRef.current = null;
+    }
+    // Only refresh from DB when the insert succeeds; otherwise we'd overwrite the
+    // optimistic message with an empty DB result (common if RLS blocks insert).
+    if (!userMsgInsertError) {
+      void refreshActiveSessionMessages(currentSessionId);
+    } else {
+      console.warn('Failed to insert user chat_message; keeping optimistic UI', userMsgInsertError);
+    }
 
     // Immediately promote locally so the UI reflects recency without waiting
     if (currentSessionId) promoteSessionToTop(currentSessionId);
@@ -1019,7 +1218,9 @@ export default function Dashboard({
               releasedMinutes: newsContext.releasedMinutes,
               all_sources: newsContext.all_sources,
             }
-          : undefined);
+          : (sessions.find((s) => s.id === currentSessionId)?.article_context?.title
+            ? (sessions.find((s) => s.id === currentSessionId)?.article_context as ArticleContext)
+            : undefined));
       const modelMessage = activeContext?.title
         ? `Regarding the article "${activeContext.title}", ${trimmed}`
         : trimmed;
@@ -1056,6 +1257,7 @@ export default function Dashboard({
       if (!response.ok) {
         const errorText = await response.text();
         console.error("❌ AI API error:", response.status, response.statusText, errorText);
+        if (currentSessionId) clearPendingForSession(currentSessionId);
         setIsSending(false);
         return null;
       }
@@ -1070,11 +1272,13 @@ export default function Dashboard({
       // Guard against empty responses (Prevents the "Dots" issue)
       if (!replyText) {
         console.warn("⚠️ Empty response from AI. Not saving.");
+        if (currentSessionId) clearPendingForSession(currentSessionId);
         setIsSending(false);
         return null;
       }
       
       setIsSending(false);
+      if (currentSessionId) clearPendingForSession(currentSessionId);
       
 
       const streamId = `llama-${Date.now()}`;
@@ -1087,8 +1291,46 @@ export default function Dashboard({
         meta,
       }]);
 
+      // Persist assistant response so the session shows full history after reload/switch.
+      // The backend may also mirror assistant messages; avoid duplicates by checking first.
+      try {
+        if (currentSessionId) {
+          const { data: existing } = await supabase
+            .from('chat_messages')
+            .select('id')
+            .eq('session_id', currentSessionId)
+            .eq('role', 'assistant')
+            .eq('content', replyText)
+            .order('created_at', { ascending: false })
+            .limit(1);
+
+          if (!existing || existing.length === 0) {
+            const baseInsert = {
+              session_id: currentSessionId,
+              user_id: session.user.id,
+              role: 'assistant',
+              content: replyText,
+              display_name: 'AskVox',
+            };
+
+            const { error: assistantErr } = await supabase
+              .from('chat_messages')
+              .insert({ ...baseInsert, meta });
+
+            if (assistantErr && isMissingColumnError(assistantErr)) {
+              await supabase.from('chat_messages').insert(baseInsert);
+            } else if (assistantErr) {
+              console.warn('Failed to insert assistant chat_message', assistantErr);
+            }
+          }
+        }
+      } catch (e) {
+        console.warn('Failed to persist assistant chat_message', e);
+      }
+
     } catch (err) { 
        console.error("❌ Error sending message:", err);
+       if (currentSessionId) clearPendingForSession(currentSessionId);
        setIsSending(false); 
     }
     return currentSessionId;
@@ -1534,6 +1776,35 @@ export default function Dashboard({
 
               // Kick off TTS immediately (sets ttsActiveRef before first await).
               void speakWithGoogleTTS(replyText);
+
+              // Persist assistant voice response (best-effort) so chat history survives reloads.
+              try {
+                if (currentSessionId) {
+                  const { data: existing } = await supabase
+                    .from('chat_messages')
+                    .select('id')
+                    .eq('session_id', currentSessionId)
+                    .eq('role', 'assistant')
+                    .eq('content', replyText)
+                    .order('created_at', { ascending: false })
+                    .limit(1);
+
+                  if (!existing || existing.length === 0) {
+                    const { error: assistantErr } = await supabase.from('chat_messages').insert({
+                      session_id: currentSessionId,
+                      user_id: session.user.id,
+                      role: 'assistant',
+                      content: replyText,
+                      display_name: 'AskVox',
+                    });
+                    if (assistantErr) {
+                      console.warn('Failed to insert assistant voice chat_message', assistantErr);
+                    }
+                  }
+                }
+              } catch (e) {
+                console.warn('Failed to persist assistant voice chat_message', e);
+              }
 
               // Reveal text in the UI without blocking the voice loop.
               void (async () => {

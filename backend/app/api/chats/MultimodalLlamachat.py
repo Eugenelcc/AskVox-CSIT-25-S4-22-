@@ -30,6 +30,43 @@ RUNPOD_STATUS_ENDPOINT = os.getenv("RUNPOD_STATUS_ENDPOINT", "").strip()
 RUNPOD_MAX_WAIT_SEC = float(os.getenv("RUNPOD_MAX_WAIT_SEC", "180"))
 RUNPOD_POLL_INTERVAL_SEC = float(os.getenv("RUNPOD_POLL_INTERVAL_SEC", "1.5"))
 
+# Debug logging (prompt previews may contain user text)
+AV_LOG_PROMPTS = os.getenv("AV_LOG_PROMPTS", "1") == "1"
+AV_LOG_PROMPT_CHARS = int(os.getenv("AV_LOG_PROMPT_CHARS", "900"))
+AV_LOG_LEARNING_PREF = os.getenv("AV_LOG_LEARNING_PREF", "1") == "1"
+
+# One-time debug snapshot so log gating is obvious.
+_AV_FLAGS_SNAPSHOT_PRINTED = False
+
+
+def _log_av_flags_snapshot_once() -> None:
+    """Print effective AV_LOG_* values once per process.
+
+    This helps diagnose why prompt/learning-preference logs appear missing.
+    Safe: does not include user content.
+    """
+    global _AV_FLAGS_SNAPSHOT_PRINTED
+    if _AV_FLAGS_SNAPSHOT_PRINTED:
+        return
+    _AV_FLAGS_SNAPSHOT_PRINTED = True
+    try:
+        print(
+            "🧾 AV_LOG flags snapshot:",
+            {
+                "AV_LOG_PROMPTS": AV_LOG_PROMPTS,
+                "AV_LOG_PROMPT_CHARS": AV_LOG_PROMPT_CHARS,
+                "AV_LOG_LEARNING_PREF": AV_LOG_LEARNING_PREF,
+                "env_AV_LOG_PROMPTS": os.getenv("AV_LOG_PROMPTS"),
+                "env_AV_LOG_PROMPT_CHARS": os.getenv("AV_LOG_PROMPT_CHARS"),
+                "env_AV_LOG_LEARNING_PREF": os.getenv("AV_LOG_LEARNING_PREF"),
+                "runpod_enabled": bool(RUNPOD_RUN_ENDPOINT),
+            },
+            flush=True,
+        )
+    except Exception:
+        # Never allow debug logging to break requests.
+        pass
+
 # Supabase (REST + Storage)
 SUPABASE_URL = os.getenv("SUPABASE_URL", "")
 SUPABASE_SERVICE_ROLE_KEY = os.getenv("SUPABASE_SERVICE_ROLE_KEY", "")
@@ -164,6 +201,156 @@ FORMAT_INSTRUCTION = (
     "- Avoid giant wall-of-text paragraphs.\n"
 )
 
+# -----------------------
+# Learning preference prompt shaping
+# -----------------------
+_LEARNING_PREF_ALLOWED = {"secondary", "tertiary", "university", "leisure"}
+_learning_pref_cache: Dict[str, Tuple[float, str]] = {}
+_LEARNING_PREF_TTL_SEC = float(os.getenv("LEARNING_PREF_TTL_SEC", "300"))
+
+
+def _normalize_learning_pref(pref: Optional[str]) -> Optional[str]:
+    p = (pref or "").strip().lower()
+    return p if p in _LEARNING_PREF_ALLOWED else None
+
+
+async def fetch_learning_preference(user_id: Optional[str]) -> Optional[str]:
+    """Fetch user's learning_preference from Supabase (fail-soft + cached)."""
+    uid = (user_id or "").strip()
+    if not uid:
+        return None
+    if not (SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY):
+        return None
+
+    now = time.perf_counter()
+    cached = _learning_pref_cache.get(uid)
+    if cached and (now - cached[0] <= _LEARNING_PREF_TTL_SEC):
+        return cached[1]
+
+    headers = {
+        "apikey": SUPABASE_SERVICE_ROLE_KEY,
+        "Authorization": f"Bearer {SUPABASE_SERVICE_ROLE_KEY}",
+        "Content-Type": "application/json",
+    }
+    url = f"{SUPABASE_URL}/rest/v1/profiles?id=eq.{uid}&select=learning_preference&limit=1"
+    try:
+        async with httpx.AsyncClient(timeout=6.0) as client:
+            r = await client.get(url, headers=headers)
+        if r.status_code >= 400:
+            return None
+        rows = r.json() or []
+        row = rows[0] if rows and isinstance(rows[0], dict) else {}
+        pref = _normalize_learning_pref(row.get("learning_preference"))
+        if pref:
+            _learning_pref_cache[uid] = (now, pref)
+        return pref
+    except Exception:
+        return None
+
+
+def build_learning_preference_instruction(pref: Optional[str]) -> str:
+    """Return system-instruction text that shapes depth/structure based on preference."""
+    p = _normalize_learning_pref(pref)
+    if not p:
+        return ""
+
+    if p == "secondary":
+        return (
+            "LEARNING PREFERENCE: Secondary.\n"
+            "- Explain in simple terms, avoid jargon, and define any necessary terms.\n"
+            "- Use short paragraphs and step-by-step guidance.\n"
+            "- Give 1–2 concrete examples; keep math/light formalism minimal unless asked.\n"
+        )
+    if p == "tertiary":
+        return (
+            "LEARNING PREFERENCE: Tertiary.\n"
+            "- Use moderately technical language and introduce key terms with brief definitions.\n"
+            "- Prefer structured explanations (steps, bullets) and include practical examples.\n"
+            "- Include important details, but avoid overly long proofs/derivations unless asked.\n"
+        )
+    if p == "university":
+        return (
+            "LEARNING PREFERENCE: University.\n"
+            "- Provide a rigorous, higher-level explanation with assumptions and precise terminology.\n"
+            "- When useful, include deeper reasoning, edge cases, and (optional) equations/derivations.\n"
+            "- Keep structure clear: definitions → intuition → details → example(s) or algorithm.\n"
+        )
+    # leisure
+    return (
+        "LEARNING PREFERENCE: Leisure Learning.\n"
+        "- Keep it friendly and intuitive; focus on big-picture understanding.\n"
+        "- Use simple examples and avoid heavy technical depth unless asked.\n"
+    )
+
+
+def build_runpod_user_prompt(
+    message: str,
+    history: List[HistoryItem],
+    rag_block: str = "",
+    web_evidence_block: str = "",
+    article_block: str = "",
+    chat_mode: bool = False,
+    learning_preference: Optional[str] = None,
+) -> str:
+    """Build a plain-text prompt for RunPod.
+
+    IMPORTANT: The user's RunPod app.py wraps `input.prompt` into a Llama-3.3
+    Instruct template as the *user* message, using its own fixed SYSTEM_PROMPT.
+    So here we must provide only the user content (no <|begin_of_text|> headers).
+    """
+    def _truncate(text: str, limit: int) -> str:
+        if not text:
+            return ""
+        return text if len(text) <= limit else text[:limit] + "..."
+
+    safe_message = _truncate(message, MAX_MESSAGE_CHARS)
+    safe_article = _truncate(article_block, MAX_ARTICLE_CHARS)
+    safe_rag = _truncate(rag_block, MAX_RAG_CHARS)
+    safe_evidence = _truncate(web_evidence_block, MAX_EVIDENCE_CHARS)
+    pref_instruction = build_learning_preference_instruction(learning_preference)
+
+    # Keep it compact: user's system prompt already covers friendly tutor tone.
+    if chat_mode:
+        # Provide short conversation transcript with clear role cues.
+        lines: List[str] = []
+        if pref_instruction:
+            lines.append(pref_instruction.strip())
+        lines.append(FORMAT_INSTRUCTION.strip())
+        if safe_article:
+            lines.append("ARTICLE_CONTEXT (use when relevant):")
+            lines.append(safe_article)
+        if safe_rag:
+            lines.append(safe_rag)
+        if safe_evidence:
+            lines.append(safe_evidence)
+
+        # Include a small amount of history (already trimmed by caller)
+        for h in history[-4:]:
+            role = "User" if h.role == "user" else "Assistant"
+            content = _truncate(h.content, 240)
+            if content:
+                lines.append(f"{role}: {content}")
+        lines.append(f"User: {safe_message}")
+        lines.append("Assistant:")
+        out = "\n".join(lines).strip()
+        return out[:MAX_PROMPT_CHARS]
+
+    # Structured mode: put JSON instruction into the user message so the model obeys.
+    parts: List[str] = []
+    if pref_instruction:
+        parts.append(pref_instruction.strip())
+    parts.append(MODEL_JSON_INSTRUCTION.strip())
+    if safe_article:
+        parts.append("Use the provided ARTICLE_CONTEXT as the primary source for the user's question.")
+        parts.append(safe_article)
+    if safe_rag:
+        parts.append(safe_rag)
+    if safe_evidence:
+        parts.append(safe_evidence)
+    parts.append(f"User message: {safe_message}")
+    out = "\n\n".join([p for p in parts if p]).strip()
+    return out[:MAX_PROMPT_CHARS]
+
 CITATION_TOKEN_RULES = """
 CITATIONS RULES (VERY IMPORTANT):
 - When you use a fact from the provided evidence, add a citation token immediately after the sentence, like: [[cite:1]]
@@ -210,6 +397,7 @@ def build_second_pass_prompt_chat(
     original_answer: str,
     web_evidence_block: str = "",
     article_block: str = "",
+    learning_preference: Optional[str] = None,
 ) -> str:
     """Construct a chat-style prompt to REWRITE/UPDATE the original answer using fresh web evidence.
 
@@ -224,6 +412,7 @@ def build_second_pass_prompt_chat(
     safe_orig = _truncate(original_answer, MAX_ARTICLE_CHARS)
     safe_article = _truncate(article_block, MAX_ARTICLE_CHARS)
     safe_evidence = _truncate(web_evidence_block, MAX_EVIDENCE_CHARS)
+    pref_instruction = build_learning_preference_instruction(learning_preference).strip()
 
     tone_lines = ""
     if AV_EMOJI_STYLE != "off":
@@ -246,6 +435,7 @@ def build_second_pass_prompt_chat(
         "Do not mention training cutoffs or model limitations in the answer. "
         "Write a complete, well-structured markdown response (NOT JSON). Prefer concise paragraphs; use lists only when they improve clarity. "
         "If a line is 'Title - details', render as '**Title** — details'. Do not include any [SOURCES] section at the end.\n"
+        + (pref_instruction + "\n" if pref_instruction else "")
         + tone_lines +
         "<|eot_id|>"
     )
@@ -1360,6 +1550,7 @@ def build_prompt(
     web_evidence_block: str = "",
     article_block: str = "",
     chat_mode: bool = False,
+    learning_preference: Optional[str] = None,
 ) -> str:
     def _truncate(text: str, limit: int) -> str:
         if not text:
@@ -1372,6 +1563,8 @@ def build_prompt(
     safe_article = _truncate(article_block, MAX_ARTICLE_CHARS)
     safe_rag = _truncate(rag_block, MAX_RAG_CHARS)
     safe_evidence = _truncate(web_evidence_block, MAX_EVIDENCE_CHARS)
+
+    pref_instruction = build_learning_preference_instruction(learning_preference)
 
     # LLaMA-3.3 Instruct chat headers
     if chat_mode:
@@ -1407,6 +1600,7 @@ def build_prompt(
             "Use concise paragraphs. "
             "If a line is in the form 'Title - details', render it as '**Title** — details'. "
             "Avoid giant wall-of-text paragraphs.\n"
+            + (pref_instruction + "\n" if pref_instruction else "")
             + tone_lines +
             "<|eot_id|>"
         )
@@ -1457,6 +1651,8 @@ def build_prompt(
         "<|start_header_id|>system<|end_header_id|>\n"
     )
     p += MODEL_JSON_INSTRUCTION
+    if pref_instruction:
+        p += "\n" + pref_instruction
     if safe_article:
         p += "\nUse the provided ARTICLE_CONTEXT as the primary source for the user's question.\n"
         p += f"\n{safe_article}\n"
@@ -1506,10 +1702,12 @@ def build_prompt(
     if len(p) > MAX_PROMPT_CHARS:
         p = p[:MAX_PROMPT_CHARS] + "..."
 
-    # Debug print for prompt sent to model
-    print("\n==== PROMPT SENT TO MODEL ====".ljust(40, "="), flush=True)
-    print(p[:1200] + ("..." if len(p) > 1200 else ""), flush=True)
-    print("="*40, flush=True)
+    # Debug print for prompt sent to model (may contain user text)
+    if AV_LOG_PROMPTS:
+        n = max(0, AV_LOG_PROMPT_CHARS)
+        print("\n==== PROMPT SENT TO MODEL ====".ljust(40, "="), flush=True)
+        print(p[:n] + ("..." if len(p) > n else ""), flush=True)
+        print("=" * 40, flush=True)
 
     return p
 
@@ -1591,7 +1789,13 @@ async def call_cloudrun(prompt: str, timeout: httpx.Timeout) -> str:
         raise HTTPException(status_code=502, detail="Cloud Run response missing answer field")
     return raw
 
-async def call_runpod_job_prompt(prompt: str) -> str:
+async def call_runpod_job_prompt(
+    prompt: str,
+    *,
+    max_tokens: Optional[int] = None,
+    temperature: Optional[float] = None,
+    top_p: Optional[float] = None,
+) -> str:
     """
     Submit a job to RunPod `/run` and poll `/status/{id}` until COMPLETED.
     Expects `RUNPOD_API_KEY` and `RUNPOD_RUN_ENDPOINT` in env.
@@ -1601,15 +1805,31 @@ async def call_runpod_job_prompt(prompt: str) -> str:
     if not RUNPOD_API_KEY:
         raise HTTPException(status_code=500, detail="RUNPOD_API_KEY missing")
 
+    # Make it obvious (once) whether prompt logging is enabled.
+    _log_av_flags_snapshot_once()
+
     headers = {RUNPOD_AUTH_HEADER or "Authorization": f"Bearer {RUNPOD_API_KEY}"}
-    payload = {"input": {"prompt": prompt, "stop": ["<|eot_id|>"]}}
+    inp: Dict[str, Any] = {
+        "prompt": prompt,
+        "stop": ["<|eot_id|>", "<|start_header_id|>"],
+    }
+    # These fields are optional; they only take effect if your RunPod handler reads them.
+    if isinstance(max_tokens, int) and max_tokens > 0:
+        inp["max_tokens"] = max_tokens
+    if isinstance(temperature, (int, float)) and float(temperature) >= 0:
+        inp["temperature"] = float(temperature)
+    if isinstance(top_p, (int, float)) and 0 < float(top_p) <= 1.0:
+        inp["top_p"] = float(top_p)
+
+    payload = {"input": inp}
 
     try:
-        # Debug: show a preview of the prompt sent to RunPod
         print(f"🚀 Submitting RunPod job: {RUNPOD_RUN_ENDPOINT}", flush=True)
-        print("—— Prompt Preview (first 900 chars) ——", flush=True)
-        print((prompt or "")[:900], flush=True)
-        print("—— End Preview ——", flush=True)
+        if AV_LOG_PROMPTS:
+            n = max(0, AV_LOG_PROMPT_CHARS)
+            print("\n==== PROMPT SENT TO MODEL (RUNPOD user prompt) ====".ljust(40, "="), flush=True)
+            print(((prompt or "")[:n] + ("..." if len(prompt or "") > n else "")), flush=True)
+            print("=" * 40, flush=True)
         async with httpx.AsyncClient(timeout=httpx.Timeout(connect=10.0, read=30.0, write=10.0, pool=10.0)) as client:
             run_resp = await client.post(RUNPOD_RUN_ENDPOINT, json=payload, headers=headers)
     except httpx.RequestError as e:
@@ -1851,6 +2071,7 @@ async def generate_cloud_structured(
     article_url: Optional[str] = None,
     article_context: Optional[Dict[str, Any]] = None,
     session_id: Optional[str] = None,
+    user_id: Optional[str] = None,
     max_history: int = 3,
 ) -> AssistantPayload:
     t_start = time.perf_counter()
@@ -1890,6 +2111,60 @@ async def generate_cloud_structured(
     # If no client history provided but we have a session, keep current behavior (no fetch here)
     user_flags = keyword_router(message)
     chat_flag = not user_flags.get("want_web", False)
+
+    # One-time snapshot so missing logs can be explained quickly.
+    _log_av_flags_snapshot_once()
+
+    learning_pref = await fetch_learning_preference(user_id)
+    if AV_LOG_LEARNING_PREF and learning_pref:
+        print(f"🎓 learning_preference={learning_pref}", flush=True)
+
+    # Log the *exact* instruction string that will be injected into the prompt.
+    # This is safe to log (no user content), and helps verify preference shaping.
+    if AV_LOG_LEARNING_PREF:
+        pref_instruction = build_learning_preference_instruction(learning_pref)
+        target = "runpod" if RUNPOD_RUN_ENDPOINT else "cloudrun"
+        print(
+            "🧩 learning_pref_instruction_sent:",
+            {
+                "target": target,
+                "learning_preference": learning_pref or "(none)",
+                "chat_mode": chat_flag,
+                "instruction": pref_instruction.strip(),
+            },
+            flush=True,
+        )
+    if AV_LOG_PROMPTS:
+        n = max(0, AV_LOG_PROMPT_CHARS)
+        msg_preview = (message or "")[:n]
+        # Keep log single-line to avoid noisy multi-line logs.
+        msg_preview = msg_preview.replace("\n", " ").replace("\r", " ")
+        print(
+            "🗣️ user_message_preview:",
+            {"user_id": user_id or "(none)", "chars": n, "preview": msg_preview},
+            flush=True,
+        )
+
+    # Tune sampling/length by preference. (Effective for RunPod; CloudRun may ignore.)
+    def _gen_for_pref(pref: Optional[str], chat_mode: bool) -> Dict[str, Any]:
+        p = _normalize_learning_pref(pref)
+        # Structured/JSON answers need more headroom than chat-mode.
+        if p == "secondary":
+            return {"max_tokens": 700 if not chat_mode else 520, "temperature": 0.35, "top_p": 0.9}
+        if p == "tertiary":
+            return {"max_tokens": 850 if not chat_mode else 650, "temperature": 0.5, "top_p": 0.92}
+        if p == "university":
+            return {"max_tokens": 1200 if not chat_mode else 900, "temperature": 0.55, "top_p": 0.93}
+        # leisure + default
+        return {"max_tokens": 900 if not chat_mode else 720, "temperature": 0.7, "top_p": 0.95}
+
+    tuned = _gen_for_pref(learning_pref, chat_flag)
+    if AV_LOG_LEARNING_PREF:
+        print(
+            "🎛️ gen_tuning:",
+            {"learning_preference": learning_pref or "(none)", "chat_mode": chat_flag, **tuned},
+            flush=True,
+        )
 
     # Debug: show the history window used for context (up to 4 entries)
     def _preview(s: str, n: int = 180) -> str:
@@ -1975,14 +2250,19 @@ async def generate_cloud_structured(
 
     # ✅ Draft answer first (no tools yet)
     if RUNPOD_RUN_ENDPOINT:
+        prompt1 = build_runpod_user_prompt(
+            message,
+            trimmed_history,
+            rag_block=rag_block,
+            article_block=article_block,
+            chat_mode=chat_flag,
+            learning_preference=learning_pref,
+        )
         raw = await call_runpod_job_prompt(
-            build_prompt(
-                message,
-                trimmed_history,
-                rag_block=rag_block,
-                article_block=article_block,
-                chat_mode=chat_flag,
-            )
+            prompt1,
+            max_tokens=int(tuned.get("max_tokens") or 0) or None,
+            temperature=float(tuned.get("temperature")) if tuned.get("temperature") is not None else None,
+            top_p=float(tuned.get("top_p")) if tuned.get("top_p") is not None else None,
         )
     else:
         raw = await call_cloudrun(
@@ -1992,6 +2272,7 @@ async def generate_cloud_structured(
                 rag_block=rag_block,
                 article_block=article_block,
                 chat_mode=chat_flag,
+                learning_preference=learning_pref,
             ),
             timeout=timeout,
         )
@@ -2051,11 +2332,17 @@ async def generate_cloud_structured(
                     original_answer=answer_md,
                     web_evidence_block=sanity_block,
                     article_block=article_block,
+                    learning_preference=learning_pref,
                 )
                 refined_raw = ""
                 try:
                     if RUNPOD_RUN_ENDPOINT:
-                        refined_raw = await call_runpod_job_prompt(prompt2)
+                        refined_raw = await call_runpod_job_prompt(
+                            prompt2,
+                            max_tokens=int(tuned.get("max_tokens") or 0) or None,
+                            temperature=float(tuned.get("temperature")) if tuned.get("temperature") is not None else None,
+                            top_p=float(tuned.get("top_p")) if tuned.get("top_p") is not None else None,
+                        )
                     else:
                         refined_raw = await call_cloudrun(prompt2, timeout=timeout)
                 except Exception:
@@ -2286,15 +2573,20 @@ async def generate_cloud_structured(
         raw2 = ""
         try:
             if RUNPOD_RUN_ENDPOINT:
+                prompt2 = build_runpod_user_prompt(
+                    message,
+                    trimmed_history,
+                    rag_block=rag_block,
+                    web_evidence_block=web_evidence_block,
+                    article_block=article_block,
+                    chat_mode=False,
+                    learning_preference=learning_pref,
+                )
                 raw2 = await call_runpod_job_prompt(
-                    build_prompt(
-                        message,
-                        trimmed_history,
-                        rag_block=rag_block,
-                        web_evidence_block=web_evidence_block,
-                        article_block=article_block,
-                        chat_mode=False,
-                    )
+                    prompt2,
+                    max_tokens=int(tuned.get("max_tokens") or 0) or None,
+                    temperature=float(tuned.get("temperature")) if tuned.get("temperature") is not None else None,
+                    top_p=float(tuned.get("top_p")) if tuned.get("top_p") is not None else None,
                 )
             else:
                 raw2 = await call_cloudrun(
@@ -2305,6 +2597,7 @@ async def generate_cloud_structured(
                         web_evidence_block=web_evidence_block,
                         article_block=article_block,
                         chat_mode=False,
+                        learning_preference=learning_pref,
                     ),
                     timeout=timeout,
                 )
@@ -2562,6 +2855,7 @@ async def chat_cloud_plus(req: ChatRequest, request: Request):
         article_url=article_url,
         article_context=article_context,
         session_id=req.session_id,
+        user_id=req.user_id,
         max_history=4 if req.user_id else 2,
     )
 
