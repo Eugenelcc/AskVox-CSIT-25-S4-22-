@@ -1,17 +1,17 @@
 import os
 import base64
-from fastapi import APIRouter, UploadFile, HTTPException
+from fastapi import APIRouter, UploadFile, HTTPException, File
 import httpx
 router = APIRouter(prefix="/gstt", tags=["gstt"])
 
 
 # --- 1. CONFIGURATION ---
 # Point to your keys
-GOOGLE_API_KEY = os.getenv("GOOGLE_SST_API_KEY")
+GOOGLE_API_KEY = (os.getenv("GOOGLE_STT_API_KEY") or os.getenv("GOOGLE_SST_API_KEY") or "").strip()
 GOOGLE_URL = "https://speech.googleapis.com/v1/speech:recognize"
 
 @router.post("/transcribe")
-async def transcribe_audio(file: UploadFile):
+async def transcribe_audio(file: UploadFile = File(...)):
     # 1. Read audio file
     audio_content = await file.read()
 
@@ -33,6 +33,9 @@ async def transcribe_audio(file: UploadFile):
     }
 
     # 4. Send Request to Google
+    if not GOOGLE_API_KEY:
+        raise HTTPException(status_code=500, detail="GOOGLE_STT_API_KEY not configured")
+
     async with httpx.AsyncClient() as client:
         try:
             response = await client.post(

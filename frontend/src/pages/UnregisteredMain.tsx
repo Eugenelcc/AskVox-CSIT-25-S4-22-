@@ -17,6 +17,12 @@ const USER_ID = 874902 as const;
 const LLAMA_ID = 212020 as const;
 const API_BASE_URL = import.meta.env.VITE_API_URL || "http://localhost:8000";
 
+type VoiceCaptionItem = {
+  id: string;
+  role: "user" | "assistant";
+  text: string;
+};
+
 // ✅ 2. Update Component to accept 'session' prop
 const UnregisteredMain = ({
   session,
@@ -35,8 +41,7 @@ const UnregisteredMain = ({
   const [isRecording, setIsRecording] = useState(false);
   const [isTranscribing, setIsTranscribing] = useState(false);
   const [isTtsPlaying, setIsTtsPlaying] = useState(false);
-  const [voiceUserCaption, setVoiceUserCaption] = useState("");
-  const [voiceAssistantCaption, setVoiceAssistantCaption] = useState("");
+  const [voiceCaptionFeed, setVoiceCaptionFeed] = useState<VoiceCaptionItem[]>([]);
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
   const audioChunksRef = useRef<BlobPart[]>([]);
   const audioPlayRef = useRef<HTMLAudioElement | null>(null);
@@ -48,6 +53,25 @@ const UnregisteredMain = ({
   const ttsActiveRef = useRef(false);
   const ttsSanitizeRef = useRef<((t: string) => string) | null>(null);
   const voiceGuestSessionIdRef = useRef<string | null>(null);
+
+  const voiceCaptionScrollRef = useRef<HTMLDivElement | null>(null);
+  const voiceCaptionStickToBottomRef = useRef(true);
+
+  const onVoiceCaptionScroll = () => {
+    const el = voiceCaptionScrollRef.current;
+    if (!el) return;
+    voiceCaptionStickToBottomRef.current =
+      el.scrollTop + el.clientHeight >= el.scrollHeight - 6;
+  };
+
+  useEffect(() => {
+    const el = voiceCaptionScrollRef.current;
+    if (!el) return;
+    if (!voiceCaptionStickToBottomRef.current) return;
+    try {
+      el.scrollTop = el.scrollHeight;
+    } catch {}
+  }, [voiceCaptionFeed.length]);
 
   const classifyDomainBestEffort = async (text: string): Promise<string> => {
     try {
@@ -285,10 +309,6 @@ const UnregisteredMain = ({
     try {
       const safeText = (ttsSanitizeRef.current?.(text)) ?? text;
       postLog(`TTS request: ${safeText}`, 'tts');
-      if (voiceModeRef.current) {
-        setVoiceUserCaption("");
-        setVoiceAssistantCaption(safeText);
-      }
       // Mark TTS active BEFORE stopping recorder to avoid re-arm race in onstop
       ttsActiveRef.current = true;
       setIsTtsPlaying(true);
@@ -385,17 +405,17 @@ const UnregisteredMain = ({
         const audioBlob = new Blob(audioChunksRef.current, { type: "audio/webm" });
         try {
           setIsTranscribing(true);
-          setVoiceUserCaption("");
-          setVoiceAssistantCaption("");
           const formData = new FormData();
           formData.append("file", audioBlob, "utterance.webm");
-          const sttRes = await fetch(`${API_BASE_URL}/stt/`, { method: "POST", body: formData });
+          const sttRes = await fetch(`${API_BASE_URL}/gstt/transcribe`, { method: "POST", body: formData });
           if (!sttRes.ok) { return; }
           const sttData = await sttRes.json();
           const transcript: string = sttData.text ?? "";
           if (transcript) postLog(transcript, 'stt');
           if (transcript) {
-            setVoiceUserCaption(transcript);
+            const capId = globalThis.crypto?.randomUUID?.() ?? `cap-${Date.now()}-${Math.random()}`;
+            // Stage: replace "listening" with the user's transcript
+            setVoiceCaptionFeed([{ id: capId, role: "user" as const, text: transcript }]);
             const tnorm = transcript.toLowerCase();
             if (
               tnorm.includes("stop listening") ||
@@ -447,7 +467,8 @@ const UnregisteredMain = ({
                 });
               } catch {}
             }
-            const sealionRes = await fetch(`${API_BASE_URL}/geminichats/`, {
+            const sealionRes = await fetch(`${API_BASE_URL}/llamachats-multi/cloud_plus`, {
+             // /llamachats-multi/cloud_plus
               method: "POST",
               headers: { "Content-Type": "application/json" },
               body: JSON.stringify({
@@ -460,8 +481,9 @@ const UnregisteredMain = ({
             const sealionData = await sealionRes.json();
             const replyText = sealionData.answer || sealionData.response || sealionData.reply || "";
             if (replyText) {
-              setVoiceUserCaption("");
-              setVoiceAssistantCaption("");
+              const capId = globalThis.crypto?.randomUUID?.() ?? `cap-${Date.now()}-${Math.random()}`;
+              // Stage: replace the user's transcript with the assistant response
+              setVoiceCaptionFeed([{ id: capId, role: "assistant" as const, text: "" }]);
               const botMsgId = globalThis.crypto?.randomUUID?.() ?? `vbot-${Date.now()}-${Math.random()}`;
               setMessages(prev => [...prev, { id: botMsgId, senderId: LLAMA_ID, content: "", createdAt: new Date().toISOString() }]);
 
@@ -473,11 +495,11 @@ const UnregisteredMain = ({
                 for (let i = 0; i <= replyText.length; i += step) {
                   const partial = replyText.slice(0, i);
                   setMessages(prev => prev.map(m => (m.id === botMsgId ? { ...m, content: partial } : m)));
-                  setVoiceAssistantCaption(partial);
+                  setVoiceCaptionFeed([{ id: capId, role: "assistant" as const, text: partial }]);
                   await sleep(12);
                 }
                 setMessages(prev => prev.map(m => (m.id === botMsgId ? { ...m, content: replyText } : m)));
-                setVoiceAssistantCaption(replyText);
+                setVoiceCaptionFeed([{ id: capId, role: "assistant" as const, text: replyText }]);
               })();
             } else {
               if (voiceModeRef.current) { setTimeout(() => { if (voiceModeRef.current) void startVoiceRecording(); }, 250); }
@@ -547,8 +569,9 @@ const UnregisteredMain = ({
     setIsVoiceMode(true);
     voiceModeRef.current = true;
     voiceGuestSessionIdRef.current = null;
-    setVoiceUserCaption("");
-    setVoiceAssistantCaption("");
+    // Stage: show listening prompt immediately
+    const capId = globalThis.crypto?.randomUUID?.() ?? `cap-${Date.now()}-${Math.random()}`;
+    setVoiceCaptionFeed([{ id: capId, role: "assistant" as const, text: "AskVox is listening" }]);
     // In voice mode, hide chat input, show BlackHole, start with TTS confirmation
     void speakWithGoogleTTS("AskVox is listening", true);
   };
@@ -558,8 +581,7 @@ const UnregisteredMain = ({
     setIsVoiceMode(false);
     voiceGuestSessionIdRef.current = null;
     setIsTtsPlaying(false);
-    setVoiceUserCaption("");
-    setVoiceAssistantCaption("");
+    setVoiceCaptionFeed([]);
     try { (window as any).speechSynthesis?.cancel?.(); } catch {}
     try {
       if (mediaRecorderRef.current && mediaRecorderRef.current.state !== "inactive") {
@@ -620,29 +642,60 @@ const UnregisteredMain = ({
               <>
                 <div className="av-voice-captions">
                   <div className="av-voice-captions__user">
-                    {!!voiceUserCaption && (
-                      <h4 className="orb-caption" style={{ fontSize: 22, opacity: 0.6, textAlign: "center" }}>
-                        {voiceUserCaption}
-                      </h4>
-                    )}
+                    {/* left column kept for layout; captions are rendered in the center feed */}
                   </div>
 
                   <div className="av-voice-captions__assistant">
-                    {(() => {
-                      const listening =
-                        !voiceUserCaption &&
-                        !voiceAssistantCaption &&
-                        (isRecording || isTranscribing)
-                          ? "Listening…"
-                          : "";
-                      const text = voiceAssistantCaption || listening;
-                      if (!text) return null;
-                      return (
-                        <h4 className="orb-caption" style={{ fontSize: 22, opacity: 0.8 }}>
-                          {text}
-                        </h4>
-                      );
-                    })()}
+                    <div
+                      ref={voiceCaptionScrollRef}
+                      className="av-voice-captions__scroll"
+                      onScroll={onVoiceCaptionScroll}
+                    >
+                      {(() => {
+                        const listening =
+                          !voiceCaptionFeed.length &&
+                          (isRecording || isTranscribing)
+                            ? "Listening…"
+                            : "";
+                        const items: VoiceCaptionItem[] = voiceCaptionFeed.length
+                          ? voiceCaptionFeed
+                          : (listening ? [{ id: "listening", role: "assistant" as const, text: listening }] : []);
+                        return items.map((c) => {
+                          const baseOpacity = c.role === "assistant" ? 0.8 : 0.6;
+                          const isListeningLine = c.id === "listening" || c.text === "AskVox is listening" || c.text === "Listening…";
+                          const label = c.role === "user" ? "User Voice" : "Assistant response";
+                          const cleanedText = isListeningLine
+                            ? c.text
+                            : ((ttsSanitizeRef.current?.(c.text)) ?? c.text);
+                          return (
+                            <div
+                              key={c.id}
+                              className="av-voice-caption-item"
+                              style={{ opacity: baseOpacity }}
+                            >
+                              {isListeningLine ? (
+                                <h4
+                                  className="orb-caption"
+                                  style={{ fontSize: 22, textAlign: "center" }}
+                                >
+                                  {cleanedText}
+                                </h4>
+                              ) : (
+                                <>
+                                  <div className="av-voice-caption-label visual-askvox">{label}</div>
+                                  <div
+                                    className="orb-caption av-voice-caption-text"
+                                    style={{ fontSize: 22, textAlign: "left" }}
+                                  >
+                                    {cleanedText}
+                                  </div>
+                                </>
+                              )}
+                            </div>
+                          );
+                        });
+                      })()}
+                    </div>
                   </div>
 
                   <div className="av-voice-captions__spacer" />

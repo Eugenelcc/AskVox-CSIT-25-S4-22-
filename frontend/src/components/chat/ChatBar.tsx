@@ -113,8 +113,7 @@ const ChatBar: FC<ChatBarProps> = ({
           const formData = new FormData();
           formData.append("file", audioBlob, "recording.webm");
 
-          //const res = await fetch(`${import.meta.env.VITE_API_URL}/gstt/transcribe`, {   //Google STT endpoint
-          const res = await fetch(`${import.meta.env.VITE_API_URL}/stt/`, {   //Assembly STT endpoint
+          const res = await fetch(`${import.meta.env.VITE_API_URL}/gstt/transcribe`, {   //Google STT endpoint  /stt/ -> Assembly
             method: "POST",
             body: formData,
           });

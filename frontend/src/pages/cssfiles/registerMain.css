@@ -164,6 +164,49 @@
     pointer-events: auto;
   }
 
+  /* Fixed-height, scrollable caption area (keeps layout concise) */
+  .av-voice-captions__scroll {
+    height: 140px;
+    max-height: 140px;
+    overflow-y: auto;
+    width: 100%;
+    pointer-events: auto;
+    padding: 0 6px;
+
+    /* Use normal block flow so overflow scrolling works reliably */
+    display: block;
+    overscroll-behavior: contain;
+    -webkit-overflow-scrolling: touch;
+    touch-action: pan-y;
+
+    /* "Invisible" scroll container (no background/border); hide scrollbars */
+    scrollbar-width: none;
+    -ms-overflow-style: none;
+  }
+
+  .av-voice-captions__scroll::-webkit-scrollbar {
+    width: 0;
+    height: 0;
+  }
+
+  .av-voice-caption-item {
+    width: 100%;
+  }
+
+  .av-voice-caption-label {
+    font-family: "ABeeZee", system-ui, -apple-system, BlinkMacSystemFont,
+      "Segoe UI", sans-serif;
+    font-size: 14px;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    text-align: left;
+    margin: 0 0 2px 0;
+  }
+
+  .av-voice-caption-text {
+    padding-left: 14px;
+  }
+
   @media (max-width: 520px) {
     .uv-root {
       --av-chatbar-h: 68px;
