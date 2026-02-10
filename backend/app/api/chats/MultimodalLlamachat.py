@@ -283,6 +283,27 @@ def build_learning_preference_instruction(pref: Optional[str]) -> str:
     )
 
 
+def build_emoji_style_instruction(style: Optional[str]) -> str:
+    """Return a short instruction to control emoji usage in model outputs.
+
+    This is especially important for RunPod, where your serverless handler wraps
+    `input.prompt` as the user message and uses a fixed system prompt.
+    """
+    s = (style or "").strip().lower()
+    if s == "off":
+        return "EMOJI STYLE: Off. Do not use emojis."
+    if s == "strong":
+        return (
+            "EMOJI STYLE: Strong. Use a few relevant emojis sparingly (about 1–3 total) "
+            "to make the response engaging. Avoid emojis in code blocks, JSON, or formal/academic responses."
+        )
+    # Default/light
+    return (
+        "EMOJI STYLE: Light. You may use at most one light emoji in an opening or closing when helpful. "
+        "Skip emojis for formal, code-heavy, or JSON-only responses."
+    )
+
+
 def build_runpod_user_prompt(
     message: str,
     history: List[HistoryItem],
@@ -308,6 +329,7 @@ def build_runpod_user_prompt(
     safe_rag = _truncate(rag_block, MAX_RAG_CHARS)
     safe_evidence = _truncate(web_evidence_block, MAX_EVIDENCE_CHARS)
     pref_instruction = build_learning_preference_instruction(learning_preference)
+    emoji_instruction = build_emoji_style_instruction(AV_EMOJI_STYLE)
 
     # Keep it compact: user's system prompt already covers friendly tutor tone.
     if chat_mode:
@@ -315,6 +337,8 @@ def build_runpod_user_prompt(
         lines: List[str] = []
         if pref_instruction:
             lines.append(pref_instruction.strip())
+        if emoji_instruction:
+            lines.append(emoji_instruction.strip())
         lines.append(FORMAT_INSTRUCTION.strip())
         if safe_article:
             lines.append("ARTICLE_CONTEXT (use when relevant):")
@@ -339,6 +363,8 @@ def build_runpod_user_prompt(
     parts: List[str] = []
     if pref_instruction:
         parts.append(pref_instruction.strip())
+    if emoji_instruction:
+        parts.append(emoji_instruction.strip())
     parts.append(MODEL_JSON_INSTRUCTION.strip())
     if safe_article:
         parts.append("Use the provided ARTICLE_CONTEXT as the primary source for the user's question.")
