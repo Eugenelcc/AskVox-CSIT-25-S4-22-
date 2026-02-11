@@ -15,6 +15,7 @@ from urllib.parse import urlparse
 from app.services.rag_service import retrieve_rag_context, is_rag_domain, is_rag_available
 from app.services.domain_classifier import classify_domain
 from app.services.moderation_service import moderate_message
+from app.services.domain_classifier import classify_domain, validate_domain
 
 load_dotenv()
 
@@ -30,8 +31,12 @@ RUNPOD_API_KEY = os.getenv("RUNPOD_API_KEY", "").strip()
 RUNPOD_AUTH_HEADER = os.getenv("RUNPOD_AUTH_HEADER", "Authorization").strip()
 RUNPOD_RUN_ENDPOINT = os.getenv("RUNPOD_RUN_ENDPOINT", "").strip()
 RUNPOD_STATUS_ENDPOINT = os.getenv("RUNPOD_STATUS_ENDPOINT", "").strip()
-RUNPOD_MAX_WAIT_SEC = float(os.getenv("RUNPOD_MAX_WAIT_SEC", "180"))
+RUNPOD_MAX_WAIT_SEC = float(os.getenv("RUNPOD_MAX_WAIT_SEC", "600"))
 RUNPOD_POLL_INTERVAL_SEC = float(os.getenv("RUNPOD_POLL_INTERVAL_SEC", "1.5"))
+
+# Optional: cap total time spent in *additional* RunPod passes (sanity/web second-pass).
+# Keeps one request from submitting several jobs and hitting local 504s under cold starts/queueing.
+RUNPOD_TOTAL_BUDGET_SEC = float(os.getenv("RUNPOD_TOTAL_BUDGET_SEC", "240"))
 
 # Debug logging (prompt previews may contain user text)
 AV_LOG_PROMPTS = os.getenv("AV_LOG_PROMPTS", "1") == "1"
@@ -543,7 +548,7 @@ def build_sanity_web_query(
             prefer_year = max(int(y) for y in years if y.isdigit())
         except Exception:
             prefer_year = None
-    elif recency_intent or current_year > MODEL_KNOWLEDGE_CUTOFF_YEAR:
+    elif recency_intent:
         prefer_year = current_year
     if prefer_year and str(prefer_year) not in q:
         q = f"{q} {prefer_year}".strip()
@@ -630,6 +635,7 @@ class ChatRequest(BaseModel):
     query_id: Optional[str] = None
     session_id: Optional[str] = None
     user_id: Optional[str] = None
+    domain: Optional[str] = None
     article_title: Optional[str] = None
     article_url: Optional[str] = None
 
@@ -1851,6 +1857,8 @@ async def call_runpod_job_prompt(
     max_tokens: Optional[int] = None,
     temperature: Optional[float] = None,
     top_p: Optional[float] = None,
+    domain: Optional[str] = None,
+    max_wait_sec: Optional[float] = None,
 ) -> str:
     """
     Submit a job to RunPod `/run` and poll `/status/{id}` until COMPLETED.
@@ -1869,6 +1877,8 @@ async def call_runpod_job_prompt(
         "prompt": prompt,
         "stop": ["<|eot_id|>", "<|start_header_id|>"],
     }
+    if (domain or "").strip():
+        inp["domain"] = (domain or "").strip()
     # These fields are optional; they only take effect if your RunPod handler reads them.
     if isinstance(max_tokens, int) and max_tokens > 0:
         inp["max_tokens"] = max_tokens
@@ -1879,13 +1889,18 @@ async def call_runpod_job_prompt(
 
     payload = {"input": inp}
 
+    effective_max_wait = float(max_wait_sec) if isinstance(max_wait_sec, (int, float)) and float(max_wait_sec) > 0 else float(RUNPOD_MAX_WAIT_SEC)
+
     try:
+        sent_domain = (inp.get("domain") or "").strip()
+        print(f"🏷️ RunPod domain: {sent_domain or '(none)'}", flush=True)
         print(f"🚀 Submitting RunPod job: {RUNPOD_RUN_ENDPOINT}", flush=True)
         if AV_LOG_PROMPTS:
             n = max(0, AV_LOG_PROMPT_CHARS)
             print("\n==== PROMPT SENT TO MODEL (RUNPOD user prompt) ====".ljust(40, "="), flush=True)
             print(((prompt or "")[:n] + ("..." if len(prompt or "") > n else "")), flush=True)
             print("=" * 40, flush=True)
+        # Reuse one client for submit+poll to reduce connection churn.
         async with httpx.AsyncClient(timeout=httpx.Timeout(connect=10.0, read=30.0, write=10.0, pool=10.0)) as client:
             run_resp = await client.post(RUNPOD_RUN_ENDPOINT, json=payload, headers=headers)
     except httpx.RequestError as e:
@@ -1917,55 +1932,68 @@ async def call_runpod_job_prompt(
 
     t0 = time.perf_counter()
     last_status = ""
-    while (time.perf_counter() - t0) < RUNPOD_MAX_WAIT_SEC:
-        url = f"{status_base}/{job_id}"
-        if not last_status:
-            print(f"⏳ Polling RunPod status: {url}", flush=True)
-        try:
-            async with httpx.AsyncClient(timeout=httpx.Timeout(connect=10.0, read=20.0, write=10.0, pool=10.0)) as client:
-                st_resp = await client.get(url, headers=headers)
-        except httpx.RequestError as e:
-            last_status = f"request_error: {e}"
-            await asyncio.sleep(RUNPOD_POLL_INTERVAL_SEC)
-            continue
+    # Backoff helps when the pod is busy/queueing.
+    poll_delay = max(0.2, float(RUNPOD_POLL_INTERVAL_SEC))
+    poll_delay_max = max(poll_delay, 5.0)
 
-        if st_resp.status_code >= 400:
-            last_status = f"http_{st_resp.status_code}"
-            await asyncio.sleep(RUNPOD_POLL_INTERVAL_SEC)
-            continue
+    async with httpx.AsyncClient(timeout=httpx.Timeout(connect=10.0, read=20.0, write=10.0, pool=10.0)) as poll_client:
+        while (time.perf_counter() - t0) < effective_max_wait:
+            url = f"{status_base}/{job_id}"
+            if not last_status:
+                print(f"⏳ Polling RunPod status: {url}", flush=True)
+            try:
+                st_resp = await poll_client.get(url, headers=headers)
+            except httpx.RequestError as e:
+                last_status = f"request_error: {e}"
+                await asyncio.sleep(poll_delay)
+                poll_delay = min(poll_delay_max, poll_delay * 1.25)
+                continue
 
-        try:
-            st_data = st_resp.json()
-        except Exception:
-            last_status = "bad_json"
-            await asyncio.sleep(RUNPOD_POLL_INTERVAL_SEC)
-            continue
+            if st_resp.status_code >= 400:
+                last_status = f"http_{st_resp.status_code}"
+                await asyncio.sleep(poll_delay)
+                poll_delay = min(poll_delay_max, poll_delay * 1.15)
+                continue
 
-        status = (st_data.get("status") or st_data.get("state") or "").upper()
-        last_status = status or last_status
-        if status:
-            print(f"🔄 RunPod status: {status}", flush=True)
-        if status == "COMPLETED":
-            out = st_data.get("output") or {}
-            if isinstance(out, dict):
-                ans = out.get("response") or out.get("answer") or out.get("reply")
-                if ans:
-                    return str(ans)
-            # Handle alternative shapes
-            if isinstance(out, str) and out:
-                return out
-            # Fallback: try top-level fields
-            ans2 = st_data.get("response") or st_data.get("answer") or st_data.get("reply")
-            if ans2:
-                return str(ans2)
-            raise HTTPException(status_code=502, detail="RunPod status completed but no output.response")
-        if status in {"FAILED", "ERROR", "CANCELLED"}:
-            print(f"❌ RunPod job: {status}", flush=True)
-            raise HTTPException(status_code=502, detail=f"RunPod job {status}")
+            try:
+                st_data = st_resp.json()
+            except Exception:
+                last_status = "bad_json"
+                await asyncio.sleep(poll_delay)
+                poll_delay = min(poll_delay_max, poll_delay * 1.15)
+                continue
 
-        await asyncio.sleep(RUNPOD_POLL_INTERVAL_SEC)
+            status = (st_data.get("status") or st_data.get("state") or "").upper()
+            last_status = status or last_status
+            if status:
+                print(f"🔄 RunPod status: {status}", flush=True)
+            if status == "COMPLETED":
+                out = st_data.get("output") or {}
+                if isinstance(out, dict):
+                    ans = out.get("response") or out.get("answer") or out.get("reply")
+                    if ans:
+                        return str(ans)
+                # Handle alternative shapes
+                if isinstance(out, str) and out:
+                    return out
+                # Fallback: try top-level fields
+                ans2 = st_data.get("response") or st_data.get("answer") or st_data.get("reply")
+                if ans2:
+                    return str(ans2)
+                raise HTTPException(status_code=502, detail="RunPod status completed but no output.response")
+            if status in {"FAILED", "ERROR", "CANCELLED"}:
+                print(f"❌ RunPod job: {status}", flush=True)
+                raise HTTPException(status_code=502, detail=f"RunPod job {status}")
 
-    print(f"⏰ RunPod job timed out (last_status={last_status})", flush=True)
+            await asyncio.sleep(poll_delay)
+            # Slowly backoff even on success to reduce pressure.
+            poll_delay = min(poll_delay_max, poll_delay * 1.05)
+
+    print(
+        f"⏰ RunPod job timed out (last_status={last_status})",
+        {"waited_sec": round(time.perf_counter() - t0, 2), "max_wait_sec": effective_max_wait},
+        flush=True,
+    )
     raise HTTPException(status_code=504, detail=f"RunPod job timed out (last_status={last_status})")
 
 async def fetch_session_article_context(session_id: str) -> Dict[str, Any]:
@@ -2128,6 +2156,7 @@ async def generate_cloud_structured(
     article_context: Optional[Dict[str, Any]] = None,
     session_id: Optional[str] = None,
     user_id: Optional[str] = None,
+    domain: Optional[str] = None,
     max_history: int = 3,
 ) -> AssistantPayload:
     t_start = time.perf_counter()
@@ -2333,6 +2362,7 @@ async def generate_cloud_structured(
             max_tokens=int(tuned.get("max_tokens") or 0) or None,
             temperature=float(tuned.get("temperature")) if tuned.get("temperature") is not None else None,
             top_p=float(tuned.get("top_p")) if tuned.get("top_p") is not None else None,
+            domain=domain,
         )
     else:
         raw = await call_cloudrun(
@@ -2381,12 +2411,18 @@ async def generate_cloud_structured(
     sanity_sources: List[SourceItem] = []
     sanity_q_used: str = ""
     try:
+        # If we're already running long (common with RunPod cold starts), skip extra passes.
+        if RUNPOD_RUN_ENDPOINT and (time.perf_counter() - t_start) > RUNPOD_TOTAL_BUDGET_SEC:
+            raise RuntimeError("budget_exceeded")
         current_year = datetime.now(timezone.utc).year
         msg_text = (message or "")
         years = extract_years(msg_text + " " + (answer_md or ""))
         recency_intent = bool(re.search(r"\b(now|currently|today|this year|latest|trending|airing|released|premiered)\b", msg_text, re.I))
         mentions_future = any(int(y) > MODEL_KNOWLEDGE_CUTOFF_YEAR for y in years if y.isdigit())
-        should_sanity = recency_intent or mentions_future or (current_year > MODEL_KNOWLEDGE_CUTOFF_YEAR)
+        # IMPORTANT: Don't sanity-check every request just because the calendar year
+        # is beyond the model cutoff (e.g., 2026 > 2023). Only do it when the user
+        # explicitly implies recency or mentions future years.
+        should_sanity = recency_intent or mentions_future
         if should_sanity:
             sanity_q = build_sanity_web_query(message, answer_md, context_query_base=None)
             sanity_q_used = sanity_q
@@ -2407,11 +2443,14 @@ async def generate_cloud_structured(
                 refined_raw = ""
                 try:
                     if RUNPOD_RUN_ENDPOINT:
+                        if (time.perf_counter() - t_start) > RUNPOD_TOTAL_BUDGET_SEC:
+                            raise RuntimeError("budget_exceeded")
                         refined_raw = await call_runpod_job_prompt(
                             prompt2,
                             max_tokens=int(tuned.get("max_tokens") or 0) or None,
                             temperature=float(tuned.get("temperature")) if tuned.get("temperature") is not None else None,
                             top_p=float(tuned.get("top_p")) if tuned.get("top_p") is not None else None,
+                            domain=domain,
                         )
                     else:
                         refined_raw = await call_cloudrun(prompt2, timeout=timeout)
@@ -2643,6 +2682,8 @@ async def generate_cloud_structured(
         raw2 = ""
         try:
             if RUNPOD_RUN_ENDPOINT:
+                if (time.perf_counter() - t_start) > RUNPOD_TOTAL_BUDGET_SEC:
+                    raise RuntimeError("budget_exceeded")
                 prompt2 = build_runpod_user_prompt(
                     message,
                     trimmed_history,
@@ -2657,6 +2698,7 @@ async def generate_cloud_structured(
                     max_tokens=int(tuned.get("max_tokens") or 0) or None,
                     temperature=float(tuned.get("temperature")) if tuned.get("temperature") is not None else None,
                     top_p=float(tuned.get("top_p")) if tuned.get("top_p") is not None else None,
+                    domain=domain,
                 )
             else:
                 raw2 = await call_cloudrun(
@@ -2673,6 +2715,11 @@ async def generate_cloud_structured(
                 )
         except HTTPException as e:
             print("SECOND PASS GENERATION FAILED:", e.detail, flush=True)
+        except RuntimeError as e:
+            if str(e) == "budget_exceeded":
+                print("SECOND PASS SKIPPED (budget)", {"elapsed_sec": round(time.perf_counter() - t_start, 2)}, flush=True)
+            else:
+                print("SECOND PASS SKIPPED (runtime)", {"error": str(e)}, flush=True)
 
         plan2 = extract_json(raw2) if raw2 else {}
 
@@ -2901,6 +2948,37 @@ async def persist_assistant_message(
         except Exception as e:
             print(f"⚠️ Failed to insert assistant chat_message: {e}", flush=True)
 
+
+def detect_domain_for_message(message: str, requested_domain: Optional[str]) -> str:
+    requested = (requested_domain or "").strip()
+    if requested and validate_domain(requested):
+        return requested
+    try:
+        return classify_domain(message or "")
+    except Exception:
+        return "general"
+
+
+async def update_query_domain(query_id: str, detected_domain: str) -> None:
+    if not (SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY and query_id and detected_domain):
+        return
+
+    headers = {
+        "apikey": SUPABASE_SERVICE_ROLE_KEY,
+        "Authorization": f"Bearer {SUPABASE_SERVICE_ROLE_KEY}",
+        "Content-Type": "application/json",
+        "Prefer": "return=minimal",
+    }
+    url = f"{SUPABASE_URL}/rest/v1/queries?id=eq.{query_id}"
+    body = {"detected_domain": detected_domain}
+    try:
+        async with httpx.AsyncClient(timeout=10) as client:
+            resp = await client.patch(url, headers=headers, json=body)
+            if resp.status_code >= 400:
+                print("⚠️ Failed to update query domain:", resp.status_code, resp.text[:200], flush=True)
+    except Exception as e:
+        print(f"⚠️ Failed to update query domain: {e}", flush=True)
+
 # -----------------------
 # ENDPOINT
 # -----------------------
@@ -2918,6 +2996,10 @@ async def chat_cloud_plus(req: ChatRequest, request: Request):
         article_title = article_title or (article_context or {}).get("title")
         article_url = article_url or (article_context or {}).get("url")
 
+    detected_domain = detect_domain_for_message(req.message, req.domain)
+    if req.query_id:
+        await update_query_domain(req.query_id, detected_domain)
+
     payload = await generate_cloud_structured(
         req.message,
         req.history,
@@ -2926,6 +3008,7 @@ async def chat_cloud_plus(req: ChatRequest, request: Request):
         article_context=article_context,
         session_id=req.session_id,
         user_id=req.user_id,
+        domain=detected_domain,
         max_history=4 if req.user_id else 2,
     )
 

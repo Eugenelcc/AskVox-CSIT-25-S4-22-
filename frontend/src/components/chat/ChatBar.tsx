@@ -198,7 +198,7 @@ const ChatBar: FC<ChatBarProps> = ({
           value={value}
           onChange={(e) => setValue(e.target.value)}
           onKeyDown={handleKeyDown}
-          disabled={disabled}
+          aria-disabled={disabled}
           rows={1}
         />
 

@@ -1,10 +1,10 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState, lazy, Suspense } from "react";
 // ✅ 1. Import Session Type
 import type { Session } from "@supabase/supabase-js";
 
 import Background from "../components/background/background";
 import ChatBar from "../components/chat/ChatBar";
-import BlackHole from "../components/background/Blackhole";
+const BlackHole = lazy(() => import("../components/background/Blackhole"));
 import UnregisteredTopBar from "../components/TopBars/unregisteredtopbar";
 import ChatMessages from "../components/chat/UnregisteredChatMessages";
 import { useWakeWordBackend } from "../hooks/useWakeWordBackend.ts";
@@ -660,7 +660,9 @@ const UnregisteredMain = ({
       <main className="uv-main">
         {(!hasMessages || isVoiceMode) && (
           <section className="uv-hero">
-            <BlackHole isActivated={isBlackHoleActive} />
+            <Suspense fallback={null}>
+              <BlackHole isActivated={isBlackHoleActive} />
+            </Suspense>
             {isVoiceMode && (
               <>
                 <div className="av-voice-captions">

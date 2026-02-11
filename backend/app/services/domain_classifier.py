@@ -93,6 +93,7 @@ GOOGLE_TO_ASKVOX = {
     "/Reference/Humanities/History": "History and World Events",
     "/Reference/Humanities": "History and World Events",
     "/History": "History and World Events",
+    "/Sensitive Subjects/War & Conflict": "History and World Events",
 
     "/Geography": "Geography and Travel",
 

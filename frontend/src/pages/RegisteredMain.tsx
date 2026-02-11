@@ -1,4 +1,4 @@
-import { useState, useEffect, useMemo, useRef, useCallback } from "react";
+import { useState, useEffect, useMemo, useRef, useCallback, lazy, Suspense } from "react";
 import { useLocation, useNavigate } from "react-router-dom";
 import { supabase } from "../supabaseClient";
 import type { Session } from "@supabase/supabase-js";
@@ -7,7 +7,6 @@ import type { Session } from "@supabase/supabase-js";
 // Components
 import Background from "../components/background/background";
 import ChatBar from "../components/chat/ChatBar";
-import BlackHole from "../components/background/Blackhole";
 import RegisteredTopBar from "../components/TopBars/RegisteredTopBar"; 
 import PaidTopBar from "../components/TopBars/PaidTopBar";
 import ChatMessages from "../components/chat/ChatMessages"; 
@@ -20,8 +19,9 @@ import DiscoverSidebar from "../components/Sidebar/Discover_Sidebar";
 import SmartRecPanel from "../components/Sidebar/SmartRec_sidebar";
 import Quiz from "../components/quiz/Quiz";
 
-import { DiscoverView } from "../components/Discover/DiscoverView";
-import NewsContent from "../components/Discover/NewsContent/NewsContent";
+const BlackHole = lazy(() => import("../components/background/Blackhole"));
+const DiscoverView = lazy(() => import("../components/Discover/DiscoverView"));
+const NewsContent = lazy(() => import("../components/Discover/NewsContent/NewsContent"));
 
 
 // Types
@@ -2243,16 +2243,22 @@ export default function Dashboard({
 
           ) : activeTab === "discover" ? (
             location.pathname.startsWith("/discover/news") ? (
-              <NewsContent sidebarOpen={discoverOpen} onAskQuestion={handleNewsQuestion} />
+              <Suspense fallback={null}>
+                <NewsContent sidebarOpen={discoverOpen} onAskQuestion={handleNewsQuestion} />
+              </Suspense>
             ) : (
-              <DiscoverView withNavOffset={false} category={discoverCategory} />
+              <Suspense fallback={null}>
+                <DiscoverView withNavOffset={false} category={discoverCategory} />
+              </Suspense>
             )
           ) : (
             <>
               {/* Voice mode: show minimal listening UI */}
               {isVoiceMode ? (
                 <section className="uv-hero">
-                  <BlackHole isActivated={isBlackHoleActive} />
+                  <Suspense fallback={null}>
+                    <BlackHole isActivated={isBlackHoleActive} />
+                  </Suspense>
                   <div className="av-voice-captions">
                     <div className="av-voice-captions__user">
                       {/* left column kept for layout; captions are rendered in the center feed */}
@@ -2319,7 +2325,9 @@ export default function Dashboard({
               ) : (
                 !activeSessionId && (
                   <section className="uv-hero">
-                    <BlackHole />
+                    <Suspense fallback={null}>
+                      <BlackHole />
+                    </Suspense>
                   </section>
                 )
               )}
