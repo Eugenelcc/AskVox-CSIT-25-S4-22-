@@ -5,6 +5,7 @@ Supports custom domains and domain whitelisting.
 import base64
 import json
 import os
+import re
 from typing import Any
 
 # Google NLP is optional: app must still boot without it.
@@ -126,6 +127,68 @@ GOOGLE_TO_ASKVOX = {
 CUSTOM_DOMAIN_KEYWORDS = {
     "Technology": ["ai", "machine learning", "coding", "programming", "software", "app", "website", "algorithm"],
     "Health & Wellness": ["exercise", "fitness", "diet", "nutrition", "meditation", "yoga", "wellness"],
+    "History and World Events": [
+        "war", "battle", "conflict", "treaty", "empire", "kingdom", "dynasty", "ruler", "king", "queen",
+        "emperor", "chief", "leader", "revolution", "independence", "colonial", "colony", "colonization",
+        "colonisation", "protectorate", "annexation", "occupation", "annexed", "conquest", "invasion",
+        "rebellion", "uprising", "movement", "reform", "republic", "settlement", "migration", "civilization",
+        "culture", "tradition", "ritual", "ceremony", "religion", "missionary", "missionaries", "trade",
+        "slave", "slavery", "slave trade", "precolonial", "postcolonial", "indigenous", "ethnic", "chiefdom",
+        "monarchy", "tribute", "raids", "fort", "port", "coast", "settlers", "society", "economy",
+        "agriculture", "church", "islam", "christian", "mosque", "temple", "language", "people", "tribe",
+        "tribal", "community", "population", "city", "capital", "border", "frontier", "constitution",
+        "election", "coup", "civil", "nationalist", "party", "federation", "colonialism", "expansion",
+        "territory", "province", "administration", "governance", "ancient", "medieval", "renaissance",
+        "industrial", "modern", "contemporary", "century", "decade", "era", "period", "age", "epoch",
+        "xhosa", "thembu", "maqoma", "ngqika", "nongqause", "phalo", "cattle-killing", "new world",
+        "exploration", "explorer", "voyage", "discovery", "colonists", "colonial rule", "imperialism",
+        "new france", "new spain", "new england", "thirteen colonies", "royal charter", "plantation",
+        "fur trade", "triangular trade", "atlantic world", "native american", "first nations", "inuit",
+        "metis", "tribal nation", "tribal sovereignty", "oral history", "longhouse", "totem", "reservation",
+        "treaty rights", "forced removal", "trail of tears", "assimilation", "boarding school",
+        "ancestral land", "american revolution", "founding fathers", "declaration of independence",
+        "constitutional convention", "civil war", "emancipation", "reconstruction", "abolition",
+        "segregation", "jim crow", "manifest destiny", "westward expansion", "homestead",
+        "frontier settlement", "great depression", "new deal", "civil rights movement", "cold war",
+        "confederation", "dominion", "fur company", "hudsons bay company", "french and indian war",
+        "residential schools", "treaty system", "colonial administration", "mesoamerica", "aztec", "maya",
+        "olmec", "viceroyalty", "spanish crown", "mexican independence", "reform war", "mexican revolution",
+        "land reform", "hacienda", "peonage", "plantation economy", "sugar plantation", "maroon",
+        "maroon communities", "creole", "creolization", "emancipation act", "indentured labor", "piracy",
+        "privateer", "revolutionary war", "statehood", "annexation treaty", "territorial acquisition",
+        "nation-building", "federalism", "self-governance", "decolonization", "post-independence",
+        "social movement", "european continent", "western europe", "eastern europe", "northern europe",
+        "southern europe", "balkan peninsula", "iberian peninsula", "scandinavian peninsula",
+        "apennine peninsula", "baltic region", "carpathian basin", "mediterranean basin",
+        "black sea sphere", "classical antiquity", "hellenic world", "roman republic", "roman citizenship",
+        "roman law code", "latinization", "hellenization", "city-state politics", "celts",
+        "germanic peoples", "slavic peoples", "baltic peoples", "norse society", "tribal confederations",
+        "clan-based society", "customary law", "feudal contract", "manorial economy", "serf obligations",
+        "vassal loyalty", "knightly orders", "ecclesiastical courts", "canon law", "papal authority",
+        "investiture controversy", "monastic orders", "scholastic thought", "medieval guild system",
+        "urban commune", "dynastic succession", "royal house", "noble estate", "aristocratic privilege",
+        "court society", "imperial estates", "hereditary rule", "latin christendom", "eastern orthodoxy",
+        "church councils", "iconoclasm", "great schism", "confessional divide", "state church",
+        "religious tolerance", "secular authority", "humanist scholarship", "classical revival",
+        "scientific revolution", "rational inquiry", "empirical method", "natural philosophy",
+        "political philosophy", "constitutionalism", "parliamentary tradition", "absolutist rule",
+        "popular sovereignty", "balance of power", "realpolitik", "continental diplomacy",
+        "enclosure movement", "factory discipline", "urban proletariat", "bourgeois culture",
+        "class consciousness", "labor agitation", "total mobilization", "mass conscription", "trench system",
+        "ideological extremism", "authoritarian regime", "totalitarian governance", "postwar settlement",
+        "continental integration", "supranational governance", "asian continent", "east asia", "south asia",
+        "southeast asia", "west asia", "central asia", "middle east", "indian subcontinent",
+        "east asian sphere", "silk road", "spice trade routes", "indus valley civilization",
+        "yellow river civilization", "yangtze civilization", "vedic period", "classical india",
+        "classical china", "mandate of heaven", "dynastic cycle", "imperial bureaucracy",
+        "civil service examination", "scholar-official", "caste system", "varna system", "jati",
+        "samurai class", "shogunate", "daimyo", "tributary system", "hinduism", "buddhism",
+        "confucianism", "daoism", "taoism", "shinto", "sikhism", "islamic caliphate", "ulama", "sufism",
+        "sultanate", "caliphate", "khaganate", "steppe empires", "nomadic confederation",
+        "tributary diplomacy", "european concessions", "treaty ports", "extraterritoriality",
+        "anti-colonial resistance", "non-aligned movement", "postcolonial asia", "developmental state",
+        "rapid industrialization", "authoritarian modernization", "regional integration",
+    ],
     # Geography-related earth hazards (Google sometimes classifies as Earth Sciences)
     "Geography and Travel": [
         "volcano",
@@ -166,8 +229,15 @@ def classify_domain(text: str, allowed_domains: set = None) -> str:
     
     # ✅ CUSTOM DOMAIN KEYWORD MATCHING (for domains Google doesn't cover)
     for domain, keywords in CUSTOM_DOMAIN_KEYWORDS.items():
-        if domain in whitelist and any(k in text_lower for k in keywords):
-            return domain
+        if domain not in whitelist:
+            continue
+        for keyword in keywords:
+            if " " in keyword or "-" in keyword:
+                if keyword in text_lower:
+                    return domain
+            else:
+                if re.search(rf"\b{re.escape(keyword)}\b", text_lower):
+                    return domain
     
     # ✅ OPTIMIZATION: Ultra-short fragments with obvious intent
     if len(text.split()) < 3:
@@ -267,18 +337,24 @@ def classify_domain_debug(text: str, allowed_domains: set = None) -> tuple[str, 
 
     # Custom keyword matching
     for domain, keywords in CUSTOM_DOMAIN_KEYWORDS.items():
-        if domain in whitelist:
-            for keyword in keywords:
-                if keyword in text_lower:
-                    debug["strategy"] = "custom_keywords"
-                    debug["matched_keyword_domain"] = domain
-                    debug["matched_keyword"] = keyword
-                    debug["mapped_domain"] = domain
-                    if _debug_enabled():
-                        print(
-                            f"[domain] custom_keywords keyword='{keyword}' -> domain='{domain}' text='{text[:80]}'"
-                        )
-                    return domain, debug
+        if domain not in whitelist:
+            continue
+        for keyword in keywords:
+            matched = False
+            if " " in keyword or "-" in keyword:
+                matched = keyword in text_lower
+            else:
+                matched = re.search(rf"\b{re.escape(keyword)}\b", text_lower) is not None
+            if matched:
+                debug["strategy"] = "custom_keywords"
+                debug["matched_keyword_domain"] = domain
+                debug["matched_keyword"] = keyword
+                debug["mapped_domain"] = domain
+                if _debug_enabled():
+                    print(
+                        f"[domain] custom_keywords keyword='{keyword}' -> domain='{domain}' text='{text[:80]}'"
+                    )
+                return domain, debug
 
     # Ultra-short heuristics
     if len(text.split()) < 3:
