@@ -12,6 +12,8 @@ from datetime import datetime, timezone
 import asyncio
 from dotenv import load_dotenv
 from urllib.parse import urlparse
+from app.services.rag_service import retrieve_rag_context, is_rag_domain, is_rag_available
+from app.services.domain_classifier import classify_domain
 
 load_dotenv()
 
@@ -990,11 +992,40 @@ def enhance_markdown_for_ui(text: str) -> str:
 async def moderation_check(text: str) -> Dict[str, Any]:
     return {"allowed": True, "label": "ok", "score": 0.0, "reason": ""}
 
+
 # -----------------------
-# PLACEHOLDER: Internal RAG
+# Domain RAG 
 # -----------------------
-async def rag_retrieve(query: str, k: int = 4) -> List[Dict[str, str]]:
-    return []
+async def rag_retrieve(query: str, k: int = 4, classified_domain: Optional[str] = None) -> List[Dict[str, str]]:
+    """Retrieve RAG chunks if domain is RAG-enabled, else return [].
+
+    This is the ONLY place the domain classifier is called for RAG gating.
+    If classified_domain is not passed, we classify here.
+    """
+    if not is_rag_available():
+        return []
+
+    # Classify if not already done
+    if not classified_domain:
+        try:
+            classified_domain = classify_domain(query)
+        except Exception:
+            return []
+
+    if not is_rag_domain(classified_domain):
+        return []
+
+    try:
+        chunks = await retrieve_rag_context(query, classified_domain)
+        if chunks:
+            print(
+                f"[RAG] injecting {len(chunks)} chunks for domain='{classified_domain}'",
+                flush=True,
+            )
+        return chunks
+    except Exception as e:
+        print(f"[RAG] retrieve error (fail-soft): {e}", flush=True)
+        return []
 
 def build_rag_block(chunks: List[Dict[str, str]]) -> str:
     if not chunks:
@@ -2127,8 +2158,15 @@ async def generate_cloud_structured(
             scraped_text=scraped_text,
         )
 
-    # Internal RAG placeholder
-    rag_chunks = await rag_retrieve(message, k=4)
+    # Domain-gated RAG: classify once, reuse result
+    classified_domain = None
+    try:
+        classified_domain = classify_domain(message)
+        print(f"[RAG] domain classified: '{classified_domain}'", flush=True)
+    except Exception as e:
+        print(f"[RAG] classifier error (fail-soft): {e}", flush=True)
+
+    rag_chunks = await rag_retrieve(message, k=4, classified_domain=classified_domain)
     rag_block = build_rag_block(rag_chunks)
 
     timeout = httpx.Timeout(connect=10.0, read=300.0, write=10.0, pool=10.0)
