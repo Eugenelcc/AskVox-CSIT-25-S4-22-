@@ -14,6 +14,7 @@ from dotenv import load_dotenv
 from urllib.parse import urlparse
 from app.services.rag_service import retrieve_rag_context, is_rag_domain, is_rag_available
 from app.services.domain_classifier import classify_domain
+from app.services.moderation_service import moderate_message
 
 load_dotenv()
 
@@ -987,12 +988,10 @@ def enhance_markdown_for_ui(text: str) -> str:
     
 
 # -----------------------
-# PLACEHOLDER: Moderation
+# Moderation
 # -----------------------
-async def moderation_check(text: str) -> Dict[str, Any]:
-    return {"allowed": True, "label": "ok", "score": 0.0, "reason": ""}
-
-
+async def moderation_check(text: str, user_id: Optional[str] = None, session_id: Optional[str] = None) -> Dict[str, Any]:
+    return await moderate_message(text, user_id=user_id, session_id=session_id)
 # -----------------------
 # Domain RAG 
 # -----------------------
@@ -2135,14 +2134,21 @@ async def generate_cloud_structured(
     if not (LLAMA_CLOUDRUN_URL or RUNPOD_RUN_ENDPOINT):
         raise HTTPException(status_code=500, detail="No model endpoint configured: set LLAMA_CLOUDRUN_URL or RUNPOD_RUN_ENDPOINT in .env")
 
-    # Moderation placeholder
-    mod = await moderation_check(message)
+    # Moderation detection
+    mod = await moderation_check(message, user_id=user_id, session_id=session_id)
     if not mod.get("allowed", True):
+        fallback_text = mod.get("response") or (
+            "I'm not able to respond to that message. "
+            "Could you try rephrasing your question?"
+        )
         return AssistantPayload(
-            answer_markdown="I can’t help with that request. If you want, rephrase it in a safe, respectful way and I’ll try again.",
+            answer_markdown=fallback_text,
             sources=[],
             images=[],
             youtube=[],
+            source_count=0,
+            cite_available=False,
+            cite_label=None,
         )
 
     # Article context
