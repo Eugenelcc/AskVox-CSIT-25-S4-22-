@@ -89,7 +89,7 @@ YOUTUBE_API_KEY = os.getenv("YOUTUBE_API_KEY", "")
 TAVILY_API_KEY = os.getenv("TAVILY_API_KEY", "")
 
 USE_SUPABASE_STORAGE_FOR_IMAGES = os.getenv("USE_SUPABASE_STORAGE_FOR_IMAGES", "0") == "1"
-FORCE_WEB_SOURCES = os.getenv("FORCE_WEB_SOURCES", "0") == "1"
+FORCE_WEB_SOURCES = os.getenv("FORCE_WEB_SOURCES", "1") == "1"
 FORCE_YOUTUBE = os.getenv("FORCE_YOUTUBE", "0") == "1"
 FORCE_IMAGES = os.getenv("FORCE_IMAGES", "0") == "1"
 MODEL_KNOWLEDGE_CUTOFF_YEAR = int(os.getenv("MODEL_KNOWLEDGE_CUTOFF_YEAR", "2023"))
@@ -690,6 +690,9 @@ async def fast_youtube(query: str, num: int = 2, timeout_sec: float = 3.0) -> Li
 
 # Overall time budget for a single multimodal request (soft)
 _TOTAL_BUDGET_SEC = float(os.getenv("MM_TOTAL_BUDGET_SEC", "9.0"))
+_BUDGET_WEB_MIN_REMAIN_SEC = float(os.getenv("MM_BUDGET_WEB_MIN_REMAIN_SEC", "1.8"))
+_BUDGET_WEB_SECOND_PASS_MIN_REMAIN_SEC = float(os.getenv("MM_BUDGET_WEB_SECOND_PASS_MIN_REMAIN_SEC", "3.0"))
+_BUDGET_MEDIA_MIN_REMAIN_SEC = float(os.getenv("MM_BUDGET_MEDIA_MIN_REMAIN_SEC", "2.2"))
 
 # YouTube result sizing (hard cap + default returned count)
 _YOUTUBE_MAX_RESULTS = max(1, min(int(os.getenv("MM_YOUTUBE_MAX_RESULTS", "5")), 10))
@@ -860,6 +863,22 @@ _LEARNING_REQUEST_RE = re.compile(
     re.I,
 )
 
+_WHO_IS_RE = re.compile(
+    r"^\s*(who\s+is|who's|whos|who\s+was|tell\s+me\s+about)\s+(.+?)\s*[?!.]*\s*$",
+    re.I,
+)
+
+def extract_who_is_subject(message: str) -> str:
+    m = _WHO_IS_RE.match((message or "").strip())
+    if not m:
+        return ""
+    subj = (m.group(2) or "").strip()
+    subj = re.sub(r"\s+", " ", subj).strip()
+    return subj[:120]
+
+def is_who_is_question(message: str) -> bool:
+    return bool(_WHO_IS_RE.match((message or "").strip()))
+
 def _has_web_providers() -> bool:
     return bool((GOOGLE_API_KEY and GOOGLE_CSE_ID) or TAVILY_API_KEY)
 
@@ -892,6 +911,11 @@ def infer_need_web_sources(
     if is_smalltalk_or_identity(message):
         return False, "smalltalk_or_identity"
 
+    # Default policy for this app: always provide web sources when providers exist.
+    # Budget is enforced later in the pipeline (degrade gracefully).
+    if FORCE_WEB_SOURCES:
+        return True, "forced"
+
     if user_flags.get("want_web"):
         return True, "explicit_web_intent"
 
@@ -900,13 +924,6 @@ def infer_need_web_sources(
     # educational requests like tutorials still return references/links.
     if wants_learning_resources(message):
         return True, "learning_resources"
-
-    # Soft time-budget guard: avoid web escalation when we're already close to the total budget.
-    # (Still allow explicit requests via want_web above.)
-    if elapsed_sec is not None:
-        remaining = _TOTAL_BUDGET_SEC - float(elapsed_sec)
-        if remaining < 2.0:
-            return False, "budget_exhausted"
 
     if model_need_web:
         return True, "model_suggested"
@@ -936,6 +953,8 @@ def make_fallback_query(message: str, max_len: int = 120) -> str:
         flags=re.I,
     )
     q = re.sub(r"\s+", " ", q).strip()
+    if q.lower() in {"and", "or"}:
+        q = ""
     return (q[:max_len] if q else message[:max_len])
 
 def enforce_web_query_constraints(user_message: str, web_q: str) -> str:
@@ -970,7 +989,7 @@ def apply_tool_budget(
     # higher-level logic in generate_cloud_structured controls behavior.
     if not is_first_turn:
         # Media only when user explicitly asked OR forced by env
-        if not (user_flags.get("want_images") or FORCE_IMAGES):
+        if not (user_flags.get("want_images") or user_flags.get("auto_images") or FORCE_IMAGES):
             need_img = False
         # Treat auto_youtube as a valid intent for learning prompts.
         if not (user_flags.get("want_youtube") or user_flags.get("auto_youtube") or FORCE_YOUTUBE):
@@ -2469,6 +2488,22 @@ async def generate_cloud_structured(
         # Treat things like "can show me more videos?" as generic media follow-ups
         if has_media_word and (has_pronoun_ref or has_more):
             return True
+        # Media-only prompts like "videos and images" => generic
+        if has_media_word:
+            topic_hint = re.sub(
+                r"\b(show me|give me|find|search|look for|video|videos|youtube|yt|image|images|picture|pictures|photo|photos)\b",
+                "",
+                t,
+                flags=re.I,
+            )
+            topic_hint = re.sub(r"\b(and|or)\b", " ", topic_hint, flags=re.I)
+            topic_hint = re.sub(r"\s+", " ", topic_hint).strip().lower()
+            if not topic_hint:
+                return True
+            if topic_hint in {"support", "to support", "help", "to help", "please"}:
+                return True
+            if re.fullmatch(r"(videos?|images?|pictures?|photos?)(\s+and\s+(videos?|images?|pictures?|photos?))*", t.strip().lower()):
+                return True
         # Very short and mentions media words => likely generic
         if len(t) < 10 and has_media_word:
             return True
@@ -2709,6 +2744,17 @@ async def generate_cloud_structured(
         user_flags["auto_images"] = False
         need_yt = True
 
+    # Who-is prompts: auto-enable images (even if user didn't explicitly say "images").
+    if is_who_is_question(message):
+        user_flags["auto_images"] = True
+        need_img = True
+        subj = extract_who_is_subject(message)
+        if subj:
+            if not web_q:
+                web_q = subj
+            if not img_q:
+                img_q = f"{subj} portrait"[:120]
+
     # ✅ Smart web decision: explicit intent OR factual/time-sensitive OR model uncertainty
     need_web, need_web_reason = infer_need_web_sources(
         message=message,
@@ -2717,6 +2763,61 @@ async def generate_cloud_structured(
         model_need_web=model_need_web,
         elapsed_sec=(time.perf_counter() - t_start),
     )
+
+    # Smart budget: degrade gracefully near time budget.
+    # - Always attempt web sources + a web-evidence second pass (for freshness/citations).
+    # - When time is tight, drop optional media, fetch fewer sources with shorter timeouts,
+    #   and cap second-pass generation tokens.
+    elapsed_now = (time.perf_counter() - t_start)
+    remaining_now = _TOTAL_BUDGET_SEC - float(elapsed_now)
+    budget_state = "ok"
+    google_num = 7
+    tavily_num = 6
+    google_timeout = 3.5
+    tavily_timeout = 4.5
+
+    if remaining_now < _BUDGET_MEDIA_MIN_REMAIN_SEC:
+        # Media is most expensive after web; drop it first.
+        if not (user_flags.get("want_images") or FORCE_IMAGES):
+            need_img = False
+        if not (user_flags.get("want_youtube") or user_flags.get("auto_youtube") or FORCE_YOUTUBE):
+            need_yt = False
+        budget_state = "degraded_media"
+
+    if remaining_now < _BUDGET_WEB_SECOND_PASS_MIN_REMAIN_SEC:
+        google_num = 5
+        tavily_num = 4
+        google_timeout = 2.6
+        tavily_timeout = 3.6
+        if budget_state == "ok":
+            budget_state = "degraded_second_pass"
+
+    if remaining_now < _BUDGET_WEB_MIN_REMAIN_SEC:
+        budget_state = "budget_exhausted"
+        google_num = 3
+        tavily_num = 0
+        google_timeout = 1.8
+        tavily_timeout = 0.0
+
+    if budget_state != "ok":
+        try:
+            print(
+                "BUDGET STATE:",
+                {
+                    "elapsed_sec": round(elapsed_now, 2),
+                    "remaining_sec": round(remaining_now, 2),
+                    "state": budget_state,
+                    "google_num": google_num,
+                    "tavily_num": tavily_num,
+                    "google_timeout": google_timeout,
+                    "tavily_timeout": tavily_timeout,
+                    "need_img": need_img,
+                    "need_yt": need_yt,
+                },
+                flush=True,
+            )
+        except Exception:
+            pass
 
     # Fetch web sources only when the smart decision says we need them
     sources: List[SourceItem] = []
@@ -2735,18 +2836,30 @@ async def generate_cloud_structured(
         if _MORE_DETAIL_FOLLOWUP_RE.search(message or ""):
             base_for_web = f"{base_for_web} additional details new information not already mentioned"[:180]
         web_q = enforce_web_query_constraints(message, base_for_web)
-        g_task = asyncio.create_task(google_web_search(web_q, num=7))
-        t_task = asyncio.create_task(internet_rag_search_and_extract(web_q, max_sources=6))
-        g_res, (tav_sources, tav_chunks) = await asyncio.gather(g_task, t_task)
-        sources = g_res or []
-        evidence_chunks = tav_chunks
-        if tav_sources:
-            seen = {s.url.lower(): s for s in sources if s.url}
-            for s in tav_sources:
-                key = (s.url or "").lower()
-                if key and key not in seen:
-                    sources.append(s)
-                    seen[key] = s
+
+        # Fast, budget-aware web fetch.
+        try:
+            g_task = asyncio.create_task(fast_google_web_search(web_q, num=google_num, timeout_sec=google_timeout))
+            if tavily_num > 0 and TAVILY_API_KEY:
+                t_task = asyncio.create_task(fast_tavily(web_q, max_sources=tavily_num, timeout_sec=tavily_timeout))
+                g_res, (tav_sources, tav_chunks) = await asyncio.gather(g_task, t_task)
+            else:
+                g_res = await g_task
+                tav_sources, tav_chunks = ([], [])
+            sources = g_res or []
+            evidence_chunks = tav_chunks
+            if tav_sources:
+                seen = {s.url.lower(): s for s in sources if s.url}
+                for s in tav_sources:
+                    key = (s.url or "").lower()
+                    if key and key not in seen:
+                        sources.append(s)
+                        seen[key] = s
+        except Exception as e:
+            try:
+                print("WEB FETCH FAILED (fail-soft)", {"error": str(e), "web_q": web_q[:120]}, flush=True)
+            except Exception:
+                pass
 
         if not sources:
             need_web = False
@@ -2773,7 +2886,7 @@ async def generate_cloud_structured(
     # After the first turn in a session, only show images/YouTube
     # if the user explicitly asks for them (or FORCE_* is enabled).
     if not is_first_turn:
-        if not user_flags.get("want_images") and not FORCE_IMAGES:
+        if not (user_flags.get("want_images") or user_flags.get("auto_images")) and not FORCE_IMAGES:
             need_img = False
         if not (user_flags.get("want_youtube") or user_flags.get("auto_youtube")) and not FORCE_YOUTUBE:
             need_yt = False
@@ -2795,6 +2908,21 @@ async def generate_cloud_structured(
         has_more = bool(re.search(r"\bmore\b", t, re.I))
         if has_media_word and (has_pronoun_ref or has_more):
             return True
+        if has_media_word:
+            topic_hint = re.sub(
+                r"\b(show me|give me|find|search|look for|video|videos|youtube|yt|image|images|picture|pictures|photo|photos)\b",
+                "",
+                t,
+                flags=re.I,
+            )
+            topic_hint = re.sub(r"\b(and|or)\b", " ", topic_hint, flags=re.I)
+            topic_hint = re.sub(r"\s+", " ", topic_hint).strip().lower()
+            if not topic_hint:
+                return True
+            if topic_hint in {"support", "to support", "help", "to help", "please"}:
+                return True
+            if re.fullmatch(r"(videos?|images?|pictures?|photos?)(\s+and\s+(videos?|images?|pictures?|photos?))*", t.strip().lower()):
+                return True
         # Very short and mentions media words => likely generic
         if len(t) < 10 and has_media_word:
             return True
@@ -2816,7 +2944,7 @@ async def generate_cloud_structured(
     if need_img and not img_q:
         img_q = f"{base_topic} photos"[:120]
     if need_yt and not yt_q:
-        yt_q = f"{base_topic} highlights"[:120]
+        yt_q = f"{base_topic} explained"[:120]
 
     # Inline refinement for generic media follow-ups using current answer/title context
     if need_img or need_yt:
@@ -2838,9 +2966,15 @@ async def generate_cloud_structured(
             topic_title = (sanity_q_used or base_topic or context_query_base or message)
 
         if need_img and _is_generic(img_q):
-            img_q = f"{topic_title} poster stills promotional photos cast".strip()[:120]
+            if re.search(r"\b(movie|film|series|episode|season|anime|trailer|cast|actor|actress|tv show)\b", str(topic_title or ""), re.I):
+                img_q = f"{topic_title} poster stills promotional photos cast".strip()[:120]
+            else:
+                img_q = f"{topic_title} diagram illustration cross section".strip()[:120]
         if need_yt and _is_generic(yt_q):
-            yt_q = f"{topic_title} official trailer clips".strip()[:120]
+            if re.search(r"\b(movie|film|series|episode|season|anime|trailer|cast|actor|actress|tv show)\b", str(topic_title or ""), re.I):
+                yt_q = f"{topic_title} official trailer clips".strip()[:120]
+            else:
+                yt_q = f"{topic_title} explained documentary lecture".strip()[:120]
 
     print(
         "ROUTED FLAGS:",
@@ -2879,6 +3013,7 @@ async def generate_cloud_structured(
             pass
 
     # 3) Web evidence + second pass answer (only if need_web)
+    # Always attempt this pass for freshness/citations; cap compute when near budget.
     if need_web and web_q:
         web_evidence_block = build_web_evidence_block(sources, evidence_chunks)
 
@@ -2899,9 +3034,21 @@ async def generate_cloud_structured(
                 )
                 raw2 = await call_runpod_job_prompt(
                     prompt2,
-                    max_tokens=int(tuned.get("max_tokens") or 0) or None,
-                    temperature=float(tuned.get("temperature")) if tuned.get("temperature") is not None else None,
-                    top_p=float(tuned.get("top_p")) if tuned.get("top_p") is not None else None,
+                    max_tokens=(
+                        min(int(tuned.get("max_tokens") or 0) or 900, 450)
+                        if (budget_state in {"degraded_second_pass", "budget_exhausted"} if 'budget_state' in locals() else False)
+                        else (int(tuned.get("max_tokens") or 0) or None)
+                    ),
+                    temperature=(
+                        0.35
+                        if (budget_state in {"degraded_second_pass", "budget_exhausted"} if 'budget_state' in locals() else False)
+                        else (float(tuned.get("temperature")) if tuned.get("temperature") is not None else None)
+                    ),
+                    top_p=(
+                        0.9
+                        if (budget_state in {"degraded_second_pass", "budget_exhausted"} if 'budget_state' in locals() else False)
+                        else (float(tuned.get("top_p")) if tuned.get("top_p") is not None else None)
+                    ),
                     domain=domain,
                 )
             else:
@@ -2962,6 +3109,26 @@ async def generate_cloud_structured(
             img_q = make_fallback_query(message, max_len=120)
         if need_yt and not yt_q:
             yt_q = make_fallback_query(message, max_len=120)
+
+        # Debug: show the final routed flags/queries after the second pass adjustments.
+        try:
+            print(
+                "SECOND PASS ROUTED FLAGS:",
+                {
+                    "need_web": need_web,
+                    "need_web_reason": need_web_reason,
+                    "web_q": web_q,
+                    "need_img": need_img,
+                    "img_q": img_q,
+                    "need_yt": need_yt,
+                    "yt_q": yt_q,
+                    "answer_len": len(answer_md),
+                    "plan2_has": sorted(list((plan2 or {}).keys()))[:12],
+                },
+                flush=True,
+            )
+        except Exception:
+            pass
 
     # 4) Images
     if need_img and img_q:
