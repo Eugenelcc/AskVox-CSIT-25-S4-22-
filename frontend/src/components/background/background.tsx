@@ -25,18 +25,10 @@ const AskVoxStarBackground: React.FC = () => {
   return (
     <>
       <style>{`
-        * { margin: 0; padding: 0; box-sizing: border-box; }
-        body {
-          background: #000;
-          overflow: hidden;
-          font-family: system-ui, sans-serif;
-          height: 100vh;
-          color: #fff;
-        }
-
         .bg {
           position: fixed;
           inset: 0;
+          background: #000;
           overflow: hidden;
           pointer-events: none; /* ensure background never blocks clicks */
           z-index: 0;
@@ -102,18 +94,6 @@ const AskVoxStarBackground: React.FC = () => {
         .shoot1 { top: 20%; left: -10%; animation-delay: 0s; }
         .shoot2 { top: 45%; left: -15%; animation-delay: 8s; }
         .shoot3 { top: 70%; left: -20%; animation-delay: 16s; }
-
-        .content {
-          position: relative;
-          z-index: 10;
-          height: 100vh;
-          display: flex;
-          flex-direction: column;
-          justify-content: center;
-          align-items: center;
-          text-align: center;
-          pointer-events: none;
-        }
       `}</style>
 
       <div className="bg">

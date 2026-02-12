@@ -105,6 +105,13 @@
   gap: 24px;
 }
 
+.discover-right-panel {
+  position: sticky;
+  top: 24px;
+  align-self: start;
+  height: fit-content;
+}
+
 /* Stack multiple feed sections with spacing */
 .discover-left {
   display: flex;
@@ -268,6 +275,13 @@
 }
 
 .sports-card {
+  background: rgba(31,30,30,0.63);
+  border-radius: 31px;
+  padding: 16px;
+  color: #FFFFFF;
+}
+
+.standings-card {
   background: rgba(31,30,30,0.63);
   border-radius: 31px;
   padding: 16px;
@@ -462,4 +476,5 @@
 @media (max-width: 1200px) {
   .discover-layout { grid-template-columns: 1fr; }
   .right-panel { order: 2; }
+  .discover-right-panel { position: static; top: auto; }
 }

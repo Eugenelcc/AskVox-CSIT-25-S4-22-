@@ -9,6 +9,7 @@ interface ChatBarProps {
   onMicClick?: () => void;
   onQuizClick?: () => void;
   disabled?: boolean;
+  micEnabled?: boolean;
   wakeWord?: string;
 }
 
@@ -20,6 +21,7 @@ const ChatBar: FC<ChatBarProps> = ({
   onMicClick,
   onQuizClick,
   disabled,
+  micEnabled = true,
   wakeWord,
 }) => {
   const [value, setValue] = useState("");
@@ -76,6 +78,13 @@ const ChatBar: FC<ChatBarProps> = ({
   useEffect(() => {
     autoResize();
   }, [value]);
+
+  useEffect(() => {
+    if (!micEnabled && isRecording) {
+      stopRecording();
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [micEnabled]);
 
   //  start/stop recording 
   const startRecording = async () => {
@@ -156,7 +165,7 @@ const ChatBar: FC<ChatBarProps> = ({
   };
 
   const handleMicClickInternal = () => {
-    if (disabled) return;
+    if (disabled || !micEnabled) return;
 
     
     onMicClick?.();
@@ -201,8 +210,8 @@ const ChatBar: FC<ChatBarProps> = ({
               isMicActive ? "av-mic-pulsing" : ""
             }`}
             onClick={handleMicClickInternal}
-            disabled={disabled}
-            aria-label={isMicActive ? "Stop voice input" : "Voice input"}
+            disabled={disabled || !micEnabled}
+            aria-label={!micEnabled ? "Microphone disabled" : (isMicActive ? "Stop voice input" : "Voice input")}
           >
             <Mic className="av-icon" />
           </button>

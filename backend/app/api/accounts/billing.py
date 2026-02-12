@@ -312,7 +312,43 @@ async def checkout(
             if s_resp.status_code not in (200, 201):
                 raise HTTPException(status_code=s_resp.status_code, detail=s_resp.text)
 
-            # 4) If education plan, set profile role to 'educational'
+            # 4) Update profile role (best-effort)
+            sub_type = (payload.subscription_type or "paid").lower()
+            if sub_type in ("education", "paid"):
+                # Do not clobber platform_admin
+                try:
+                    get_prof = await client.get(
+                        f"{base}/rest/v1/profiles",
+                        headers={
+                            "Authorization": f"Bearer {service_key}",
+                            "apikey": service_key,
+                            "Accept": "application/json",
+                        },
+                        params={"id": f"eq.{uid}", "select": "role", "limit": 1},
+                    )
+                    cur_role = ""
+                    if get_prof.status_code in (200, 206):
+                        rows = get_prof.json() or []
+                        cur_role = ((rows[0].get("role") if rows else None) or "").strip().lower()
+                    if cur_role != "platform_admin":
+                        next_role = "educational" if sub_type == "education" else "paid_user"
+                        upd = await client.patch(
+                            f"{base}/rest/v1/profiles?id=eq.{uid}",
+                            headers={
+                                "Authorization": f"Bearer {service_key}",
+                                "apikey": service_key,
+                                "Content-Type": "application/json",
+                                "Prefer": "return=representation",
+                            },
+                            json={"role": next_role},
+                        )
+                        if upd.status_code not in (200, 204):
+                            return {"ok": True, "role_update_error": upd.text}
+                except Exception:
+                    # Don't fail checkout on role update
+                    pass
+
+            # Back-compat: keep older behavior for education plan
             if (payload.subscription_type or "").lower() == "education":
                 upd = await client.patch(
                     f"{base}/rest/v1/profiles?id=eq.{uid}",
@@ -645,7 +681,7 @@ async def delete_subscription(
             )
             if dresp.status_code not in (200, 204):
                 raise HTTPException(status_code=dresp.status_code, detail=dresp.text)
-            # Reset profile role back to 'user' if currently 'educational'
+            # Reset profile role back to 'user' if currently 'educational' or 'paid_user'
             get_profile = await client.get(
                 f"{base}/rest/v1/profiles",
                 headers={
@@ -663,7 +699,8 @@ async def delete_subscription(
             if get_profile.status_code in (200, 206):
                 rows = get_profile.json() or []
                 cur_role = (rows[0].get("role") if rows else None) or ""
-                if isinstance(cur_role, str) and cur_role.strip().lower() == "educational":
+                cur_role_norm = cur_role.strip().lower() if isinstance(cur_role, str) else ""
+                if cur_role_norm != "platform_admin" and cur_role_norm in ("educational", "paid_user", "paid"):
                     upd = await client.patch(
                         f"{base}/rest/v1/profiles",
                         headers={

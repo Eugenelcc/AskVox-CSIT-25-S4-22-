@@ -36,6 +36,7 @@ export interface UserProfile {
   username: string | null;
   avatar_url: string | null;
   wake_word?: string | null;
+  role?: string | null;
 }
 
 

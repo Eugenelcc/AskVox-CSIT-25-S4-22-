@@ -67,6 +67,9 @@ ninja==1.13.0
 numba==0.63.1
 numpy==2.3.5
 openai-whisper==20231117
+
+# Wake word engine (offline keyword spotting)
+vosk==0.3.45
 packaging==25.0
 passlib==1.7.4
 pathspec==0.12.1

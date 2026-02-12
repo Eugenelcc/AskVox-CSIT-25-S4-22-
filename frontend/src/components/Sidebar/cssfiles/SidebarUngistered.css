@@ -58,6 +58,24 @@
       opacity 160ms ease,
       visibility 0ms;
   }
+
+  /* -------------------- 📱 Mobile: full-screen sidebar -------------------- */
+  @media (max-width: 768px) {
+    .av-sidebar {
+      top: 0;
+      left: 0;
+      width: 100vw;
+      height: 100dvh;
+      border-radius: 0;
+      padding: 14px;
+
+      transform: translateX(-100%);
+    }
+
+    .av-sidebar.is-open {
+      transform: translateX(0);
+    }
+  }
   
   /* ---------- HEADER ---------- */
   .av-sidebar__header {

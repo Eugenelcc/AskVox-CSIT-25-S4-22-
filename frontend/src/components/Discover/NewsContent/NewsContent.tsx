@@ -164,9 +164,11 @@ const NewsContent: React.FC<NewsContentProps> = ({ sidebarOpen, onAskQuestion })
     }, [article.title, article.all_sources]); // Trigger on title or sources change
 
     const sourcesForDisplay = useMemo(() => {
+        // Prefer the validated sources actually used during synthesis (returned by /news/synthesize).
+        if (citationSources && citationSources.length > 0) return citationSources;
         if (listSources && listSources.length > 0) return listSources;
-        return citationSources;
-    }, [listSources, citationSources]);
+        return [];
+    }, [citationSources, listSources]);
 
   // --- 🟢 ADVANCED PARSER FUNCTION ---
   const renderStyledContent = (text: string) => {

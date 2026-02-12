@@ -1,4 +1,4 @@
-import { useState, useEffect, useMemo, useRef } from "react";
+import { useState, useEffect, useMemo, useRef, useCallback } from "react";
 import { useLocation, useNavigate } from "react-router-dom";
 import { supabase } from "../supabaseClient";
 import type { Session } from "@supabase/supabase-js";
@@ -27,6 +27,9 @@ import NewsContent from "../components/Discover/NewsContent/NewsContent";
 // Types
 import type { ChatMessage, DatabaseMessage, UserProfile } from "../types/database"; 
 import AccountDetails from './settings/AccountDetails';
+import { AccountEmailCard } from "./settings/AccountEmailPage";
+import { AccountPasswordCard } from "./settings/AccountPasswordPage";
+import { AccountAvatarCard } from "./settings/AccountAvatarPage";
 import DeleteAccount from './settings/DeleteAccount';
 import PaymentBilling from './settings/PaymentBilling';
 import WakeWord from './settings/WakeWord';
@@ -68,10 +71,14 @@ export default function Dashboard({
   session,
   paid,
   initialTab,
+  micEnabled,
+  setMicEnabled,
 }: {
   session: Session;
   paid?: boolean;
   initialTab?: string;
+  micEnabled: boolean;
+  setMicEnabled: (next: boolean | ((prev: boolean) => boolean)) => void;
 }) {
   const navigate = useNavigate();
   const location = useLocation();
@@ -86,6 +93,8 @@ export default function Dashboard({
   const [isRecording, setIsRecording] = useState(false);
   const [isTranscribing, setIsTranscribing] = useState(false);
   const [isTtsPlaying, setIsTtsPlaying] = useState(false);
+  const [voiceUserCaption, setVoiceUserCaption] = useState("");
+  const [voiceAssistantCaption, setVoiceAssistantCaption] = useState("");
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
   const audioChunksRef = useRef<BlobPart[]>([]);
   const audioPlayRef = useRef<HTMLAudioElement | null>(null);
@@ -99,7 +108,13 @@ export default function Dashboard({
   const voiceSessionIdRef = useRef<string | null>(null);
   
   // Sidebar & Navigation State
-  const [sessions, setSessions] = useState<{id: string, title: string, article_context?: ArticleContext | null}[]>([]); // all chats the user has created, shown in the sidebar
+  const [sessions, setSessions] = useState<{
+    id: string;
+    title: string;
+    article_context?: ArticleContext | null;
+    color?: string;
+    emoji?: string;
+  }[]>([]); // all chats the user has created, shown in the sidebar
   const [activeSessionId, setActiveSessionId] = useState<string | null>(null); // currently selected chat session
   const [activeTab, setActiveTab] = useState<string>(
     initialTab ?? (location.pathname === "/discover" ? "discover" : (location.pathname === "/newchat" ? "newchat" : "newchat"))
@@ -111,7 +126,9 @@ export default function Dashboard({
   const [folders, setFolders] = useState<{
     id: string;   
     name: string;
-    items: { id: string; title: string }[];
+    color?: string;
+    emoji?: string;
+    items: { id: string; title: string; color?: string; emoji?: string }[];
   }[]>([]);
   // Folder modal state
   const [isFolderModalOpen, setFolderModalOpen] = useState(false);
@@ -125,6 +142,96 @@ export default function Dashboard({
     () => new Set(folders.flatMap(f => f.items.map(i => i.id))),
     [folders]
   );
+
+  type CustomizeStyle = { color?: string; emoji?: string };
+  type CustomizeStore = {
+    folders: Record<string, CustomizeStyle>;
+    chats: Record<string, CustomizeStyle>;
+  };
+
+  const customizeStoreKey = useMemo(
+    () => `askvox:customize:v1:${session.user.id}`,
+    [session.user.id]
+  );
+
+  const readCustomizeStore = useCallback((): CustomizeStore => {
+    try {
+      const raw = localStorage.getItem(customizeStoreKey);
+      if (!raw) return { folders: {}, chats: {} };
+      const parsed: unknown = JSON.parse(raw);
+      const p = parsed as { folders?: unknown; chats?: unknown };
+      return {
+        folders: (p?.folders && typeof p.folders === "object") ? (p.folders as Record<string, CustomizeStyle>) : {},
+        chats: (p?.chats && typeof p.chats === "object") ? (p.chats as Record<string, CustomizeStyle>) : {},
+      };
+    } catch {
+      return { folders: {}, chats: {} };
+    }
+  }, [customizeStoreKey]);
+
+  const writeCustomizeStore = useCallback((next: CustomizeStore) => {
+    try {
+      localStorage.setItem(customizeStoreKey, JSON.stringify(next));
+    } catch {
+      // ignore
+    }
+  }, [customizeStoreKey]);
+
+  const upsertFolderStyleLocal = useCallback((folderId: string, style: CustomizeStyle) => {
+    const store = readCustomizeStore();
+    store.folders[folderId] = {
+      color: style.color,
+      emoji: style.emoji,
+    };
+    writeCustomizeStore(store);
+  }, [readCustomizeStore, writeCustomizeStore]);
+
+  const upsertChatStyleLocal = useCallback((chatId: string, style: CustomizeStyle) => {
+    const store = readCustomizeStore();
+    store.chats[chatId] = {
+      color: style.color,
+      emoji: style.emoji,
+    };
+    writeCustomizeStore(store);
+  }, [readCustomizeStore, writeCustomizeStore]);
+
+  const mergeStyle = useCallback(
+    (dbStyle: CustomizeStyle | undefined, localStyle: CustomizeStyle | undefined): CustomizeStyle => {
+      return {
+        color: dbStyle?.color ?? localStyle?.color,
+        emoji: dbStyle?.emoji ?? localStyle?.emoji,
+      };
+    },
+    []
+  );
+
+  type DbSessionRow = Record<string, unknown> & {
+    id: string;
+    title: string;
+    color?: string | null;
+    emoji?: string | null;
+  };
+
+  const applyChatStylesToRows = useCallback((rows: DbSessionRow[]) => {
+    const store = readCustomizeStore();
+    return (rows ?? []).map((s) => {
+      const dbStyle = { color: s?.color ?? undefined, emoji: s?.emoji ?? undefined };
+      const localStyle = store.chats?.[s.id];
+      const merged = mergeStyle(dbStyle, localStyle);
+      return {
+        ...s,
+        color: merged.color,
+        emoji: merged.emoji,
+      };
+    });
+  }, [readCustomizeStore, mergeStyle]);
+
+  const isMissingColumnError = (err: unknown) => {
+    const e = err as { code?: unknown; message?: unknown };
+    const code = typeof e?.code === "string" ? e.code : undefined;
+    const msg = typeof e?.message === "string" ? e.message : "";
+    return code === "42703" || (msg.toLowerCase().includes("column") && msg.toLowerCase().includes("does not exist"));
+  };
 
   // Chats not in folders
   const standaloneSessions = useMemo(
@@ -143,15 +250,27 @@ export default function Dashboard({
   // --- Data Fetching ---
   useEffect(() => {
     if (!session?.user?.id) return;
-    
+
+    const loadProfile = async () => {
+      const { data } = await supabase
+        .from('profiles')
+        .select('*')
+        .eq('id', session.user.id)
+        .single();
+      if (data) {
+        console.log("✅ Profile Loaded:", (data as any).username); // Debug Log
+        setProfile(data);
+      }
+    };
+
     // Fetch Profile
-    supabase.from('profiles').select('*').eq('id', session.user.id).single()
-      .then(({ data }) => {
-        if (data) {
-          console.log("✅ Profile Loaded:", data.username); // Debug Log
-          setProfile(data);
-        }
-      });
+    void loadProfile();
+
+    const onProfileUpdated = () => {
+      void loadProfile();
+    };
+
+    window.addEventListener("askvox:profile-updated", onProfileUpdated);
       
     // Fetch Sessions (most recent activity first). If 'updated_at' isn't available,
     // fall back to created_at to avoid breaking the list.
@@ -168,12 +287,19 @@ export default function Dashboard({
             .select('*,display_name')
             .eq('user_id', session.user.id)
             .order('created_at', { ascending: false })
-            .then(({ data: d2 }) => d2 && setSessions(d2));
+            .then(({ data: d2 }) => {
+              if (!d2) return;
+              setSessions(applyChatStylesToRows(d2 as DbSessionRow[]));
+            });
           return;
         }
-        data && setSessions(data);
+        if (!data) return;
+        setSessions(applyChatStylesToRows(data as DbSessionRow[]));
       });
-  }, [session.user.id]);
+    return () => {
+      window.removeEventListener("askvox:profile-updated", onProfileUpdated);
+    };
+  }, [session.user.id, applyChatStylesToRows]);
 
   useEffect(() => {
     if (!activeSessionId || isNewChat) return; 
@@ -194,44 +320,173 @@ export default function Dashboard({
     fetchMessages();
   }, [activeSessionId, isNewChat, session?.user?.id]);
 
-  const loadFolders = async () => {
+  type DbFolderRow = {
+    id: string;
+    name: string;
+    color?: string | null;
+    emoji?: string | null;
+    chat_session_folders?: Array<{
+      chat_sessions: {
+        id: string;
+        title: string;
+        color?: string | null;
+        emoji?: string | null;
+      };
+    }>;
+  };
+
+  const loadFolders = useCallback(async () => {
     if (!session?.user?.id) return;
 
-    const { data, error } = await supabase
-      .from("chat_folders")
-      .select(`
-        id,
-        name,
-        chat_session_folders (
-          chat_sessions (
-            id,
-            title
-          )
+    const store = readCustomizeStore();
+
+    const selectWithStyle = `
+      id,
+      name,
+      color,
+      emoji,
+      chat_session_folders (
+        chat_sessions (
+          id,
+          title,
+          color,
+          emoji
         )
-      `)
+      )
+    `;
+
+    const selectWithoutStyle = `
+      id,
+      name,
+      chat_session_folders (
+        chat_sessions (
+          id,
+          title
+        )
+      )
+    `;
+
+    let data: DbFolderRow[] | null = null;
+    let error: unknown = null;
+
+    const first = await supabase
+      .from("chat_folders")
+      .select(selectWithStyle)
       .eq("user_id", session.user.id);
+    data = first.data as DbFolderRow[] | null;
+    error = first.error ?? null;
+
+    if (error && isMissingColumnError(error)) {
+      const second = await supabase
+        .from("chat_folders")
+        .select(selectWithoutStyle)
+        .eq("user_id", session.user.id);
+      data = second.data as DbFolderRow[] | null;
+      error = second.error ?? null;
+    }
 
     if (error) {
       console.error("Failed to load folders", error);
       return;
     }
 
-    const formatted = data.map((f: any) => ({
-      id: f.id,
-      name: f.name,
-      items: f.chat_session_folders.map((link: any) => ({
-        id: link.chat_sessions.id,
-        title: link.chat_sessions.title,
-      })),
-    }));
+    const formatted = (data ?? []).map((f) => {
+      const dbFolderStyle = { color: f?.color ?? undefined, emoji: f?.emoji ?? undefined };
+      const localFolderStyle = store.folders?.[f.id];
+      const mergedFolderStyle = mergeStyle(dbFolderStyle, localFolderStyle);
+      return {
+        id: f.id,
+        name: f.name,
+        color: mergedFolderStyle.color,
+        emoji: mergedFolderStyle.emoji,
+        items: (f.chat_session_folders ?? []).map((link) => {
+          const sess = link.chat_sessions;
+          const dbChatStyle = { color: sess?.color ?? undefined, emoji: sess?.emoji ?? undefined };
+          const localChatStyle = store.chats?.[sess?.id];
+          const mergedChatStyle = mergeStyle(dbChatStyle, localChatStyle);
+          return {
+            id: sess.id,
+            title: sess.title,
+            color: mergedChatStyle.color,
+            emoji: mergedChatStyle.emoji,
+          };
+        }),
+      };
+    });
 
-  setFolders(formatted);
-};
+    setFolders(formatted);
+  }, [readCustomizeStore, session.user.id, mergeStyle]);
 
 
   useEffect(() => {
     loadFolders();
-  }, [session.user.id]);
+  }, [loadFolders]);
+
+  const handleSaveFolderStyle = async (
+    folderId: string,
+    style: { color?: string; emoji?: string }
+  ) => {
+    if (!session?.user?.id) return;
+    const { error } = await supabase
+      .from("chat_folders")
+      .update({
+        color: style.color ?? null,
+        emoji: style.emoji ?? null,
+      })
+      .eq("id", folderId)
+      .eq("user_id", session.user.id);
+
+    if (error) {
+      console.error("Failed to save folder style", error);
+      // Fallback: persist locally (still survives refresh)
+      if (isMissingColumnError(error) || String(error?.message ?? "").toLowerCase().includes("security")) {
+        upsertFolderStyleLocal(folderId, style);
+      } else {
+        return;
+      }
+    }
+
+    upsertFolderStyleLocal(folderId, style);
+    const normalized = { color: style.color ?? undefined, emoji: style.emoji ?? undefined };
+    setFolders((prev) => prev.map((f) => (f.id === folderId ? { ...f, ...normalized } : f)));
+  };
+
+  const handleSaveChatStyle = async (
+    chatId: string,
+    style: { color?: string; emoji?: string }
+  ) => {
+    if (!session?.user?.id) return;
+
+    const { error } = await supabase
+      .from("chat_sessions")
+      .update({
+        color: style.color ?? null,
+        emoji: style.emoji ?? null,
+      })
+      .eq("id", chatId)
+      .eq("user_id", session.user.id);
+
+    if (error) {
+      console.error("Failed to save chat style", error);
+      // Fallback: persist locally (still survives refresh)
+      if (isMissingColumnError(error) || String(error?.message ?? "").toLowerCase().includes("security")) {
+        upsertChatStyleLocal(chatId, style);
+      } else {
+        return;
+      }
+    }
+
+    upsertChatStyleLocal(chatId, style);
+
+    const normalized = { color: style.color ?? undefined, emoji: style.emoji ?? undefined };
+    setSessions((prev) => prev.map((s) => (s.id === chatId ? { ...s, ...normalized } : s)));
+    setFolders((prev) =>
+      prev.map((f) => ({
+        ...f,
+        items: f.items.map((it) => (it.id === chatId ? { ...it, ...normalized } : it)),
+      }))
+    );
+  };
 
 
 
@@ -305,6 +560,11 @@ export default function Dashboard({
 
     // Leaving the discover route: return to the appropriate home route
     if (location.pathname === "/discover") {
+      navigate(paid ? "/paiduserhome" : "/reguserhome");
+    }
+
+    // Leaving settings deep-links: return to the appropriate home route
+    if (location.pathname.startsWith("/settings") && tab !== "settings") {
       navigate(paid ? "/paiduserhome" : "/reguserhome");
     }
 
@@ -387,7 +647,7 @@ export default function Dashboard({
       .eq("user_id", session.user.id)
       .order("created_at", { ascending: false });
 
-    if (allSessions) setSessions(allSessions);
+    if (allSessions) setSessions(applyChatStylesToRows(allSessions as DbSessionRow[]));
   };
 
    const handleRenameChat = async (chatId: string) => {
@@ -413,7 +673,7 @@ export default function Dashboard({
     .eq("user_id", session.user.id)
     .order("updated_at", { ascending: false });
 
-  if (allSessions) setSessions(allSessions);
+  if (allSessions) setSessions(applyChatStylesToRows(allSessions as DbSessionRow[]));
 };
 
   const handleDeleteChat = async (chatId: string) => {
@@ -448,7 +708,7 @@ export default function Dashboard({
   };
 
   // Reload messages from Supabase for the given session
-  const refreshActiveSessionMessages = async (sessionId?: string | null) => {
+  const refreshActiveSessionMessages = useCallback(async (sessionId?: string | null) => {
     try {
       const sid = sessionId ?? activeSessionId;
       if (!sid) return;
@@ -473,7 +733,7 @@ export default function Dashboard({
       console.warn("Failed to refresh chat messages after voice mode", e);
     }
     return null;
-  };
+  }, [activeSessionId, session.user.id]);
 
   // SmartRec: poll until assistant reply arrives (backend inserts it asynchronously)
   useEffect(() => {
@@ -510,7 +770,7 @@ export default function Dashboard({
       cancelled = true;
       if (handle) window.clearTimeout(handle);
     };
-  }, [isSmartRecPending, activeSessionId, isNewChat]);
+  }, [isSmartRecPending, activeSessionId, isNewChat, refreshActiveSessionMessages]);
 
   // Keep component state in sync with /newchat and /chats/:sessionId
   useEffect(() => {
@@ -523,7 +783,7 @@ export default function Dashboard({
       setMessages([]);
       return;
     }
-    const match = path.match(/^\/chats\/([a-f0-9\-]+)$/i);
+    const match = path.match(/^\/chats\/([a-f0-9-]+)$/i);
     if (match) {
       const sid = match[1];
       setIsNewChat(false);
@@ -532,6 +792,22 @@ export default function Dashboard({
       setSidebarOpen(true);
       void refreshActiveSessionMessages(sid);
     }
+  }, [location.pathname, refreshActiveSessionMessages]);
+
+  // Deep-link support for settings routes while keeping NavRail/sidebars visible.
+  useEffect(() => {
+    const path = location.pathname;
+    const isAccountSettingsRoute =
+      path === "/settings/account" ||
+      path === "/settings/account/email" ||
+      path === "/settings/account/password" ||
+      path === "/settings/account/avatar";
+
+    if (!isAccountSettingsRoute) return;
+
+    setActiveTab("settings");
+    setSidebarOpen(true);
+    setActiveSettingsKey("account");
   }, [location.pathname]);
 
 
@@ -587,7 +863,7 @@ export default function Dashboard({
         .eq('user_id', session.user.id)
         .order('updated_at', { ascending: false });
 
-      if (allSessions) setSessions(allSessions);
+      if (allSessions) setSessions(applyChatStylesToRows(allSessions as DbSessionRow[]));
     }
 
     // 2. Prepare Name
@@ -699,7 +975,7 @@ export default function Dashboard({
         .eq('user_id', session.user.id)
         .order('updated_at', { ascending: false });
       if (allSessions && allSessions.length) {
-        setSessions(withPinnedTop(allSessions, currentSessionId));
+        setSessions(withPinnedTop(applyChatStylesToRows(allSessions as DbSessionRow[]), currentSessionId));
       } else if (currentSessionId) {
         promoteSessionToTop(currentSessionId);
       }
@@ -780,6 +1056,9 @@ export default function Dashboard({
         return null;
       }
       
+      setIsSending(false);
+      
+
       const streamId = `llama-${Date.now()}`;
       setMessages(prev => [...prev, { 
         id: streamId, 
@@ -789,8 +1068,6 @@ export default function Dashboard({
         displayName: "AskVox",
         meta,
       }]);
-
-      setIsSending(false);
 
     } catch (err) { 
        console.error("❌ Error sending message:", err);
@@ -815,9 +1092,6 @@ export default function Dashboard({
   ) => {
     setActiveTab("chats");
     setSidebarOpen(true);
-    if (location.pathname.startsWith("/discover")) {
-      navigate(paid ? "/paiduserhome" : "/reguserhome");
-    }
     setActiveSessionId(null);
     setIsNewChat(true);
 
@@ -859,6 +1133,14 @@ export default function Dashboard({
       slug: article.slug,
       path: article.path,
     });
+
+    // Ensure we actually open the newly created chat session (works consistently for paid and registered routes).
+    if (sessionId) {
+      navigate(`/chats/${sessionId}`);
+    } else if (location.pathname.startsWith("/discover")) {
+      // Fallback: return home if session creation failed.
+      navigate(paid ? "/paiduserhome" : "/reguserhome");
+    }
   };
 
   const showSidebar = isSidebarOpen && activeTab === 'chats';
@@ -904,6 +1186,10 @@ export default function Dashboard({
     try {
       const safeText = (ttsSanitizeRef.current?.(text)) ?? text;
       console.log("🔊 [TTS] requesting playback for:", safeText);
+      if (voiceModeRef.current) {
+        setVoiceUserCaption("");
+        setVoiceAssistantCaption(safeText);
+      }
       // Mark TTS active BEFORE stopping recorder to avoid re-arm race in onstop
       ttsActiveRef.current = true;
       setIsTtsPlaying(true);
@@ -1019,6 +1305,8 @@ export default function Dashboard({
 
         try {
           setIsTranscribing(true);
+          setVoiceUserCaption("");
+          setVoiceAssistantCaption("");
           const formData = new FormData();
           formData.append("file", audioBlob, "utterance.webm");
 
@@ -1028,6 +1316,7 @@ export default function Dashboard({
           const transcript: string = sttData.text ?? "";
           if (transcript) {
             console.log("🎙️  [VoiceMode STT] transcript:", transcript);
+            setVoiceUserCaption(transcript);
           }
 
           if (transcript) {
@@ -1070,7 +1359,7 @@ export default function Dashboard({
                     .eq('user_id', session.user.id)
                     .order('updated_at', { ascending: false });
                   if (allSessions && allSessions.length) {
-                    setSessions(withPinnedTop(allSessions, currentSessionId));
+                    setSessions(withPinnedTop(applyChatStylesToRows(allSessions as DbSessionRow[]), currentSessionId));
                   } else if (currentSessionId) {
                     promoteSessionToTop(currentSessionId);
                   }
@@ -1115,7 +1404,7 @@ export default function Dashboard({
                     .eq('user_id', session.user.id)
                     .order('updated_at', { ascending: false });
                   if (allSessions && allSessions.length) {
-                    setSessions(withPinnedTop(allSessions, currentSessionId));
+                    setSessions(withPinnedTop(applyChatStylesToRows(allSessions as DbSessionRow[]), currentSessionId));
                   } else {
                     promoteSessionToTop(currentSessionId);
                   }
@@ -1196,6 +1485,7 @@ export default function Dashboard({
             // Send to Sealion (server should route to SeaLion model), pass query linkage
             console.log("🌊 [VoiceMode] route=sealionchats payload=", transcript);
             const sealionRes = await fetch(`${API_BASE_URL}/geminichats/`, {
+              //`${API_BASE_URL}/geminichats/`
               method: "POST",
               headers: { "Content-Type": "application/json" },
               body: JSON.stringify({
@@ -1212,20 +1502,37 @@ export default function Dashboard({
             const sealionData = await sealionRes.json();
             const replyText = sealionData.answer || sealionData.response || sealionData.reply || "";
             if (replyText) {
-              // Append assistant reply to history to keep context growing
+              setVoiceUserCaption("");
+              setVoiceAssistantCaption("");
+              // Append assistant reply, then reveal with a typewriter effect.
               const botMsgId = globalThis.crypto?.randomUUID?.() ?? `vbot-${Date.now()}-${Math.random()}`;
               setMessages(prev => [
                 ...prev,
                 {
                   id: botMsgId,
                   senderId: LLAMA_ID,
-                  content: replyText,
+                  content: "",
                   createdAt: new Date().toISOString(),
                   displayName: "AskVox",
                 },
               ]);
-              // Fire TTS and let it handle re-arming on 'ended'
+
+              // Kick off TTS immediately (sets ttsActiveRef before first await).
               void speakWithGoogleTTS(replyText);
+
+              // Reveal text in the UI without blocking the voice loop.
+              void (async () => {
+                const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
+                const step = 4;
+                for (let i = 0; i <= replyText.length; i += step) {
+                  const partial = replyText.slice(0, i);
+                  setMessages(prev => prev.map(m => (m.id === botMsgId ? { ...m, content: partial } : m)));
+                  setVoiceAssistantCaption(partial);
+                  await sleep(12);
+                }
+                setMessages(prev => prev.map(m => (m.id === botMsgId ? { ...m, content: replyText } : m)));
+                setVoiceAssistantCaption(replyText);
+              })();
             } else {
               // No reply; resume listening so the loop continues
               if (voiceModeRef.current) { setTimeout(() => { if (voiceModeRef.current) void startVoiceRecording(); }, 250); }
@@ -1306,10 +1613,13 @@ export default function Dashboard({
   };
 
   const enterVoiceMode = () => {
+    if (!micEnabled) return;
     // Hide chat UI; show BlackHole only
     setIsVoiceMode(true);
     voiceModeRef.current = true;
     voiceSessionIdRef.current = null;
+    setVoiceUserCaption("");
+    setVoiceAssistantCaption("");
     // No chatbar, no messages list during voice mode
     setActiveSessionId(null);
     setIsNewChat(true);
@@ -1324,6 +1634,8 @@ export default function Dashboard({
     setIsVoiceMode(false);
     setIsNewChat(false);
     setIsTtsPlaying(false);
+    setVoiceUserCaption("");
+    setVoiceAssistantCaption("");
     try { (window as any).speechSynthesis?.cancel?.(); } catch {}
     // Stop recorder and playback when exiting
     try {
@@ -1349,16 +1661,34 @@ export default function Dashboard({
     // Promote the session back to the UI.
     if (sid) {
       setActiveSessionId(sid);
+      setActiveTab("chats");
+      setSidebarOpen(true);
+      // Critical: move off `/newchat` so the route-sync effect doesn't wipe state.
+      if (location.pathname !== `/chats/${sid}`) {
+        navigate(`/chats/${sid}`);
+      }
       window.setTimeout(() => { void refreshActiveSessionMessages(sid); }, 120);
     }
     // Clear the voice-mode session ref after we've captured sid.
     voiceSessionIdRef.current = null;
   };
 
+  useEffect(() => {
+    // Hard-stop any active mic flows when toggled off.
+    if (!micEnabled && voiceModeRef.current) {
+      exitVoiceMode();
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [micEnabled]);
+
   // Wake detection: when wake triggers, enter voice mode
   useWakeWordBackend({
-    enabled: !isVoiceMode,
+    enabled: micEnabled && !isVoiceMode,
     onWake: enterVoiceMode,
+    chunkDurationMs: 250,
+    silenceDurationMs: 900,
+    silenceThreshold: 0.0025,
+    maxSegmentMs: 5000,
   });
 
   const openCreateFolderModal = (chatId: string | null = null) => {
@@ -1536,9 +1866,8 @@ export default function Dashboard({
         onMoveOutOfFolder={handleMoveOutOfFolder}
         onDeleteChat={handleDeleteChat}
 
-           // ✅ add these so paid customise can save (you can implement later)
-        onSaveFolderStyle={(folderId, style) => console.log("save folder style", folderId, style)}
-        onSaveChatStyle={(chatId, style) => console.log("save chat style", chatId, style)}
+          onSaveFolderStyle={handleSaveFolderStyle}
+          onSaveChatStyle={handleSaveChatStyle}
 
       />
 
@@ -1566,10 +1895,10 @@ export default function Dashboard({
             onOpenSession={(sid, pendingReply) => {
               setActiveTab("chats");
               setSidebarOpen(true);
-              setActiveSessionId(sid);
-              setIsNewChat(false);
-              setMessages([]);
               setIsSmartRecPending(!!pendingReply);
+              // Use the canonical navigation + state updates used elsewhere
+              // so SmartRec works consistently for both registered and paid routes.
+              handleSelectSession(sid);
               window.setTimeout(() => {
                 void refreshActiveSessionMessages(sid);
               }, 80);
@@ -1589,13 +1918,33 @@ export default function Dashboard({
             flexDirection: 'column'
           }}>
         
-        {paid ? <PaidTopBar session={session} /> : <RegisteredTopBar session={session} />}
+        {paid ? (
+          <PaidTopBar
+            session={session}
+            micEnabled={micEnabled}
+            onToggleMic={() => setMicEnabled((v) => !v)}
+          />
+        ) : (
+          <RegisteredTopBar
+            session={session}
+            micEnabled={micEnabled}
+            onToggleMic={() => setMicEnabled((v) => !v)}
+          />
+        )}
 
         <main className="uv-main">
           {/* SETTINGS MODE */}
           {activeTab === "settings" ? (
             activeSettingsKey === "account" ? (
-              <AccountDetails session={session} />
+              location.pathname === "/settings/account/email" ? (
+                <AccountEmailCard session={session} />
+              ) : location.pathname === "/settings/account/password" ? (
+                <AccountPasswordCard session={session} />
+              ) : location.pathname === "/settings/account/avatar" ? (
+                <AccountAvatarCard session={session} />
+              ) : (
+                <AccountDetails session={session} />
+              )
             ) : activeSettingsKey === "delete" ? (
               <DeleteAccount session={session} />
             ) : activeSettingsKey === "billing" ? (
@@ -1618,14 +1967,35 @@ export default function Dashboard({
               {isVoiceMode ? (
                 <section className="uv-hero">
                   <BlackHole isActivated={isBlackHoleActive} />
-                  {(isRecording || isTranscribing) && (
-                    <h4
-                      className="orb-caption"
-                      style={{ fontSize: 22, opacity: 0.75, marginTop: 16 }}
-                    >
-                      Listening…
-                    </h4>
-                  )}
+                  <div className="av-voice-captions">
+                    <div className="av-voice-captions__user">
+                      {!!voiceUserCaption && (
+                        <h4 className="orb-caption" style={{ fontSize: 22, opacity: 0.6, textAlign: "center" }}>
+                          {voiceUserCaption}
+                        </h4>
+                      )}
+                    </div>
+
+                    <div className="av-voice-captions__assistant">
+                      {(() => {
+                        const listening =
+                          !voiceUserCaption &&
+                          !voiceAssistantCaption &&
+                          (isRecording || isTranscribing)
+                            ? "Listening…"
+                            : "";
+                        const text = voiceAssistantCaption || listening;
+                        if (!text) return null;
+                        return (
+                          <h4 className="orb-caption" style={{ fontSize: 22, opacity: 0.8 }}>
+                            {text}
+                          </h4>
+                        );
+                      })()}
+                    </div>
+
+                    <div className="av-voice-captions__spacer" />
+                  </div>
                 </section>
               ) : (
                 !activeSessionId && (
@@ -1686,7 +2056,7 @@ export default function Dashboard({
         <h3 className="orb-caption">
           Hi {profile?.username ?? "User"}, say{" "}
           <span className="visual-askvox">
-            {`"${(profile?.wake_word?.trim?.() || "Hey AskVox")}"`}
+            {`"${(profile?.wake_word?.trim?.() || "Hey Ask Vox")}"`}
           </span>{" "}
           to begin or type below.
         </h3>
@@ -1695,6 +2065,7 @@ export default function Dashboard({
     <ChatBar
       onSubmit={handleSubmit}
       disabled={isSending}
+      micEnabled={micEnabled}
       onQuizClick={() => setIsQuizOpen(true)}
     />
 

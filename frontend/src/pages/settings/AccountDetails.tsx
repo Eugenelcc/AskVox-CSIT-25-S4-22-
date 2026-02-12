@@ -4,6 +4,7 @@ import { supabase } from "../../supabaseClient";
 import { useNavigate } from "react-router-dom";
 import { Pencil } from "lucide-react";
 import "./cssfiles/AccountDetails.css";
+import { isGoogleOauthOnlyAccount } from "../../utils/authProviders";
 
 type Profile = {
   id: string;
@@ -18,6 +19,8 @@ type Profile = {
 export default function AccountDetails({ session }: { session: Session }) {
   const navigate = useNavigate();
   const userId = session.user.id;
+
+  const isGoogleOnly = useMemo(() => isGoogleOauthOnlyAccount(session.user), [session.user]);
 
   const [profile, setProfile] = useState<Profile | null>(null);
   const [avatarSrc, setAvatarSrc] = useState<string>("");
@@ -44,6 +47,8 @@ export default function AccountDetails({ session }: { session: Session }) {
 
   // Load profile
   useEffect(() => {
+    let cancelled = false;
+
     const load = async () => {
       const { data, error } = await supabase
         .from("profiles")
@@ -56,10 +61,21 @@ export default function AccountDetails({ session }: { session: Session }) {
         return;
       }
 
+      if (cancelled) return;
       setProfile(data as Profile);
     };
 
     load();
+
+    const onProfileUpdated = () => {
+      void load();
+    };
+
+    window.addEventListener("askvox:profile-updated", onProfileUpdated);
+    return () => {
+      cancelled = true;
+      window.removeEventListener("askvox:profile-updated", onProfileUpdated);
+    };
   }, [userId]);
 
   // Load avatar (URL direct OR signed URL if private storage path)
@@ -273,15 +289,17 @@ export default function AccountDetails({ session }: { session: Session }) {
           <div className="acc-row">
             <div className="acc-label">Email Address:</div>
             <div className="acc-value">{profile?.email ?? session.user.email ?? "-"}</div>
-            <button
-              className="acc-editBtn"
-              type="button"
-              onClick={() => navigate("/settings/account/email")}
-              aria-label="Edit email"
-              title="Edit email"
-            >
-              <Pencil size={18} />
-            </button>
+            {!isGoogleOnly && (
+              <button
+                className="acc-editBtn"
+                type="button"
+                onClick={() => navigate("/settings/account/email")}
+                aria-label="Edit email"
+                title="Edit email"
+              >
+                <Pencil size={18} />
+              </button>
+            )}
           </div>
 
           <div className="acc-row">
@@ -301,15 +319,17 @@ export default function AccountDetails({ session }: { session: Session }) {
           <div className="acc-row">
             <div className="acc-label">Password:</div>
             <div className="acc-value">************************</div>
-            <button
-              className="acc-editBtn"
-              type="button"
-              onClick={() => navigate("/settings/account/password")}
-              aria-label="Change password"
-              title="Change password"
-            >
-              <Pencil size={18} />
-            </button>
+            {!isGoogleOnly && (
+              <button
+                className="acc-editBtn"
+                type="button"
+                onClick={() => navigate("/settings/account/password")}
+                aria-label="Change password"
+                title="Change password"
+              >
+                <Pencil size={18} />
+              </button>
+            )}
           </div>
 
           <div className="acc-row acc-row--gender">

@@ -3,11 +3,11 @@
   /* align with main content area; uses CSS var set on .uv-root */
   left: var(--content-offset, 80px);
   right: 0;
-  bottom: 88px; /* slightly lower to free more room above */
+  bottom: var(--av-chatbar-offset, 88px);
   width: auto;
   display: flex;
   justify-content: center;
-  z-index: 20;
+  z-index: 120;
   filter: drop-shadow(0px 4px 9.2px rgba(0, 0, 0, 0.6));
 }
 
@@ -25,6 +25,19 @@
   padding: 8px 14px;
   gap: 10px;
   overflow: hidden;
+}
+
+@media (max-width: 768px) {
+  .av-chatbar {
+    width: min(900px, calc(100% - 24px));
+    border-radius: 20px;
+    padding: 10px 12px;
+  }
+
+  .av-chatbar-wrapper {
+    left: 0;
+    bottom: var(--av-chatbar-offset, 12px);
+  }
 }
 
 .av-input {
@@ -62,8 +75,8 @@
 
 /* icon button  */
 .av-icon-button {
-  width: 32px;
-  height: 32px;
+  width: 36px;
+  height: 36px;
   border-radius: 999px;
   border: none;
   background: transparent;
@@ -72,6 +85,7 @@
   justify-content: center;
   cursor: pointer;
   flex-shrink: 0;
+  touch-action: manipulation;
 }
 
 .av-icon-button:disabled {
@@ -105,8 +119,8 @@
 
 /* Send button no grey circle by default */
 .av-send-button {
-  width: 40px;
-  height: 40px;
+  width: 44px;
+  height: 44px;
   border-radius: 999px;
   border: none;
   background: transparent;
@@ -114,6 +128,7 @@
   align-items: center;
   justify-content: center;
   cursor: pointer;
+  touch-action: manipulation;
 }
 
 .av-send-button:disabled {

@@ -20,6 +20,34 @@
     padding: 18px 18px 20px;
     overflow: hidden;
   }
+
+  @media (max-width: 768px) {
+    .sr-panel {
+      top: 0;
+      left: 0;
+      width: 100vw;
+      height: 100dvh;
+      border-radius: 0;
+      padding: 16px;
+    }
+
+    .sr-list {
+      padding-left: 6px;
+      padding-right: 2px;
+    }
+
+    .sr-card {
+      width: 100%;
+    }
+
+    .sr-line {
+      width: auto;
+    }
+
+    .sr-pill {
+      width: 100%;
+    }
+  }
   
   .sr-top{
     display: flex;
