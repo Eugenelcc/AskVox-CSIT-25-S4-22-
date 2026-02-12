@@ -2393,15 +2393,62 @@ async def generate_cloud_structured(
             scraped_text=scraped_text,
         )
 
-    # Domain-gated RAG: classify once, reuse result
+    # Domain-gated RAG: classify once, reuse result.
+    # For generic media follow-ups (e.g. "pictures of it"), classify/retrieve using the
+    # prior topic from history so results stay on-topic.
+    def _is_generic_media_followup_for_context(s: str) -> bool:
+        t = (s or "").strip()
+        if not t:
+            return True
+        has_media_word = bool(_MEDIA_WORDS_RE.search(t) or _IMAGE_WORDS_RE.search(t))
+        has_pronoun_ref = bool(re.search(r"\b(it|those|them|that|this)\b", t, re.I))
+        has_more = bool(re.search(r"\bmore\b", t, re.I))
+        if has_media_word and (has_pronoun_ref or has_more):
+            return True
+        if len(t) < 12 and has_media_word:
+            return True
+        return False
+
+    context_seed_for_rag = message
+    if _is_generic_media_followup_for_context(message):
+        last_assistant_text = next(
+            (
+                (h.content or "").strip()
+                for h in reversed(history or [])
+                if getattr(h, "role", None) == "assistant" and (h.content or "").strip()
+            ),
+            "",
+        )
+        title_hint = None
+        if last_assistant_text:
+            try:
+                titles = extract_titles_from_answer(last_assistant_text) or []
+                if titles:
+                    title_hint = titles[0]
+            except Exception:
+                title_hint = None
+
+        # Fall back to the last non-generic user message.
+        hist_user_msgs: List[str] = [
+            (h.content or "").strip()
+            for h in (history or [])
+            if getattr(h, "role", None) == "user" and (h.content or "").strip()
+        ]
+        last_user_topic = ""
+        for s in reversed(hist_user_msgs):
+            if not _is_generic_media_followup_for_context(s):
+                last_user_topic = s
+                break
+        context_seed_for_rag = make_fallback_query(title_hint or last_user_topic or message, max_len=120)
+
     classified_domain = None
     try:
-        classified_domain = classify_domain(message)
+        classified_domain = classify_domain(context_seed_for_rag)
         print(f"[RAG] domain classified: '{classified_domain}'", flush=True)
     except Exception as e:
         print(f"[RAG] classifier error (fail-soft): {e}", flush=True)
 
-    rag_chunks = await rag_retrieve(message, k=4, classified_domain=classified_domain)
+    rag_chunks = await rag_retrieve(context_seed_for_rag, k=4, classified_domain=classified_domain)
     rag_block = build_rag_block(rag_chunks)
 
     timeout = httpx.Timeout(connect=10.0, read=300.0, write=10.0, pool=10.0)
@@ -2500,6 +2547,9 @@ async def generate_cloud_structured(
             topic_hint = re.sub(r"\s+", " ", topic_hint).strip().lower()
             if not topic_hint:
                 return True
+            # Phrases like "image to show" / "show me image" contain no topic.
+            if re.fullmatch(r"(to\s+)?(show|see|watch)", topic_hint):
+                return True
             if topic_hint in {"support", "to support", "help", "to help", "please"}:
                 return True
             if re.fullmatch(r"(videos?|images?|pictures?|photos?)(\s+and\s+(videos?|images?|pictures?|photos?))*", t.strip().lower()):
@@ -2524,6 +2574,16 @@ async def generate_cloud_structured(
         last_resp = next((p[1] for p in pairs if (p[1] or "").strip()), "")
         last_query = next((p[0] for p in pairs if (p[0] or "").strip()), "")
         title_hint = None
+        # If Supabase has no response text, fall back to the last assistant message in history.
+        if not last_resp:
+            last_resp = next(
+                (
+                    (h.content or "").strip()
+                    for h in reversed(trimmed_history or [])
+                    if getattr(h, "role", None) == "assistant" and (h.content or "").strip()
+                ),
+                "",
+            )
         if last_resp:
             titles = extract_titles_from_answer(last_resp)
             if titles:
@@ -2919,6 +2979,8 @@ async def generate_cloud_structured(
             topic_hint = re.sub(r"\s+", " ", topic_hint).strip().lower()
             if not topic_hint:
                 return True
+            if re.fullmatch(r"(to\s+)?(show|see|watch)", topic_hint):
+                return True
             if topic_hint in {"support", "to support", "help", "to help", "please"}:
                 return True
             if re.fullmatch(r"(videos?|images?|pictures?|photos?)(\s+and\s+(videos?|images?|pictures?|photos?))*", t.strip().lower()):
@@ -2951,7 +3013,25 @@ async def generate_cloud_structured(
         # Detect generic phrases
         def _is_generic(q: str) -> bool:
             s = (q or "").strip().lower()
-            return not s or re.match(r"^(videos?|images?|pictures?|photos?)\b", s or "") is not None or len(s) < 8
+            if not s:
+                return True
+            if re.match(r"^(videos?|images?|pictures?|photos?)\b", s or "") is not None:
+                return True
+            if len(s) < 8:
+                return True
+            # Treat media-only followups like "to show photos" as generic.
+            stripped = re.sub(
+                r"\b(show me|give me|find|search|look for|to|video|videos|youtube|yt|image|images|picture|pictures|photo|photos)\b",
+                " ",
+                s,
+                flags=re.I,
+            )
+            stripped = re.sub(r"\s+", " ", stripped).strip().lower()
+            if not stripped:
+                return True
+            if re.fullmatch(r"(show|see|watch)", stripped):
+                return True
+            return False
 
         # Prefer a concrete topic from the current answer (e.g., show title)
         topic_title = None
@@ -3106,9 +3186,9 @@ async def generate_cloud_structured(
 
         # Fallbacks again
         if need_img and not img_q:
-            img_q = make_fallback_query(message, max_len=120)
+            img_q = make_fallback_query(context_query_base or base_topic or message, max_len=120)
         if need_yt and not yt_q:
-            yt_q = make_fallback_query(message, max_len=120)
+            yt_q = make_fallback_query(context_query_base or base_topic or message, max_len=120)
 
         # Debug: show the final routed flags/queries after the second pass adjustments.
         try:

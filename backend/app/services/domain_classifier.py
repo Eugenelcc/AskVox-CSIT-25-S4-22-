@@ -89,6 +89,7 @@ GOOGLE_TO_ASKVOX = {
     "/Sports": "Sports",
 
     "/Travel & Transportation": "Geography and Travel",
+    "/Science/Earth Sciences/Geology": "Geography and Travel",
 
     "/Reference/Humanities/History": "History and World Events",
     "/Reference/Humanities": "History and World Events",
