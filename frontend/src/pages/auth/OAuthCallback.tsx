@@ -25,7 +25,7 @@ export default function OAuthCallback() {
       // Check if a profile exists and whether signup is complete (learning_preference set)
       const { data: prof, error } = await supabase
         .from("profiles")
-        .select("id, learning_preference")
+        .select("id, learning_preference, role")
         .eq("id", userId)
         .maybeSingle();
 
@@ -40,6 +40,17 @@ export default function OAuthCallback() {
           return;
         }
         // Existing profile but signup incomplete → force user to go to Sign Up
+        const roleValue = (prof as Record<string, unknown> | null)?.role;
+        const role = (typeof roleValue === "string" ? roleValue : "").trim().toLowerCase();
+        if (role === "platform_admin") {
+          nav("/platformadmin/dashboard", { replace: true });
+          return;
+        }
+        if (role === "educational_user") {
+          nav("/educationInstitutional", { replace: true });
+          return;
+        }
+
         const pref = (prof.learning_preference ?? "").toString().trim().toLowerCase();
         const hasPref = (pref === "secondary" || pref === "tertiary" || pref === "university" || pref === "leisure");
         if (!hasPref) {
@@ -57,6 +68,24 @@ export default function OAuthCallback() {
         // New user: show onboarding if configured; otherwise go to newchat
         nav("/onboarding/preferences", { replace: true });
       } else {
+        const roleValue = (prof as Record<string, unknown> | null)?.role;
+        const role = (typeof roleValue === "string" ? roleValue : "").trim().toLowerCase();
+        if (role === "platform_admin") {
+          nav("/platformadmin/dashboard", { replace: true });
+          return;
+        }
+        if (role === "educational_user") {
+          nav("/educationInstitutional", { replace: true });
+          return;
+        }
+
+        const pref = (prof.learning_preference ?? "").toString().trim().toLowerCase();
+        const hasPref = (pref === "secondary" || pref === "tertiary" || pref === "university" || pref === "leisure");
+        if (!hasPref) {
+          nav("/onboarding/preferences", { replace: true });
+          return;
+        }
+
         nav("/newchat", { replace: true });
       }
     };

@@ -4,6 +4,7 @@ import { useNavigate } from "react-router-dom";
 import { useLocation } from "react-router-dom";
 import AskVoxStarBackground from "../../components/background/background";
 import AdminNavRail from "../../components/Sidebar/AdminNavRail";
+import EducationalNavRail from "../../components/Sidebar/EducationalNavRail";
 import { supabase } from "../../supabaseClient";
 import "./cssfiles/AccountDetails.css";
 import "./cssfiles/AccountEdit.css";
@@ -29,6 +30,7 @@ function formatSeconds(s: number): string {
 interface Props {
   session: Session;
   isAdmin: boolean;
+  sidebarVariant?: "educational";
 }
 
 export function AccountEmailCard({ session }: { session: Session }) {
@@ -254,7 +256,7 @@ export function AccountEmailCard({ session }: { session: Session }) {
   );
 }
 
-export default function AccountEmailPage({ session, isAdmin }: Props) {
+export default function AccountEmailPage({ session, isAdmin, sidebarVariant }: Props) {
   const navigate = useNavigate();
 
   if (isAdmin) {
@@ -264,6 +266,22 @@ export default function AccountEmailPage({ session, isAdmin }: Props) {
         <div className="admin-wrap admin-layout">
           <aside className="admin-sidebar">
             <AdminNavRail onNavigate={(path) => navigate(path)} />
+          </aside>
+          <main>
+            <AccountEmailCard session={session} />
+          </main>
+        </div>
+      </>
+    );
+  }
+
+  if (sidebarVariant === "educational") {
+    return (
+      <>
+        <AskVoxStarBackground />
+        <div className="admin-wrap admin-layout">
+          <aside className="admin-sidebar">
+            <EducationalNavRail activeTab="settings" onNavigate={(path) => navigate(path)} />
           </aside>
           <main>
             <AccountEmailCard session={session} />

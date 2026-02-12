@@ -1,4 +1,4 @@
-import { useEffect, useState, type FormEvent } from "react";
+import { useMemo, useState, type FormEvent } from "react";
 import { supabase } from "../../supabaseClient";
 import { Link, useLocation, useNavigate } from "react-router-dom";
 import Background from "../../components/background/background";
@@ -24,20 +24,50 @@ export default function Login() {
   const location = useLocation();
 
   // Display error coming from OAuth callback (e.g., account not found)
-  useEffect(() => {
+  const oauthErrorMsg = useMemo(() => {
     const p = new URLSearchParams(location.search);
     const err = p.get("err");
     if (err === "account_not_found") {
-      setErrorMsg("Account does not exist for the selected Google account. Please sign up first.");
+      return "Account does not exist for the selected Google account. Please sign up first.";
     }
-    else if (err === "complete_signup_first") {
-      setErrorMsg("Please complete sign up with Google first, then sign in.");
+    if (err === "complete_signup_first") {
+      return "Please complete sign up with Google first, then sign in.";
     }
+    return null;
   }, [location.search]);
 
-  const routeByRole = () => {
-    // Land everyone on New Chat for now (non-admin path)
-    navigate("/newchat");
+  const displayErrorMsg = errorMsg ?? oauthErrorMsg;
+
+  const routeByRole = async () => {
+    try {
+      const { data } = await supabase.auth.getSession();
+      const userId = data.session?.user?.id;
+      if (!userId) {
+        navigate("/newchat");
+        return;
+      }
+
+      const { data: prof } = await supabase
+        .from("profiles")
+        .select("role")
+        .eq("id", userId)
+        .maybeSingle();
+
+      const roleValue = (prof as Record<string, unknown> | null)?.role;
+      const role = (typeof roleValue === "string" ? roleValue : "").trim().toLowerCase();
+      if (role === "platform_admin") {
+        navigate("/platformadmin/dashboard");
+        return;
+      }
+      if (role === "educational_user") {
+        navigate("/educationInstitutional");
+        return;
+      }
+
+      navigate("/newchat");
+    } catch {
+      navigate("/newchat");
+    }
   };
 
   const handleLogin = async (e: FormEvent) => {
@@ -68,7 +98,7 @@ export default function Login() {
 
     // Remember me: Supabase persists session by default.
     setLoading(false);
-    routeByRole();
+    await routeByRole();
   };
 
   const handleGoogleLogin = async () => {
@@ -179,7 +209,7 @@ export default function Login() {
               </Link>
             </div>
 
-            {errorMsg && <p className={styles.errorText}>{errorMsg}</p>}
+            {displayErrorMsg && <p className={styles.errorText}>{displayErrorMsg}</p>}
 
             <button
               type="submit"

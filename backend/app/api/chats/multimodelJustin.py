@@ -1,6 +1,6 @@
-
+#Befoere RAG , learning prefence , domain specific searches 
 from __future__ import annotations
-from fastapi import APIRouter, HTTPException, Request
+from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel, Field
 import re
 from typing import List, Literal, Optional, Dict, Any, Tuple
@@ -12,10 +12,6 @@ from datetime import datetime, timezone
 import asyncio
 from dotenv import load_dotenv
 from urllib.parse import urlparse
-from app.services.rag_service import retrieve_rag_context, is_rag_domain, is_rag_available
-from app.services.domain_classifier import classify_domain
-from app.services.moderation_service import moderate_message
-from app.services.domain_classifier import classify_domain, validate_domain
 
 load_dotenv()
 
@@ -31,49 +27,8 @@ RUNPOD_API_KEY = os.getenv("RUNPOD_API_KEY", "").strip()
 RUNPOD_AUTH_HEADER = os.getenv("RUNPOD_AUTH_HEADER", "Authorization").strip()
 RUNPOD_RUN_ENDPOINT = os.getenv("RUNPOD_RUN_ENDPOINT", "").strip()
 RUNPOD_STATUS_ENDPOINT = os.getenv("RUNPOD_STATUS_ENDPOINT", "").strip()
-RUNPOD_MAX_WAIT_SEC = float(os.getenv("RUNPOD_MAX_WAIT_SEC", "600"))
+RUNPOD_MAX_WAIT_SEC = float(os.getenv("RUNPOD_MAX_WAIT_SEC", "180"))
 RUNPOD_POLL_INTERVAL_SEC = float(os.getenv("RUNPOD_POLL_INTERVAL_SEC", "1.5"))
-
-# Optional: cap total time spent in *additional* RunPod passes (sanity/web second-pass).
-# Keeps one request from submitting several jobs and hitting local 504s under cold starts/queueing.
-RUNPOD_TOTAL_BUDGET_SEC = float(os.getenv("RUNPOD_TOTAL_BUDGET_SEC", "240"))
-
-# Debug logging (prompt previews may contain user text)
-AV_LOG_PROMPTS = os.getenv("AV_LOG_PROMPTS", "1") == "1"
-AV_LOG_PROMPT_CHARS = int(os.getenv("AV_LOG_PROMPT_CHARS", "900"))
-AV_LOG_LEARNING_PREF = os.getenv("AV_LOG_LEARNING_PREF", "1") == "1"
-
-# One-time debug snapshot so log gating is obvious.
-_AV_FLAGS_SNAPSHOT_PRINTED = False
-
-
-def _log_av_flags_snapshot_once() -> None:
-    """Print effective AV_LOG_* values once per process.
-
-    This helps diagnose why prompt/learning-preference logs appear missing.
-    Safe: does not include user content.
-    """
-    global _AV_FLAGS_SNAPSHOT_PRINTED
-    if _AV_FLAGS_SNAPSHOT_PRINTED:
-        return
-    _AV_FLAGS_SNAPSHOT_PRINTED = True
-    try:
-        print(
-            "🧾 AV_LOG flags snapshot:",
-            {
-                "AV_LOG_PROMPTS": AV_LOG_PROMPTS,
-                "AV_LOG_PROMPT_CHARS": AV_LOG_PROMPT_CHARS,
-                "AV_LOG_LEARNING_PREF": AV_LOG_LEARNING_PREF,
-                "env_AV_LOG_PROMPTS": os.getenv("AV_LOG_PROMPTS"),
-                "env_AV_LOG_PROMPT_CHARS": os.getenv("AV_LOG_PROMPT_CHARS"),
-                "env_AV_LOG_LEARNING_PREF": os.getenv("AV_LOG_LEARNING_PREF"),
-                "runpod_enabled": bool(RUNPOD_RUN_ENDPOINT),
-            },
-            flush=True,
-        )
-    except Exception:
-        # Never allow debug logging to break requests.
-        pass
 
 # Supabase (REST + Storage)
 SUPABASE_URL = os.getenv("SUPABASE_URL", "")
@@ -209,252 +164,6 @@ FORMAT_INSTRUCTION = (
     "- Avoid giant wall-of-text paragraphs.\n"
 )
 
-# -----------------------
-# Learning preference prompt shaping
-# -----------------------
-_LEARNING_PREF_ALLOWED = {"secondary", "tertiary", "university", "leisure"}
-_learning_pref_cache: Dict[str, Tuple[float, str]] = {}
-_LEARNING_PREF_TTL_SEC = float(os.getenv("LEARNING_PREF_TTL_SEC", "300"))
-
-
-def _normalize_learning_pref(pref: Optional[str]) -> Optional[str]:
-    p = (pref or "").strip().lower()
-    return p if p in _LEARNING_PREF_ALLOWED else None
-
-
-async def fetch_learning_preference(user_id: Optional[str]) -> Optional[str]:
-    """Fetch user's learning_preference from Supabase (fail-soft + cached)."""
-    uid = (user_id or "").strip()
-    if not uid:
-        return None
-    if not (SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY):
-        return None
-
-    now = time.perf_counter()
-    cached = _learning_pref_cache.get(uid)
-    if cached and (now - cached[0] <= _LEARNING_PREF_TTL_SEC):
-        return cached[1]
-
-    headers = {
-        "apikey": SUPABASE_SERVICE_ROLE_KEY,
-        "Authorization": f"Bearer {SUPABASE_SERVICE_ROLE_KEY}",
-        "Content-Type": "application/json",
-    }
-    url = f"{SUPABASE_URL}/rest/v1/profiles?id=eq.{uid}&select=learning_preference&limit=1"
-    try:
-        async with httpx.AsyncClient(timeout=6.0) as client:
-            r = await client.get(url, headers=headers)
-        if r.status_code >= 400:
-            return None
-        rows = r.json() or []
-        row = rows[0] if rows and isinstance(rows[0], dict) else {}
-        pref = _normalize_learning_pref(row.get("learning_preference"))
-        if pref:
-            _learning_pref_cache[uid] = (now, pref)
-        return pref
-    except Exception:
-        return None
-
-
-def build_learning_preference_instruction(pref: Optional[str]) -> str:
-    """Return system-instruction text that shapes depth/structure based on preference."""
-    p = _normalize_learning_pref(pref)
-    if not p:
-        return ""
-
-    if p == "secondary":
-        return (
-            "LEARNING PREFERENCE: Secondary.\n"
-            "- Explain in simple terms, avoid jargon, and define any necessary terms.\n"
-            "- Use short paragraphs and step-by-step guidance.\n"
-            "- Give 1–2 concrete examples; keep math/light formalism minimal unless asked.\n"
-        )
-    if p == "tertiary":
-        return (
-            "LEARNING PREFERENCE: Tertiary.\n"
-            "- Use moderately technical language and introduce key terms with brief definitions.\n"
-            "- Prefer structured explanations (steps, bullets) and include practical examples.\n"
-            "- Include important details, but avoid overly long proofs/derivations unless asked.\n"
-        )
-    if p == "university":
-        return (
-            "LEARNING PREFERENCE: University.\n"
-            "- Provide a rigorous, higher-level explanation with assumptions and precise terminology.\n"
-            "- When useful, include deeper reasoning, edge cases, and (optional) equations/derivations.\n"
-            "- Keep structure clear: definitions → intuition → details → example(s) or algorithm.\n"
-        )
-    # leisure
-    return (
-        "LEARNING PREFERENCE: Leisure Learning.\n"
-        "- Keep it friendly and intuitive; focus on big-picture understanding.\n"
-        "- Use simple examples and avoid heavy technical depth unless asked.\n"
-    )
-
-
-def build_emoji_style_instruction(style: Optional[str]) -> str:
-    """Return a short instruction to control emoji usage in model outputs.
-
-    This is especially important for RunPod, where your serverless handler wraps
-    `input.prompt` as the user message and uses a fixed system prompt.
-    """
-    s = (style or "").strip().lower()
-    if s == "off":
-        return "EMOJI STYLE: Off. Do not use emojis."
-    if s == "strong":
-        return (
-            "EMOJI STYLE: Strong. Use a few relevant emojis sparingly (about 1–3 total) "
-            "to make the response engaging. Avoid emojis in code blocks, JSON, or formal/academic responses."
-        )
-    # Default/light
-    return (
-        "EMOJI STYLE: Light. You may use at most one light emoji in an opening or closing when helpful. "
-        "Skip emojis for formal, code-heavy, or JSON-only responses."
-    )
-
-
-def build_backend_system_prompt(
-    *,
-    chat_mode: bool,
-    learning_preference: Optional[str] = None,
-) -> str:
-    """Backend-owned system prompt.
-
-    IMPORTANT: This is used when sending a full Llama-Instruct template to RunPod.
-    The RunPod handler will *not* wrap prompts that start with <|begin_of_text|>,
-    so this prompt becomes the effective system behavior.
-    """
-
-    pref_instruction = build_learning_preference_instruction(learning_preference).strip()
-    emoji_instruction = build_emoji_style_instruction(AV_EMOJI_STYLE).strip()
-
-    # Shared behavioral guidance.
-    base = (
-        "You are AskVox, the assistant inside the AskVox app. "
-        "Explain topics in a natural, human, tutor-like way. "
-        "Prefer clear paragraphs with context, reasoning, and examples. "
-        "Avoid giant wall-of-text paragraphs. "
-        "If a line is in the form 'Title - details', render it as '**Title** — details'.\n"
-        "Do not mention training data, model cutoffs, or internal implementation details.\n"
-    )
-
-    # Chat-mode is for the best human answer; JSON/structured mode is for tool routing + evidence.
-    if chat_mode:
-        chat_specific = (
-            "Use bullet points or numbered lists only when they genuinely improve clarity "
-            "(rankings, comparisons, step-by-step instructions). "
-            "When providing steps, use a numbered list with ONE item per line and keep each step concise.\n"
-            "Optionally include one short closing line inviting follow-up; avoid boilerplate and omit closings for long/formal answers.\n"
-        )
-        parts = [base]
-        if pref_instruction:
-            parts.append(pref_instruction)
-        if emoji_instruction:
-            parts.append(emoji_instruction)
-        parts.append(chat_specific)
-        return "\n".join([p for p in parts if p]).strip()
-
-    # Structured mode: enforce JSON contract.
-    parts = [base]
-    if pref_instruction:
-        parts.append(pref_instruction)
-    if emoji_instruction:
-        parts.append(emoji_instruction)
-    parts.append(MODEL_JSON_INSTRUCTION.strip())
-    return "\n\n".join([p for p in parts if p]).strip()
-
-
-def build_runpod_user_prompt(
-    message: str,
-    history: List[HistoryItem],
-    rag_block: str = "",
-    web_evidence_block: str = "",
-    article_block: str = "",
-    chat_mode: bool = False,
-    learning_preference: Optional[str] = None,
-) -> str:
-    """Build a RunPod prompt.
-
-    This workspace's RunPod handler bypasses wrapping when the prompt begins with
-    `<|begin_of_text|>`. Since you want the backend to own the system prompt,
-    we always send a full Llama-Instruct formatted prompt here.
-    """
-    def _truncate(text: str, limit: int) -> str:
-        if not text:
-            return ""
-        return text if len(text) <= limit else text[:limit] + "..."
-
-    safe_message = _truncate(message, MAX_MESSAGE_CHARS)
-    safe_article = _truncate(article_block, MAX_ARTICLE_CHARS)
-    safe_rag = _truncate(rag_block, MAX_RAG_CHARS)
-    safe_evidence = _truncate(web_evidence_block, MAX_EVIDENCE_CHARS)
-
-    system_text = build_backend_system_prompt(chat_mode=chat_mode, learning_preference=learning_preference)
-
-    p = (
-        "<|begin_of_text|>"
-        "<|start_header_id|>system<|end_header_id|>\n"
-        f"{system_text}<|eot_id|>"
-    )
-
-    # Context blocks (best effort). For chat_mode, include them in the user message.
-    user_context_parts: List[str] = []
-    if safe_article:
-        user_context_parts.append("[ARTICLE_CONTEXT] (use when relevant):")
-        user_context_parts.append(safe_article)
-    if safe_rag:
-        user_context_parts.append(safe_rag)
-    if safe_evidence:
-        user_context_parts.append(safe_evidence)
-
-    # Compact recent history, avoid duplicates.
-    filtered_history: List[HistoryItem] = []
-    seen = set()
-    for h in history:
-        content = (getattr(h, "content", "") or "").strip()
-        role = getattr(h, "role", None)
-        if not content or role not in ("user", "assistant"):
-            continue
-        # Avoid duplicating the current user message if it was already included.
-        if role == "user" and content == (safe_message or "").strip():
-            continue
-        key = (role, content)
-        if key in seen:
-            continue
-        seen.add(key)
-        filtered_history.append(HistoryItem(role=role, content=content))
-    filtered_history = filtered_history[-4:]
-
-    remaining_history_chars = MAX_HISTORY_CHARS
-    for h in filtered_history:
-        if remaining_history_chars <= 0:
-            break
-        role = "user" if h.role == "user" else "assistant"
-        content = _truncate(h.content, 240)
-        if len(content) > remaining_history_chars:
-            content = _truncate(content, max(0, remaining_history_chars))
-        remaining_history_chars -= len(content)
-        p += (
-            f"<|start_header_id|>{role}<|end_header_id|>\n"
-            f"{content}<|eot_id|>"
-        )
-
-    # User turn
-    user_payload_parts: List[str] = []
-    if user_context_parts:
-        user_payload_parts.append("\n".join([x for x in user_context_parts if x]).strip())
-    user_payload_parts.append(safe_message)
-    user_payload = "\n\n".join([x for x in user_payload_parts if x]).strip()
-
-    p += (
-        "<|start_header_id|>user<|end_header_id|>\n"
-        f"{user_payload}<|eot_id|>"
-        "<|start_header_id|>assistant<|end_header_id|>\n"
-    )
-
-    if len(p) > MAX_PROMPT_CHARS:
-        p = p[:MAX_PROMPT_CHARS] + "..."
-    return p
-
 CITATION_TOKEN_RULES = """
 CITATIONS RULES (VERY IMPORTANT):
 - When you use a fact from the provided evidence, add a citation token immediately after the sentence, like: [[cite:1]]
@@ -464,9 +173,6 @@ CITATIONS RULES (VERY IMPORTANT):
 """
 
 MODEL_JSON_INSTRUCTION = (
-    "You are AskVox, the assistant inside the AskVox app.\n"
-    "If the user asks about you (e.g., 'tell me about yourself'), start with \"I'm AskVox\" and give a short, friendly 2–4 sentence introduction focused on what you can do for them. "
-    "Do not describe yourself as \"an AI language model\" and do not mention training data/corpus or internal implementation details.\n\n"
     "When appropriate, respond using a VALID JSON object matching the schema below.\n\n"
         "CRITICAL RULES:\n"
         "- Do NOT rewrite, summarize, shorten, or rephrase the answer.\n"
@@ -504,7 +210,6 @@ def build_second_pass_prompt_chat(
     original_answer: str,
     web_evidence_block: str = "",
     article_block: str = "",
-    learning_preference: Optional[str] = None,
 ) -> str:
     """Construct a chat-style prompt to REWRITE/UPDATE the original answer using fresh web evidence.
 
@@ -519,7 +224,6 @@ def build_second_pass_prompt_chat(
     safe_orig = _truncate(original_answer, MAX_ARTICLE_CHARS)
     safe_article = _truncate(article_block, MAX_ARTICLE_CHARS)
     safe_evidence = _truncate(web_evidence_block, MAX_EVIDENCE_CHARS)
-    pref_instruction = build_learning_preference_instruction(learning_preference).strip()
 
     tone_lines = ""
     if AV_EMOJI_STYLE != "off":
@@ -542,7 +246,6 @@ def build_second_pass_prompt_chat(
         "Do not mention training cutoffs or model limitations in the answer. "
         "Write a complete, well-structured markdown response (NOT JSON). Prefer concise paragraphs; use lists only when they improve clarity. "
         "If a line is 'Title - details', render as '**Title** — details'. Do not include any [SOURCES] section at the end.\n"
-        + (pref_instruction + "\n" if pref_instruction else "")
         + tone_lines +
         "<|eot_id|>"
     )
@@ -621,7 +324,7 @@ def build_sanity_web_query(
             prefer_year = max(int(y) for y in years if y.isdigit())
         except Exception:
             prefer_year = None
-    elif recency_intent:
+    elif recency_intent or current_year > MODEL_KNOWLEDGE_CUTOFF_YEAR:
         prefer_year = current_year
     if prefer_year and str(prefer_year) not in q:
         q = f"{q} {prefer_year}".strip()
@@ -708,7 +411,6 @@ class ChatRequest(BaseModel):
     query_id: Optional[str] = None
     session_id: Optional[str] = None
     user_id: Optional[str] = None
-    domain: Optional[str] = None
     article_title: Optional[str] = None
     article_url: Optional[str] = None
 
@@ -895,18 +597,16 @@ def infer_need_web_sources(
     if user_flags.get("want_web"):
         return True, "explicit_web_intent"
 
-    # Option C: for learning prompts, fetch sources proactively.
-    # This is treated as higher priority than the soft budget guard so that
-    # educational requests like tutorials still return references/links.
-    if wants_learning_resources(message):
-        return True, "learning_resources"
-
     # Soft time-budget guard: avoid web escalation when we're already close to the total budget.
     # (Still allow explicit requests via want_web above.)
     if elapsed_sec is not None:
         remaining = _TOTAL_BUDGET_SEC - float(elapsed_sec)
         if remaining < 2.0:
             return False, "budget_exhausted"
+
+    # Option C: for learning prompts, fetch sources proactively.
+    if wants_learning_resources(message):
+        return True, "learning_resources"
 
     if model_need_web:
         return True, "model_suggested"
@@ -972,8 +672,7 @@ def apply_tool_budget(
         # Media only when user explicitly asked OR forced by env
         if not (user_flags.get("want_images") or FORCE_IMAGES):
             need_img = False
-        # Treat auto_youtube as a valid intent for learning prompts.
-        if not (user_flags.get("want_youtube") or user_flags.get("auto_youtube") or FORCE_YOUTUBE):
+        if not (user_flags.get("want_youtube") or FORCE_YOUTUBE):
             need_yt = False
 
     # Web is handled by "hard gate" policy in caller
@@ -990,44 +689,6 @@ def normalize_markdown_spacing(text: str) -> str:
         # Remove blank line between title + description (title line followed by blank, then capitalized desc)
         text = re.sub(r"([^\n])\n\n([A-Z])", r"\1\n\2", text)
     return text.strip()
-
-def _looks_structured_answer(text: str) -> bool:
-    s = (text or "").strip()
-    if not s:
-        return False
-    # Basic signals: multiple paragraphs or a clear list/steps.
-    if s.count("\n\n") >= 2:
-        return True
-    if re.search(r"^\s*\d+\.|^\s*[-*•]\s+", s, flags=re.MULTILINE):
-        return True
-    if re.search(r"\b(step-by-step|steps|guide|roadmap)\b", s, flags=re.I):
-        return True
-    return False
-
-def choose_final_answer(draft_md: str, refined_md: str) -> str:
-    """Pick the best user-visible answer when we have both draft + refined outputs.
-
-    The refined pass is mainly for web-evidence integration and tool routing.
-    Sometimes it comes back shorter/less helpful; in that case keep the richer draft.
-    """
-    draft = cleanup_model_text(strip_plan_json_leak(draft_md))
-    refined = cleanup_model_text(strip_plan_json_leak(refined_md))
-    if refined and not draft:
-        return refined.strip()
-    if draft and not refined:
-        return draft.strip()
-    if not draft and not refined:
-        return ""
-
-    d_len = len(draft.strip())
-    r_len = len(refined.strip())
-
-    # If refined is significantly shorter and the draft looks structured, prefer the draft.
-    if _looks_structured_answer(draft) and (r_len < max(220, int(d_len * 0.60))):
-        return draft.strip()
-
-    # Otherwise prefer refined (it may incorporate web corrections).
-    return refined.strip()
 
 def enhance_markdown_for_ui(text: str) -> str:
     """
@@ -1108,43 +769,16 @@ def enhance_markdown_for_ui(text: str) -> str:
     
 
 # -----------------------
-# Moderation
+# PLACEHOLDER: Moderation
 # -----------------------
-async def moderation_check(text: str, user_id: Optional[str] = None, session_id: Optional[str] = None) -> Dict[str, Any]:
-    return await moderate_message(text, user_id=user_id, session_id=session_id)
+async def moderation_check(text: str) -> Dict[str, Any]:
+    return {"allowed": True, "label": "ok", "score": 0.0, "reason": ""}
+
 # -----------------------
-# Domain RAG 
+# PLACEHOLDER: Internal RAG
 # -----------------------
-async def rag_retrieve(query: str, k: int = 4, classified_domain: Optional[str] = None) -> List[Dict[str, str]]:
-    """Retrieve RAG chunks if domain is RAG-enabled, else return [].
-
-    This is the ONLY place the domain classifier is called for RAG gating.
-    If classified_domain is not passed, we classify here.
-    """
-    if not is_rag_available():
-        return []
-
-    # Classify if not already done
-    if not classified_domain:
-        try:
-            classified_domain = classify_domain(query)
-        except Exception:
-            return []
-
-    if not is_rag_domain(classified_domain):
-        return []
-
-    try:
-        chunks = await retrieve_rag_context(query, classified_domain)
-        if chunks:
-            print(
-                f"[RAG] injecting {len(chunks)} chunks for domain='{classified_domain}'",
-                flush=True,
-            )
-        return chunks
-    except Exception as e:
-        print(f"[RAG] retrieve error (fail-soft): {e}", flush=True)
-        return []
+async def rag_retrieve(query: str, k: int = 4) -> List[Dict[str, str]]:
+    return []
 
 def build_rag_block(chunks: List[Dict[str, str]]) -> str:
     if not chunks:
@@ -1532,73 +1166,9 @@ def extract_json(text: str) -> Dict[str, Any]:
                             break
     return {}
 
-def strip_plan_json_leak(text: str) -> str:
-    """Prevent the model's planning JSON from leaking into the visible answer.
-
-    - If the text contains a plan-like JSON object with a non-empty `answer_markdown`, return that.
-    - If the text is plan-like JSON (need_web_sources/web_query/etc.) but has no `answer_markdown`, return "" so
-      downstream fallback messaging can kick in.
-    - Otherwise, return the original text.
-    """
-    s = (text or "").strip()
-    if not s:
-        return ""
-
-    # Fast heuristics to avoid touching normal prose.
-    looks_jsonish = s.startswith("{") and s.endswith("}")
-    has_plan_keys = any(
-        k in s
-        for k in (
-            "need_web_sources",
-            "need_images",
-            "need_youtube",
-            "web_query",
-            "image_query",
-            "youtube_query",
-        )
-    )
-    has_answer_key = ("\"answer_markdown\"" in s) or ("'answer_markdown'" in s)
-    if not (looks_jsonish or has_plan_keys or has_answer_key):
-        return s
-
-    # Best case: valid JSON somewhere in the output.
-    try:
-        obj = extract_json(s)
-        if isinstance(obj, dict):
-            ans = obj.get("answer_markdown")
-            if isinstance(ans, str) and ans.strip():
-                return ans.strip()
-            # Plan-like JSON with no answer: suppress.
-            if has_plan_keys and not ans:
-                return ""
-    except Exception:
-        pass
-
-    # Fallback: regex extraction of answer_markdown value from JSON-ish text.
-    try:
-        m = re.search(r"\"answer_markdown\"\s*:\s*\"(?P<v>(?:\\\\.|[^\"\\\\])*)\"", s, flags=re.S)
-        if m:
-            v = m.group("v")
-            try:
-                return json.loads('"' + v + '"').strip()
-            except Exception:
-                return v.replace("\\n", "\n").replace("\\t", "\t").replace('\\"', '"').replace("\\\\", "\\").strip()
-
-        m2 = re.search(r"'answer_markdown'\s*:\s*'(?P<v>(?:\\\\.|[^'\\\\])*)'", s, flags=re.S)
-        if m2:
-            v = m2.group("v")
-            return v.replace("\\n", "\n").replace("\\t", "\t").replace("\\'", "'").replace("\\\\", "\\").strip()
-
-        if has_plan_keys and not has_answer_key:
-            return ""
-    except Exception:
-        pass
-
-    return s
-
 def safe_wrap_json(raw_text: str) -> Dict[str, Any]:
-    rt = strip_plan_json_leak(raw_text)
-    rt = cleanup_model_text((rt or "").strip())
+    rt = (raw_text or "").strip()
+    rt = cleanup_model_text(rt)
     return {
         "answer_markdown": rt,
         "need_web_sources": False,
@@ -1612,8 +1182,7 @@ def safe_wrap_json(raw_text: str) -> Dict[str, Any]:
 def cleanup_model_text(text: str) -> str:
     if not text:
         return ""
-    # If the model echoed our JSON schema / plan, unwrap it.
-    out = strip_plan_json_leak(text)
+    out = text
     # Remove any embedded schema/YAML-like lines the model may echo
     schema_keys = [
         r"^\s*answer_markdown\s*:\s*.*$",
@@ -1791,7 +1360,6 @@ def build_prompt(
     web_evidence_block: str = "",
     article_block: str = "",
     chat_mode: bool = False,
-    learning_preference: Optional[str] = None,
 ) -> str:
     def _truncate(text: str, limit: int) -> str:
         if not text:
@@ -1804,8 +1372,6 @@ def build_prompt(
     safe_article = _truncate(article_block, MAX_ARTICLE_CHARS)
     safe_rag = _truncate(rag_block, MAX_RAG_CHARS)
     safe_evidence = _truncate(web_evidence_block, MAX_EVIDENCE_CHARS)
-
-    pref_instruction = build_learning_preference_instruction(learning_preference)
 
     # LLaMA-3.3 Instruct chat headers
     if chat_mode:
@@ -1832,8 +1398,6 @@ def build_prompt(
             "<|begin_of_text|>"
             "<|start_header_id|>system<|end_header_id|>\n"
             "You are AskVox, a friendly and helpful AI assistant. "
-            "When the user asks who you are or asks you to introduce yourself, explicitly say 'I'm AskVox' and give a short product-focused intro (what you can help with). "
-            "Avoid generic phrases like 'I am an AI language model' and avoid mentioning training data/corpus or internal implementation details. "
             "Explain topics in a natural, human, tutor-like way. "
             "Prefer clear paragraph-style explanations with context, reasoning, and examples. "
             "Use bullet points or numbered lists only when they genuinely improve clarity "
@@ -1843,7 +1407,6 @@ def build_prompt(
             "Use concise paragraphs. "
             "If a line is in the form 'Title - details', render it as '**Title** — details'. "
             "Avoid giant wall-of-text paragraphs.\n"
-            + (pref_instruction + "\n" if pref_instruction else "")
             + tone_lines +
             "<|eot_id|>"
         )
@@ -1894,8 +1457,6 @@ def build_prompt(
         "<|start_header_id|>system<|end_header_id|>\n"
     )
     p += MODEL_JSON_INSTRUCTION
-    if pref_instruction:
-        p += "\n" + pref_instruction
     if safe_article:
         p += "\nUse the provided ARTICLE_CONTEXT as the primary source for the user's question.\n"
         p += f"\n{safe_article}\n"
@@ -1945,12 +1506,10 @@ def build_prompt(
     if len(p) > MAX_PROMPT_CHARS:
         p = p[:MAX_PROMPT_CHARS] + "..."
 
-    # Debug print for prompt sent to model (may contain user text)
-    if AV_LOG_PROMPTS:
-        n = max(0, AV_LOG_PROMPT_CHARS)
-        print("\n==== PROMPT SENT TO MODEL ====".ljust(40, "="), flush=True)
-        print(p[:n] + ("..." if len(p) > n else ""), flush=True)
-        print("=" * 40, flush=True)
+    # Debug print for prompt sent to model
+    print("\n==== PROMPT SENT TO MODEL ====".ljust(40, "="), flush=True)
+    print(p[:1200] + ("..." if len(p) > 1200 else ""), flush=True)
+    print("="*40, flush=True)
 
     return p
 
@@ -2032,15 +1591,7 @@ async def call_cloudrun(prompt: str, timeout: httpx.Timeout) -> str:
         raise HTTPException(status_code=502, detail="Cloud Run response missing answer field")
     return raw
 
-async def call_runpod_job_prompt(
-    prompt: str,
-    *,
-    max_tokens: Optional[int] = None,
-    temperature: Optional[float] = None,
-    top_p: Optional[float] = None,
-    domain: Optional[str] = None,
-    max_wait_sec: Optional[float] = None,
-) -> str:
+async def call_runpod_job_prompt(prompt: str) -> str:
     """
     Submit a job to RunPod `/run` and poll `/status/{id}` until COMPLETED.
     Expects `RUNPOD_API_KEY` and `RUNPOD_RUN_ENDPOINT` in env.
@@ -2050,38 +1601,15 @@ async def call_runpod_job_prompt(
     if not RUNPOD_API_KEY:
         raise HTTPException(status_code=500, detail="RUNPOD_API_KEY missing")
 
-    # Make it obvious (once) whether prompt logging is enabled.
-    _log_av_flags_snapshot_once()
-
     headers = {RUNPOD_AUTH_HEADER or "Authorization": f"Bearer {RUNPOD_API_KEY}"}
-    inp: Dict[str, Any] = {
-        "prompt": prompt,
-        "stop": ["<|eot_id|>", "<|start_header_id|>"],
-    }
-    if (domain or "").strip():
-        inp["domain"] = (domain or "").strip()
-    # These fields are optional; they only take effect if your RunPod handler reads them.
-    if isinstance(max_tokens, int) and max_tokens > 0:
-        inp["max_tokens"] = max_tokens
-    if isinstance(temperature, (int, float)) and float(temperature) >= 0:
-        inp["temperature"] = float(temperature)
-    if isinstance(top_p, (int, float)) and 0 < float(top_p) <= 1.0:
-        inp["top_p"] = float(top_p)
-
-    payload = {"input": inp}
-
-    effective_max_wait = float(max_wait_sec) if isinstance(max_wait_sec, (int, float)) and float(max_wait_sec) > 0 else float(RUNPOD_MAX_WAIT_SEC)
+    payload = {"input": {"prompt": prompt, "stop": ["<|eot_id|>"]}}
 
     try:
-        sent_domain = (inp.get("domain") or "").strip()
-        print(f"🏷️ RunPod domain: {sent_domain or '(none)'}", flush=True)
+        # Debug: show a preview of the prompt sent to RunPod
         print(f"🚀 Submitting RunPod job: {RUNPOD_RUN_ENDPOINT}", flush=True)
-        if AV_LOG_PROMPTS:
-            n = max(0, AV_LOG_PROMPT_CHARS)
-            print("\n==== PROMPT SENT TO MODEL (RUNPOD user prompt) ====".ljust(40, "="), flush=True)
-            print(((prompt or "")[:n] + ("..." if len(prompt or "") > n else "")), flush=True)
-            print("=" * 40, flush=True)
-        # Reuse one client for submit+poll to reduce connection churn.
+        print("—— Prompt Preview (first 900 chars) ——", flush=True)
+        print((prompt or "")[:900], flush=True)
+        print("—— End Preview ——", flush=True)
         async with httpx.AsyncClient(timeout=httpx.Timeout(connect=10.0, read=30.0, write=10.0, pool=10.0)) as client:
             run_resp = await client.post(RUNPOD_RUN_ENDPOINT, json=payload, headers=headers)
     except httpx.RequestError as e:
@@ -2113,68 +1641,55 @@ async def call_runpod_job_prompt(
 
     t0 = time.perf_counter()
     last_status = ""
-    # Backoff helps when the pod is busy/queueing.
-    poll_delay = max(0.2, float(RUNPOD_POLL_INTERVAL_SEC))
-    poll_delay_max = max(poll_delay, 5.0)
+    while (time.perf_counter() - t0) < RUNPOD_MAX_WAIT_SEC:
+        url = f"{status_base}/{job_id}"
+        if not last_status:
+            print(f"⏳ Polling RunPod status: {url}", flush=True)
+        try:
+            async with httpx.AsyncClient(timeout=httpx.Timeout(connect=10.0, read=20.0, write=10.0, pool=10.0)) as client:
+                st_resp = await client.get(url, headers=headers)
+        except httpx.RequestError as e:
+            last_status = f"request_error: {e}"
+            await asyncio.sleep(RUNPOD_POLL_INTERVAL_SEC)
+            continue
 
-    async with httpx.AsyncClient(timeout=httpx.Timeout(connect=10.0, read=20.0, write=10.0, pool=10.0)) as poll_client:
-        while (time.perf_counter() - t0) < effective_max_wait:
-            url = f"{status_base}/{job_id}"
-            if not last_status:
-                print(f"⏳ Polling RunPod status: {url}", flush=True)
-            try:
-                st_resp = await poll_client.get(url, headers=headers)
-            except httpx.RequestError as e:
-                last_status = f"request_error: {e}"
-                await asyncio.sleep(poll_delay)
-                poll_delay = min(poll_delay_max, poll_delay * 1.25)
-                continue
+        if st_resp.status_code >= 400:
+            last_status = f"http_{st_resp.status_code}"
+            await asyncio.sleep(RUNPOD_POLL_INTERVAL_SEC)
+            continue
 
-            if st_resp.status_code >= 400:
-                last_status = f"http_{st_resp.status_code}"
-                await asyncio.sleep(poll_delay)
-                poll_delay = min(poll_delay_max, poll_delay * 1.15)
-                continue
+        try:
+            st_data = st_resp.json()
+        except Exception:
+            last_status = "bad_json"
+            await asyncio.sleep(RUNPOD_POLL_INTERVAL_SEC)
+            continue
 
-            try:
-                st_data = st_resp.json()
-            except Exception:
-                last_status = "bad_json"
-                await asyncio.sleep(poll_delay)
-                poll_delay = min(poll_delay_max, poll_delay * 1.15)
-                continue
+        status = (st_data.get("status") or st_data.get("state") or "").upper()
+        last_status = status or last_status
+        if status:
+            print(f"🔄 RunPod status: {status}", flush=True)
+        if status == "COMPLETED":
+            out = st_data.get("output") or {}
+            if isinstance(out, dict):
+                ans = out.get("response") or out.get("answer") or out.get("reply")
+                if ans:
+                    return str(ans)
+            # Handle alternative shapes
+            if isinstance(out, str) and out:
+                return out
+            # Fallback: try top-level fields
+            ans2 = st_data.get("response") or st_data.get("answer") or st_data.get("reply")
+            if ans2:
+                return str(ans2)
+            raise HTTPException(status_code=502, detail="RunPod status completed but no output.response")
+        if status in {"FAILED", "ERROR", "CANCELLED"}:
+            print(f"❌ RunPod job: {status}", flush=True)
+            raise HTTPException(status_code=502, detail=f"RunPod job {status}")
 
-            status = (st_data.get("status") or st_data.get("state") or "").upper()
-            last_status = status or last_status
-            if status:
-                print(f"🔄 RunPod status: {status}", flush=True)
-            if status == "COMPLETED":
-                out = st_data.get("output") or {}
-                if isinstance(out, dict):
-                    ans = out.get("response") or out.get("answer") or out.get("reply")
-                    if ans:
-                        return str(ans)
-                # Handle alternative shapes
-                if isinstance(out, str) and out:
-                    return out
-                # Fallback: try top-level fields
-                ans2 = st_data.get("response") or st_data.get("answer") or st_data.get("reply")
-                if ans2:
-                    return str(ans2)
-                raise HTTPException(status_code=502, detail="RunPod status completed but no output.response")
-            if status in {"FAILED", "ERROR", "CANCELLED"}:
-                print(f"❌ RunPod job: {status}", flush=True)
-                raise HTTPException(status_code=502, detail=f"RunPod job {status}")
+        await asyncio.sleep(RUNPOD_POLL_INTERVAL_SEC)
 
-            await asyncio.sleep(poll_delay)
-            # Slowly backoff even on success to reduce pressure.
-            poll_delay = min(poll_delay_max, poll_delay * 1.05)
-
-    print(
-        f"⏰ RunPod job timed out (last_status={last_status})",
-        {"waited_sec": round(time.perf_counter() - t0, 2), "max_wait_sec": effective_max_wait},
-        flush=True,
-    )
+    print(f"⏰ RunPod job timed out (last_status={last_status})", flush=True)
     raise HTTPException(status_code=504, detail=f"RunPod job timed out (last_status={last_status})")
 
 async def fetch_session_article_context(session_id: str) -> Dict[str, Any]:
@@ -2336,29 +1851,20 @@ async def generate_cloud_structured(
     article_url: Optional[str] = None,
     article_context: Optional[Dict[str, Any]] = None,
     session_id: Optional[str] = None,
-    user_id: Optional[str] = None,
-    domain: Optional[str] = None,
     max_history: int = 3,
 ) -> AssistantPayload:
     t_start = time.perf_counter()
     if not (LLAMA_CLOUDRUN_URL or RUNPOD_RUN_ENDPOINT):
         raise HTTPException(status_code=500, detail="No model endpoint configured: set LLAMA_CLOUDRUN_URL or RUNPOD_RUN_ENDPOINT in .env")
 
-    # Moderation detection
-    mod = await moderation_check(message, user_id=user_id, session_id=session_id)
+    # Moderation placeholder
+    mod = await moderation_check(message)
     if not mod.get("allowed", True):
-        fallback_text = mod.get("response") or (
-            "I'm not able to respond to that message. "
-            "Could you try rephrasing your question?"
-        )
         return AssistantPayload(
-            answer_markdown=fallback_text,
+            answer_markdown="I can’t help with that request. If you want, rephrase it in a safe, respectful way and I’ll try again.",
             sources=[],
             images=[],
             youtube=[],
-            source_count=0,
-            cite_available=False,
-            cite_label=None,
         )
 
     # Article context
@@ -2374,15 +1880,8 @@ async def generate_cloud_structured(
             scraped_text=scraped_text,
         )
 
-    # Domain-gated RAG: classify once, reuse result
-    classified_domain = None
-    try:
-        classified_domain = classify_domain(message)
-        print(f"[RAG] domain classified: '{classified_domain}'", flush=True)
-    except Exception as e:
-        print(f"[RAG] classifier error (fail-soft): {e}", flush=True)
-
-    rag_chunks = await rag_retrieve(message, k=4, classified_domain=classified_domain)
+    # Internal RAG placeholder
+    rag_chunks = await rag_retrieve(message, k=4)
     rag_block = build_rag_block(rag_chunks)
 
     timeout = httpx.Timeout(connect=10.0, read=300.0, write=10.0, pool=10.0)
@@ -2391,60 +1890,6 @@ async def generate_cloud_structured(
     # If no client history provided but we have a session, keep current behavior (no fetch here)
     user_flags = keyword_router(message)
     chat_flag = not user_flags.get("want_web", False)
-
-    # One-time snapshot so missing logs can be explained quickly.
-    _log_av_flags_snapshot_once()
-
-    learning_pref = await fetch_learning_preference(user_id)
-    if AV_LOG_LEARNING_PREF and learning_pref:
-        print(f"🎓 learning_preference={learning_pref}", flush=True)
-
-    # Log the *exact* instruction string that will be injected into the prompt.
-    # This is safe to log (no user content), and helps verify preference shaping.
-    if AV_LOG_LEARNING_PREF:
-        pref_instruction = build_learning_preference_instruction(learning_pref)
-        target = "runpod" if RUNPOD_RUN_ENDPOINT else "cloudrun"
-        print(
-            "🧩 learning_pref_instruction_sent:",
-            {
-                "target": target,
-                "learning_preference": learning_pref or "(none)",
-                "chat_mode": chat_flag,
-                "instruction": pref_instruction.strip(),
-            },
-            flush=True,
-        )
-    if AV_LOG_PROMPTS:
-        n = max(0, AV_LOG_PROMPT_CHARS)
-        msg_preview = (message or "")[:n]
-        # Keep log single-line to avoid noisy multi-line logs.
-        msg_preview = msg_preview.replace("\n", " ").replace("\r", " ")
-        print(
-            "🗣️ user_message_preview:",
-            {"user_id": user_id or "(none)", "chars": n, "preview": msg_preview},
-            flush=True,
-        )
-
-    # Tune sampling/length by preference. (Effective for RunPod; CloudRun may ignore.)
-    def _gen_for_pref(pref: Optional[str], chat_mode: bool) -> Dict[str, Any]:
-        p = _normalize_learning_pref(pref)
-        # Structured/JSON answers need more headroom than chat-mode.
-        if p == "secondary":
-            return {"max_tokens": 700 if not chat_mode else 520, "temperature": 0.35, "top_p": 0.9}
-        if p == "tertiary":
-            return {"max_tokens": 850 if not chat_mode else 650, "temperature": 0.5, "top_p": 0.92}
-        if p == "university":
-            return {"max_tokens": 1200 if not chat_mode else 900, "temperature": 0.55, "top_p": 0.93}
-        # leisure + default
-        return {"max_tokens": 900 if not chat_mode else 720, "temperature": 0.7, "top_p": 0.95}
-
-    tuned = _gen_for_pref(learning_pref, chat_flag)
-    if AV_LOG_LEARNING_PREF:
-        print(
-            "🎛️ gen_tuning:",
-            {"learning_preference": learning_pref or "(none)", "chat_mode": chat_flag, **tuned},
-            flush=True,
-        )
 
     # Debug: show the history window used for context (up to 4 entries)
     def _preview(s: str, n: int = 180) -> str:
@@ -2530,20 +1975,14 @@ async def generate_cloud_structured(
 
     # ✅ Draft answer first (no tools yet)
     if RUNPOD_RUN_ENDPOINT:
-        prompt1 = build_runpod_user_prompt(
-            message,
-            trimmed_history,
-            rag_block=rag_block,
-            article_block=article_block,
-            chat_mode=chat_flag,
-            learning_preference=learning_pref,
-        )
         raw = await call_runpod_job_prompt(
-            prompt1,
-            max_tokens=int(tuned.get("max_tokens") or 0) or None,
-            temperature=float(tuned.get("temperature")) if tuned.get("temperature") is not None else None,
-            top_p=float(tuned.get("top_p")) if tuned.get("top_p") is not None else None,
-            domain=domain,
+            build_prompt(
+                message,
+                trimmed_history,
+                rag_block=rag_block,
+                article_block=article_block,
+                chat_mode=chat_flag,
+            )
         )
     else:
         raw = await call_cloudrun(
@@ -2553,7 +1992,6 @@ async def generate_cloud_structured(
                 rag_block=rag_block,
                 article_block=article_block,
                 chat_mode=chat_flag,
-                learning_preference=learning_pref,
             ),
             timeout=timeout,
         )
@@ -2591,44 +2029,21 @@ async def generate_cloud_structured(
     # -----------------------
     sanity_sources: List[SourceItem] = []
     sanity_q_used: str = ""
-    sanity_media_boost: bool = False
     try:
-        # If we're already running long (common with RunPod cold starts), skip extra passes.
-        if RUNPOD_RUN_ENDPOINT and (time.perf_counter() - t_start) > RUNPOD_TOTAL_BUDGET_SEC:
-            raise RuntimeError("budget_exceeded")
         current_year = datetime.now(timezone.utc).year
         msg_text = (message or "")
         years = extract_years(msg_text + " " + (answer_md or ""))
         recency_intent = bool(re.search(r"\b(now|currently|today|this year|latest|trending|airing|released|premiered)\b", msg_text, re.I))
         mentions_future = any(int(y) > MODEL_KNOWLEDGE_CUTOFF_YEAR for y in years if y.isdigit())
-        fact_seeking = is_fact_seeking_question(msg_text)
-        # IMPORTANT: Don't sanity-check every request just because the calendar year
-        # is beyond the model cutoff (e.g., 2026 > 2023). Only do it when the user
-        # explicitly implies recency or mentions future years.
-        # Also sanity-check fact-seeking questions to attach credible sources;
-        # keep it lightweight (no extra media auto-enablement unless time-sensitive).
-        should_sanity = (recency_intent or mentions_future) or fact_seeking
+        should_sanity = recency_intent or mentions_future or (current_year > MODEL_KNOWLEDGE_CUTOFF_YEAR)
         if should_sanity:
-            sanity_media_boost = bool(recency_intent or mentions_future)
             sanity_q = build_sanity_web_query(message, answer_md, context_query_base=None)
             sanity_q_used = sanity_q
-            # Prefer last year for recency queries; otherwise fetch broadly.
-            sanity_num = 7 if (recency_intent or mentions_future) else 6
-            if recency_intent or mentions_future:
-                sanity_sources = await fast_google_web_search(sanity_q, num=sanity_num, date_restrict="y[1]")
-                if not sanity_sources:
-                    sanity_sources = await fast_google_web_search(sanity_q, num=sanity_num)
-            else:
-                sanity_sources = await fast_google_web_search(sanity_q, num=sanity_num)
-
-            # Only run the extra rewrite pass when it is likely to improve correctness/utility.
-            should_refine_answer = bool(
-                (recency_intent or mentions_future)
-                or looks_like_needs_web(answer_md)
-                or looks_like_deflection_or_nonanswer(answer_md)
-                or bool(_FACTUAL_WEB_INTENT_RE.search(msg_text))
-            )
-            if sanity_sources and should_refine_answer:
+            # Prefer last year for recency queries; no domain-specific hardcoding
+            sanity_sources = await fast_google_web_search(sanity_q, num=7, date_restrict="y[1]")
+            if not sanity_sources:
+                sanity_sources = await fast_google_web_search(sanity_q, num=7)
+            if sanity_sources:
                 sanity_block = build_web_evidence_block(sanity_sources, [])
                 prompt2 = build_second_pass_prompt_chat(
                     message=message,
@@ -2636,20 +2051,11 @@ async def generate_cloud_structured(
                     original_answer=answer_md,
                     web_evidence_block=sanity_block,
                     article_block=article_block,
-                    learning_preference=learning_pref,
                 )
                 refined_raw = ""
                 try:
                     if RUNPOD_RUN_ENDPOINT:
-                        if (time.perf_counter() - t_start) > RUNPOD_TOTAL_BUDGET_SEC:
-                            raise RuntimeError("budget_exceeded")
-                        refined_raw = await call_runpod_job_prompt(
-                            prompt2,
-                            max_tokens=int(tuned.get("max_tokens") or 0) or None,
-                            temperature=float(tuned.get("temperature")) if tuned.get("temperature") is not None else None,
-                            top_p=float(tuned.get("top_p")) if tuned.get("top_p") is not None else None,
-                            domain=domain,
-                        )
+                        refined_raw = await call_runpod_job_prompt(prompt2)
                     else:
                         refined_raw = await call_cloudrun(prompt2, timeout=timeout)
                 except Exception:
@@ -2680,8 +2086,8 @@ async def generate_cloud_structured(
         if not need_yt:
             need_yt = True
 
-    # If sanity sources were fetched for time-sensitive requests, also surface images and auto-enable YouTube for display
-    if 'sanity_sources' in locals() and sanity_sources and (('sanity_media_boost' in locals() and sanity_media_boost) or (recency_intent if 'recency_intent' in locals() else False) or (mentions_future if 'mentions_future' in locals() else False)):
+    # If sanity sources were fetched, also surface images and auto-enable YouTube for display
+    if 'sanity_sources' in locals() and sanity_sources:
         # Prefer enabling images when fresh sources exist
         if not need_img:
             need_img = True
@@ -2723,11 +2129,8 @@ async def generate_cloud_structured(
     evidence_chunks: List[Dict[str, str]] = []
     if not need_web:
         plan["need_web_sources"] = False
-        print(
-            "🔕 Skipping web sources",
-            {"reason": need_web_reason, "message": message[:80]},
-            flush=True,
-        )
+        # Clarify why web is skipped: the user didn't explicitly ask for web sources
+        print("🔕 Skipping web sources (no explicit web intent)", {"message": message[:80]}, flush=True)
     else:
         base_for_web = (context_query_base or web_q or message)
         # For follow-ups like "elaborate more" / "apart from that",
@@ -2775,7 +2178,7 @@ async def generate_cloud_structured(
     if not is_first_turn:
         if not user_flags.get("want_images") and not FORCE_IMAGES:
             need_img = False
-        if not (user_flags.get("want_youtube") or user_flags.get("auto_youtube")) and not FORCE_YOUTUBE:
+        if not user_flags.get("want_youtube") and not FORCE_YOUTUBE:
             need_yt = False
 
     # Build base topic from the last non-generic user message or Supabase pairs
@@ -2863,9 +2266,6 @@ async def generate_cloud_structured(
     images: List[ImageItem] = []
     youtube: List[YouTubeItem] = []
 
-    # Keep a copy of the best pre-web draft so we can fall back if the second pass is worse.
-    draft_answer_md = answer_md
-
     # Merge sanity sources (if any) into payload sources later
     if 'sanity_sources' in locals() and sanity_sources:
         try:
@@ -2886,23 +2286,15 @@ async def generate_cloud_structured(
         raw2 = ""
         try:
             if RUNPOD_RUN_ENDPOINT:
-                if (time.perf_counter() - t_start) > RUNPOD_TOTAL_BUDGET_SEC:
-                    raise RuntimeError("budget_exceeded")
-                prompt2 = build_runpod_user_prompt(
-                    message,
-                    trimmed_history,
-                    rag_block=rag_block,
-                    web_evidence_block=web_evidence_block,
-                    article_block=article_block,
-                    chat_mode=False,
-                    learning_preference=learning_pref,
-                )
                 raw2 = await call_runpod_job_prompt(
-                    prompt2,
-                    max_tokens=int(tuned.get("max_tokens") or 0) or None,
-                    temperature=float(tuned.get("temperature")) if tuned.get("temperature") is not None else None,
-                    top_p=float(tuned.get("top_p")) if tuned.get("top_p") is not None else None,
-                    domain=domain,
+                    build_prompt(
+                        message,
+                        trimmed_history,
+                        rag_block=rag_block,
+                        web_evidence_block=web_evidence_block,
+                        article_block=article_block,
+                        chat_mode=False,
+                    )
                 )
             else:
                 raw2 = await call_cloudrun(
@@ -2913,17 +2305,11 @@ async def generate_cloud_structured(
                         web_evidence_block=web_evidence_block,
                         article_block=article_block,
                         chat_mode=False,
-                        learning_preference=learning_pref,
                     ),
                     timeout=timeout,
                 )
         except HTTPException as e:
             print("SECOND PASS GENERATION FAILED:", e.detail, flush=True)
-        except RuntimeError as e:
-            if str(e) == "budget_exceeded":
-                print("SECOND PASS SKIPPED (budget)", {"elapsed_sec": round(time.perf_counter() - t_start, 2)}, flush=True)
-            else:
-                print("SECOND PASS SKIPPED (runtime)", {"error": str(e)}, flush=True)
 
         plan2 = extract_json(raw2) if raw2 else {}
 
@@ -2932,10 +2318,7 @@ async def generate_cloud_structured(
             plan2 = safe_wrap_json(raw2)
 
         if plan2 and (plan2.get("answer_markdown") or "").strip():
-            refined_md = (plan2.get("answer_markdown") or "").strip()
-            # Choose the final visible answer based on both draft and refined outputs.
-            # Still keep plan2 flags/queries for routing/media decisions.
-            answer_md = choose_final_answer(draft_answer_md, refined_md)
+            answer_md = (plan2.get("answer_markdown") or "").strip()
 
         # Soft updates from plan2
         if plan2:
@@ -2949,13 +2332,6 @@ async def generate_cloud_structured(
 
         # ✅ Re-apply tool budget to stop model from forcing media unexpectedly
         need_web, need_img, need_yt = apply_tool_budget(user_flags, need_web, need_img, need_yt, is_first_turn=is_first_turn)
-
-        # ✅ Explicit user intent / learning intent should win even if plan2 says need_youtube=false.
-        # (Otherwise the model can accidentally disable YouTube and we never fetch results.)
-        if user_flags.get("want_youtube") or user_flags.get("auto_youtube") or FORCE_YOUTUBE:
-            need_yt = True
-        if user_flags.get("want_images") or user_flags.get("auto_images") or FORCE_IMAGES:
-            need_img = True
 
         # Fallbacks again
         if need_img and not img_q:
@@ -3057,21 +2433,15 @@ async def generate_cloud_structured(
 
     # 5) YouTube
     if need_yt and yt_q:
-        if not YOUTUBE_API_KEY:
-            print("YOUTUBE DISABLED: missing YOUTUBE_API_KEY", flush=True)
         youtube = await fast_youtube(yt_q, num=2)
         print("YOUTUBE RESULTS:", len(youtube), flush=True)
         # If none after filtering, disable embed to avoid broken UI but keep sources promotion
         if not youtube:
             need_yt = False
 
-    # Ensure no plan/schema JSON leaks into the visible answer
-    answer_md = strip_plan_json_leak(answer_md)
-
     # Optional: prepend a short line when user explicitly asked for media
     try:
         if answer_md and (images or youtube):
-            # Only when the user explicitly asked (not when auto_youtube kicks in).
             if user_flags.get("want_youtube") or user_flags.get("want_images"):
                 media_parts: List[str] = []
                 if youtube:
@@ -3168,45 +2538,11 @@ async def persist_assistant_message(
         except Exception as e:
             print(f"⚠️ Failed to insert assistant chat_message: {e}", flush=True)
 
-
-def detect_domain_for_message(message: str, requested_domain: Optional[str]) -> str:
-    requested = (requested_domain or "").strip()
-    if requested and validate_domain(requested):
-        return requested
-    try:
-        return classify_domain(message or "")
-    except Exception:
-        return "general"
-
-
-async def update_query_domain(query_id: str, detected_domain: str) -> None:
-    if not (SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY and query_id and detected_domain):
-        return
-
-    headers = {
-        "apikey": SUPABASE_SERVICE_ROLE_KEY,
-        "Authorization": f"Bearer {SUPABASE_SERVICE_ROLE_KEY}",
-        "Content-Type": "application/json",
-        "Prefer": "return=minimal",
-    }
-    url = f"{SUPABASE_URL}/rest/v1/queries?id=eq.{query_id}"
-    body = {"detected_domain": detected_domain}
-    try:
-        async with httpx.AsyncClient(timeout=10) as client:
-            resp = await client.patch(url, headers=headers, json=body)
-            if resp.status_code >= 400:
-                print("⚠️ Failed to update query domain:", resp.status_code, resp.text[:200], flush=True)
-    except Exception as e:
-        print(f"⚠️ Failed to update query domain: {e}", flush=True)
-
 # -----------------------
 # ENDPOINT
 # -----------------------
 @router.post("/cloud_plus", response_model=ChatResponse)
-async def chat_cloud_plus(req: ChatRequest, request: Request):
-    from app.services.rate_limit import enforce_chat_rate_limit
-
-    await enforce_chat_rate_limit(request, req.user_id)
+async def chat_cloud_plus(req: ChatRequest):
     article_title = req.article_title
     article_url = req.article_url
     article_context = None
@@ -3216,10 +2552,6 @@ async def chat_cloud_plus(req: ChatRequest, request: Request):
         article_title = article_title or (article_context or {}).get("title")
         article_url = article_url or (article_context or {}).get("url")
 
-    detected_domain = detect_domain_for_message(req.message, req.domain)
-    if req.query_id:
-        await update_query_domain(req.query_id, detected_domain)
-
     payload = await generate_cloud_structured(
         req.message,
         req.history,
@@ -3227,8 +2559,6 @@ async def chat_cloud_plus(req: ChatRequest, request: Request):
         article_url=article_url,
         article_context=article_context,
         session_id=req.session_id,
-        user_id=req.user_id,
-        domain=detected_domain,
         max_history=4 if req.user_id else 2,
     )
 
