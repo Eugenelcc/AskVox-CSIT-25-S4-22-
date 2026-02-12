@@ -139,14 +139,15 @@ const ChatMessages: FC<ChatMessagesProps> = ({ messages, isLoading }) => {
               key={m.id}
               className={`av-chat-row ${isUser ? "av-chat-row-user" : "av-chat-row-assistant"}`}
             >
-              <div className={`av-chat-bubble ${isUser ? "av-chat-bubble-user" : "av-chat-bubble-assistant"}`}>
-                {isAssistant ? (
-                  <>
-                    <div className="av-md">
-                      <ReactMarkdown remarkPlugins={[remarkGfm]} components={markdownComponents}>
-                        {cleanMarkdown(m.content)}
-                      </ReactMarkdown>
-                    </div>
+              <div className="av-message-container">
+                <div className={`av-chat-bubble ${isUser ? "av-chat-bubble-user" : "av-chat-bubble-assistant"}`}>
+                  {isAssistant ? (
+                    <>
+                      <div className="av-md">
+                        <ReactMarkdown remarkPlugins={[remarkGfm]} components={markdownComponents}>
+                          {cleanMarkdown(m.content)}
+                        </ReactMarkdown>
+                      </div>
 
                     {/* ✅ Images (below text like ChatGPT) */}
                     {images.length > 0 && (
@@ -227,69 +228,86 @@ const ChatMessages: FC<ChatMessagesProps> = ({ messages, isLoading }) => {
                         </div>
                       </div>
                     )}
-
-                    {/* Report button at bottom left */}
-                    <div style={{ position: "relative", marginTop: "8px" }}>
-                      <button
-                        className="av-message-menu-btn"
-                        onClick={() => {
-                          setReportModal(reportModal === m.id ? null : m.id);
-                          setSelectedReason(null);
-                        }}
-                        title="Report message"
-                      >
-                        ⋯
-                      </button>
-                      {reportSuccess === m.id && (
-                        <div className="av-report-success-modal">
-                          <button
-                            className="av-report-close"
-                            onClick={() => setReportSuccess(null)}
-                          >
-                            ✕
-                          </button>
-                          <div className="av-report-checkmark">✓</div>
-                          <div className="av-report-success-title">Report Submitted</div>
-                          <div className="av-report-success-text">
-                            Thank you for reporting.<br />
-                            We will review the report.
-                          </div>
-                        </div>
-                      )}
-                      {reportModal === m.id && !reportSuccess && (
-                        <div className="av-report-modal">
-                          <div className="av-report-title">Report Message</div>
-                          <div className="av-report-subtitle">Why are you reporting this message?</div>
-                          <div className="av-report-options">
-                            {["Harmful Information", "Misinformation", "Outdated information"].map((reason) => (
-                              <label key={reason} className="av-report-checkbox">
-                                <input
-                                  type="checkbox"
-                                  checked={selectedReason === reason}
-                                  onChange={() => setSelectedReason(selectedReason === reason ? null : reason)}
-                                />
-                                <span>{reason}</span>
-                              </label>
-                            ))}
-                          </div>
-                          <button
-                            className="av-report-submit"
-                            onClick={() => handleReportSubmit(m.id)}
-                            disabled={!selectedReason || isSubmitting}
-                          >
-                            {isSubmitting ? "Submitting..." : "Submit"}
-                          </button>
-                        </div>
-                      )}
-                    </div>
                   </>
                 ) : (
                   m.content
                 )}
               </div>
+
+                {/* Report button BELOW bubble - only for assistant messages */}
+                {isAssistant && (
+                  <div className="av-report-button-wrapper-below">
+                  <button
+                    className="av-message-menu-btn"
+                    onClick={() => {
+                      setReportModal(reportModal === m.id ? null : m.id);
+                      setSelectedReason(null);
+                    }}
+                    title="Report message"
+                  >
+                    ⋯
+                  </button>
+                  
+                  {/* Success modal */}
+                  {reportSuccess === m.id && (
+                    <div className="av-report-success-modal">
+                      <button
+                        className="av-report-close"
+                        onClick={() => setReportSuccess(null)}
+                      >
+                        ✕
+                      </button>
+                      <div className="av-report-checkmark">✓</div>
+                      <div className="av-report-success-title">Report Submitted</div>
+                      <div className="av-report-success-text">
+                        Thank you for reporting.<br />
+                        We will review the report.
+                      </div>
+                    </div>
+                  )}
+                  
+                  {/* Report modal */}
+                  {reportModal === m.id && !reportSuccess && (
+                    <div className="av-report-modal">
+                      <button
+                        className="av-report-close"
+                        onClick={() => {
+                          setReportModal(null);
+                          setSelectedReason(null);
+                        }}
+                        title="Close"
+                      >
+                        ✕
+                      </button>
+                      <div className="av-report-title">Report Message</div>
+                      <div className="av-report-subtitle">Why are you reporting this message?</div>
+                      <div className="av-report-options">
+                        {["Harmful Information", "Misinformation", "Outdated information"].map((reason) => (
+                          <label key={reason} className="av-report-checkbox">
+                            <input
+                              type="checkbox"
+                              checked={selectedReason === reason}
+                              onChange={() => setSelectedReason(selectedReason === reason ? null : reason)}
+                            />
+                            <span>{reason}</span>
+                          </label>
+                        ))}
+                      </div>
+                      <button
+                        className="av-report-submit"
+                        onClick={() => handleReportSubmit(m.id)}
+                        disabled={!selectedReason || isSubmitting}
+                      >
+                        {isSubmitting ? "Submitting..." : "Submit"}
+                      </button>
+                    </div>
+                  )}
+                </div>
+                )}
+              </div>
             </div>
-          );
-        })}
+        );
+      })}
 
         {isLoading && (
           <div className="av-chat-row av-chat-row-assistant">
