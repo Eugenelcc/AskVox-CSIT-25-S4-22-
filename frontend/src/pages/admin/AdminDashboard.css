@@ -30,10 +30,12 @@
 
 .admin-lower{display:grid;grid-template-columns:2fr 1fr;gap:18px;margin-top:18px}
 .chart-card{background:linear-gradient(180deg,#333 0%,#141313 33%,#191919 62.5%);border-radius:46px;padding:22px;min-height:320px}
-.bars{display:flex;align-items:flex-end;gap:24px;height:360px;margin-top:12px;border:1px solid #3b3939;border-radius:12px;padding:16px}
-.bar{width:52px;background:linear-gradient(180deg,#bf721b 0%,#3a0a66 76.92%);border-radius:8px}
-.week{display:flex;justify-content:space-between;color:#686666;margin-top:8px}
-.week span{width:44px;text-align:center}
+.bars{display:flex;align-items:flex-end;gap:12px;height:360px;margin-top:12px;border:1px solid #3b3939;border-radius:12px;padding:16px}
+.bar-container{display:flex;flex-direction:column;align-items:center;gap:4px;flex:1}
+.bar-label{color:#ff951c;font-size:16px;font-weight:600;min-height:20px;text-align:center}
+.bar{width:100%;background:linear-gradient(180deg,#bf721b 0%,#3a0a66 76.92%);border-radius:8px;max-width:52px;margin:0 auto}
+.week{display:flex;gap:12px;color:#686666;margin-top:8px;padding:0 16px}
+.week span{flex:1;text-align:center}
 
 .donut-wrap{display:flex;justify-content:center;align-items:center;height:260px}
 .donut{width:220px;height:220px;border-radius:50%;position:relative}

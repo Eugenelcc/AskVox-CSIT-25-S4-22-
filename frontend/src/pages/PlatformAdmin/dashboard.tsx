@@ -33,10 +33,13 @@ export default function PlatformAdminDashboard() {
     const loadCounts = async () => {
       try {
         const s = await supabase
-          .from("subscriptions")
+          .from("profiles")
           .select("id", { count: "exact", head: true })
-          .eq("is_active", true);
-        const p = await supabase.from("profiles").select("id", { count: "exact", head: true });
+          .eq("role", "paid_user");
+        const p = await supabase
+          .from("profiles")
+          .select("id", { count: "exact", head: true })
+          .eq("role", "user");
         const f = await supabase.from("flagged_responses").select("id", { count: "exact", head: true });
         if (!mounted) return;
         setPaidCount(s.count || 0);
@@ -50,23 +53,32 @@ export default function PlatformAdminDashboard() {
 
     const loadWeekly = async () => {
       try {
-        const since = new Date();
-        since.setDate(since.getDate() - 7);
-        const { data } = await supabase
-          .from("users")
-          .select("created_at")
-          .gte("created_at", since.toISOString());
+        // Get ALL users with role='user' (no date range filter)
+        const { data, error } = await supabase
+          .from("profiles")
+          .select("updated_at, role")
+          .eq("role", "user");
+        
+        if (error) {
+          console.error("Weekly query error:", error);
+          return;
+        }
+
+        console.log("All users fetched (role=user):", data);
         const bins = [0, 0, 0, 0, 0, 0, 0]; // Mon..Sun
+        const dayNames = ["Mon", "Tues", "Wed", "Thur", "Fri", "Sat", "Sun"];
         (data || []).forEach((row: any) => {
-          const d = row?.created_at ? new Date(row.created_at) : null;
+          const d = row?.updated_at ? new Date(row.updated_at) : null;
           if (!d) return;
           const jsDay = d.getDay();
           const idx = jsDay === 0 ? 6 : jsDay - 1;
           bins[idx] += 1;
         });
+        console.log("Weekly data grouped by day of week:", bins);
         setWeekly(bins);
-      } catch {
-        setWeekly([400, 300, 400, 550, 420, 480, 300]);
+      } catch (err) {
+        console.error("Weekly load error:", err);
+        setWeekly([0, 0, 0, 0, 0, 0, 0]);
       }
     };
 
@@ -74,13 +86,13 @@ export default function PlatformAdminDashboard() {
       try {
         const { data } = await supabase
           .from("flagged_responses")
-          .select("id,reason,category,type,created_at")
+          .select("reason")
           .limit(500);
         let mis = 0,
           harm = 0,
           out = 0;
         ((data as any as FlagRow[]) || []).forEach((r) => {
-          const v = (r.reason || r.category || r.type || "").toString().toLowerCase();
+          const v = (r.reason || "").toString().toLowerCase();
           if (v.includes("mis")) mis++;
           else if (v.includes("harm")) harm++;
           else if (v.includes("out")) out++;
@@ -149,11 +161,13 @@ export default function PlatformAdminDashboard() {
               <div className="metric-title">Registered User for the Week</div>
               <div className="bars">
                 {weekly.map((h, i) => (
-                  <div
-                    key={i}
-                    className="bar"
-                    style={{ height: `${(Math.min(Math.max(h, 0), 600) / 600) * 300 + 40}px` }}
-                  />
+                  <div key={i} className="bar-container">
+                    <div className="bar-label">{h}</div>
+                    <div
+                      className="bar"
+                      style={{ height: `${(Math.min(Math.max(h, 0), 600) / 600) * 300 + 40}px` }}
+                    />
+                  </div>
                 ))}
               </div>
               <div className="week">

@@ -6,6 +6,7 @@ import remarkGfm from "remark-gfm";
 import "./ChatMessages.css";
 import Loading from "./Loading";
 import type { ChatMessage } from "../../types/database";
+import { supabase } from "../../supabaseClient";
 
 interface ChatMessagesProps {
   messages: ChatMessage[];
@@ -41,6 +42,58 @@ function normalizeMarkdownImageSrc(src: string | undefined): string | null {
 
 const ChatMessages: FC<ChatMessagesProps> = ({ messages, isLoading }) => {
   const [openSourcesForMsg, setOpenSourcesForMsg] = useState<string | number | null>(null);
+  const [reportModal, setReportModal] = useState<string | number | null>(null);
+  const [selectedReason, setSelectedReason] = useState<string | null>(null);
+  const [isSubmitting, setIsSubmitting] = useState(false);
+  const [reportSuccess, setReportSuccess] = useState<string | number | null>(null);
+
+  const handleReportSubmit = async (messageId: string | number) => {
+    if (!selectedReason) return;
+    setIsSubmitting(true);
+    try {
+      const msg = messages.find((m) => m.id === messageId);
+      if (!msg) {
+        console.error("Message not found");
+        return;
+      }
+
+      // Get current user ID
+      const { data: { user } } = await supabase.auth.getUser();
+      if (!user?.id) {
+        alert("You must be logged in to report messages");
+        return;
+      }
+
+      console.log("Submitting report:", { messageId, reason: selectedReason, content: msg.content.substring(0, 50) });
+
+      const { data, error } = await supabase.from("flagged_responses").insert({
+        response_id: Math.floor(Math.random() * 1000000),
+        reason: selectedReason,
+        flagged_text: msg.content.substring(0, 500),
+        status: "Pending",
+        user_id: user.id,
+        created_at: new Date().toISOString(),
+      }).select();
+
+      if (error) {
+        console.error("Supabase error:", error);
+        alert(`Failed to submit report: ${error.message}`);
+        return;
+      }
+
+      console.log("Report submitted successfully:", data);
+      setReportSuccess(messageId);
+      setReportModal(null);
+      setSelectedReason(null);
+      setTimeout(() => setReportSuccess(null), 3000);
+    } catch (err) {
+      console.error("Failed to report message:", err);
+      alert("An error occurred while submitting the report");
+    } finally {
+      setIsSubmitting(false);
+    }
+  };
+
   const markdownComponents = useMemo(
     () => ({
       img: ({ src, alt }: { src?: string; alt?: string }) => {
@@ -174,6 +227,61 @@ const ChatMessages: FC<ChatMessagesProps> = ({ messages, isLoading }) => {
                         </div>
                       </div>
                     )}
+
+                    {/* Report button at bottom left */}
+                    <div style={{ position: "relative", marginTop: "8px" }}>
+                      <button
+                        className="av-message-menu-btn"
+                        onClick={() => {
+                          setReportModal(reportModal === m.id ? null : m.id);
+                          setSelectedReason(null);
+                        }}
+                        title="Report message"
+                      >
+                        ⋯
+                      </button>
+                      {reportSuccess === m.id && (
+                        <div className="av-report-success-modal">
+                          <button
+                            className="av-report-close"
+                            onClick={() => setReportSuccess(null)}
+                          >
+                            ✕
+                          </button>
+                          <div className="av-report-checkmark">✓</div>
+                          <div className="av-report-success-title">Report Submitted</div>
+                          <div className="av-report-success-text">
+                            Thank you for reporting.<br />
+                            We will review the report.
+                          </div>
+                        </div>
+                      )}
+                      {reportModal === m.id && !reportSuccess && (
+                        <div className="av-report-modal">
+                          <div className="av-report-title">Report Message</div>
+                          <div className="av-report-subtitle">Why are you reporting this message?</div>
+                          <div className="av-report-options">
+                            {["Harmful Information", "Misinformation", "Outdated information"].map((reason) => (
+                              <label key={reason} className="av-report-checkbox">
+                                <input
+                                  type="checkbox"
+                                  checked={selectedReason === reason}
+                                  onChange={() => setSelectedReason(selectedReason === reason ? null : reason)}
+                                />
+                                <span>{reason}</span>
+                              </label>
+                            ))}
+                          </div>
+                          <button
+                            className="av-report-submit"
+                            onClick={() => handleReportSubmit(m.id)}
+                            disabled={!selectedReason || isSubmitting}
+                          >
+                            {isSubmitting ? "Submitting..." : "Submit"}
+                          </button>
+                        </div>
+                      )}
+                    </div>
                   </>
                 ) : (
                   m.content
