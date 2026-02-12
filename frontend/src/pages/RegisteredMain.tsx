@@ -52,7 +52,7 @@ type ArticleContext = {
   all_sources?: { title: string; url: string; source: string; domain_url?: string }[];
 };
 type NewsContext = {
-  sessionId: string | null;
+  sessionId: string ;
   title: string;
   imageUrl?: string;
   description?: string;
