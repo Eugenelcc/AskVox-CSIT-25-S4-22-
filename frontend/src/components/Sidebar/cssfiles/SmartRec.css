@@ -78,6 +78,7 @@
     color: var(--av-orange);
     opacity: 0.70;
   }
+
   
   .sr-refresh{
     width: 32px;
@@ -88,6 +89,46 @@
 
   .sr-refresh:hover {
     color: var(--av-orange);
+  }
+
+  .sr-domainList--refreshing .sr-domainCard{
+    opacity: 0.65;
+  }
+
+  .sr-refreshOverlay{
+    position: absolute;
+    inset: 0;
+    display: grid;
+    place-items: center;
+    z-index: 5;
+
+    font-family:'ABeeZee', system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif;
+    font-weight:400;
+    font-size:18px;
+    letter-spacing:0.02em;
+    color: var(--av-orange);
+    text-align: center;
+
+    background: rgba(0,0,0,0.25);
+    pointer-events: none;
+    transform: translateY(-64px);
+  }
+
+  .sr-dots::after{
+    content: "...";
+    display: inline-block;
+    overflow: hidden;
+    width: 0ch;
+    vertical-align: bottom;
+    animation: sr-ellipsis 1.2s steps(4, end) infinite;
+  }
+
+  @keyframes sr-ellipsis{
+    0%{ width: 0ch; }
+    25%{ width: 1ch; }
+    50%{ width: 2ch; }
+    75%{ width: 3ch; }
+    100%{ width: 0ch; }
   }
   
   .sr-list{
@@ -247,6 +288,7 @@
 
 
   .sr-domainList{
+    position: relative;
     display:flex;
     flex-direction:column;
     gap:14px;
