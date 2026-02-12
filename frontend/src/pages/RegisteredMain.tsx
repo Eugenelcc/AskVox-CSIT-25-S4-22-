@@ -52,7 +52,7 @@ type ArticleContext = {
   all_sources?: { title: string; url: string; source: string; domain_url?: string }[];
 };
 type NewsContext = {
-  sessionId: string ;
+  sessionId: string | null;
   title: string;
   imageUrl?: string;
   description?: string;
@@ -1039,12 +1039,13 @@ export default function Dashboard({
         return null;
       }
 
-      currentSessionId = newSession.id;
+      const createdSid = newSession.id;
+      currentSessionId = createdSid;
       bootstrappingSessionIdRef.current = currentSessionId;
       setActiveSessionId(currentSessionId);
 
       // Mark pending immediately so if navigation remounts, the new instance can show prompt + loader.
-      markPendingForSession(currentSessionId, trimmed);
+      markPendingForSession(createdSid, trimmed);
 
       // ✅ Leave the /newchat route and enter the actual session route.
       // Otherwise the app can remain visually stuck on the New Chat page.
