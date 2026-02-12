@@ -10,9 +10,8 @@
     "preview": "vite preview"
   },
   "optionalDependencies": {
-  "@rollup/rollup-linux-x64-gnu": "4.6.1"
-},
-
+    "@rollup/rollup-linux-x64-gnu": "4.6.1"
+  },
   "dependencies": {
     "@stripe/react-stripe-js": "^5.4.1",
     "@stripe/stripe-js": "^8.6.1",
@@ -20,6 +19,7 @@
     "framer-motion": "^12.23.26",
     "gsap": "^3.14.1",
     "lucide-react": "^0.556.0",
+    "pdfjs-dist": "^5.4.624",
     "react": "^19.2.0",
     "react-dom": "^19.2.0",
     "react-markdown": "^10.1.0",
