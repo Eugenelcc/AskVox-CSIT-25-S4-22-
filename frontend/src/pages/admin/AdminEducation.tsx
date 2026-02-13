@@ -60,13 +60,31 @@ export default function AdminEducation() {
   const runAction = async (id: string, action: "approve" | "reject") => {
     try {
       if (action === "approve") {
+        // First, get the request to find the user_id
+        const request = rows.find(r => r.id === id);
+        if (!request) throw new Error("Request not found");
+
+        // Update the verification request status
         const { error } = await supabase
           .from("education_verification_requests")
           .update({ status: "approved", reviewed_by: me, reviewed_at: new Date().toISOString() })
           .eq("id", id);
         if (error) throw error;
+
+        // Update the user's role in profiles table to "educational_user"
+        const { error: roleError } = await supabase
+          .from("profiles")
+          .update({ role: "educational_user" })
+          .eq("id", request.user_id);
+        
+        if (roleError) {
+          console.error("Failed to update user role:", roleError);
+          setToast("Approved but failed to update role: " + roleError.message);
+          return;
+        }
+
         setRows((r) => r.filter((x) => x.id !== id));
-        setToast("Approved • User can subscribe to Educational plan directly");
+        setToast("Approved • User upgraded to educational role");
       } else {
         const { error } = await supabase
           .from("education_verification_requests")

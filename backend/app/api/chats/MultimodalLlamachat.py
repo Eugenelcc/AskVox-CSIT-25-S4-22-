@@ -16,6 +16,7 @@ from app.services.rag_service import retrieve_rag_context, is_rag_domain, is_rag
 from app.services.domain_classifier import classify_domain
 from app.services.moderation_service import moderate_message
 from app.services.domain_classifier import classify_domain, validate_domain
+from app.api.watermark import insert_watermark
 
 load_dotenv()
 
@@ -3536,4 +3537,6 @@ async def chat_cloud_plus(req: ChatRequest, request: Request):
             model_used="llama2-cloudrag",
         )
 
-    return ChatResponse(answer=payload.answer_markdown, payload=payload)
+    # Apply watermark to response
+    watermarked_answer = insert_watermark(payload.answer_markdown)
+    return ChatResponse(answer=watermarked_answer, payload=payload)

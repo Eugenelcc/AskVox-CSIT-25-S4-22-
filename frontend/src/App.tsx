@@ -460,6 +460,21 @@ function App() {
               : <Navigate to="/login" />
           }
         />
+        {/* Educational User Settings Route */}
+        <Route
+          path="/educationaluser/settings"
+          element={
+            session
+              ? (
+                  isEducationalUser ? (
+                    <RegisterMain session={session} paid={false} initialTab="settings" micEnabled={micEnabled} setMicEnabled={setMicEnabled} sidebarVariant="educational" />
+                  ) : (
+                    <Navigate to="/newchat" />
+                  )
+                )
+              : <Navigate to="/login" />
+          }
+        />
         <Route
           path="/settings/account"
           element={
