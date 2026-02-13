@@ -1,7 +1,8 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { useNavigate } from "react-router-dom";
+import { useLocation, useNavigate } from "react-router-dom";
 import Background from "../../components/background/background";
 import PlatformAdminNavRail from "./PlatformAdminNavRail";
+import { supabase } from "../../supabaseClient";
 import "./flagged.css";
 
 type Status = "Pending" | "Resolved";
@@ -25,8 +26,6 @@ type FlagRow = {
 
 const STATUS_OPTIONS: readonly Status[] = ["Pending", "Resolved"] as const;
 const REASON_OPTIONS: readonly ReasonKey[] = ["misinfo", "outdated", "harmful"] as const;
-
-const STORAGE_KEY = "pa_flagged_rows_v1";
 
 function mmddyyyyToIso(dateStr: string): string | null {
   const s = dateStr.trim();
@@ -175,26 +174,61 @@ const INITIAL_ROWS: FlagRow[] = [
 
 export default function FlaggedResponsePage() {
   const navigate = useNavigate();
-  /** rows state + localStorage */
-  const [rows, setRows] = useState<FlagRow[]>(() => {
-    try {
-      const raw = localStorage.getItem(STORAGE_KEY);
-      if (!raw) return INITIAL_ROWS;
-      const parsed = JSON.parse(raw) as FlagRow[];
-      if (!Array.isArray(parsed) || parsed.length === 0) return INITIAL_ROWS;
-      return parsed;
-    } catch {
-      return INITIAL_ROWS;
-    }
-  });
+  const location = useLocation();
+  const [rows, setRows] = useState<FlagRow[]>([]);
+  const [loading, setLoading] = useState(true);
 
+  // Fetch flagged responses from Supabase
   useEffect(() => {
-    try {
-      localStorage.setItem(STORAGE_KEY, JSON.stringify(rows));
-    } catch {
-      // no-op
-    }
-  }, [rows]);
+    const fetchFlaggedResponses = async () => {
+      try {
+        setLoading(true);
+        const { data, error } = await supabase
+          .from('flagged_responses')
+          .select('*')
+          .order('created_at', { ascending: false });
+
+        if (error) {
+          console.error('Error fetching flagged responses:', error);
+          setRows(INITIAL_ROWS);
+          return;
+        }
+
+        if (!data || data.length === 0) {
+          setRows(INITIAL_ROWS);
+          return;
+        }
+
+        // Map Supabase data to FlagRow format
+        const mappedRows: FlagRow[] = data.map((item: any) => {
+          const reasonLower = (item.reason || '').toLowerCase();
+          let reasonKey: ReasonKey = 'misinfo';
+          if (reasonLower.includes('harm')) reasonKey = 'harmful';
+          else if (reasonLower.includes('outdat')) reasonKey = 'outdated';
+          else if (reasonLower.includes('misinfo') || reasonLower.includes('misinformation')) reasonKey = 'misinfo';
+
+          return {
+            flagId: `F${item.id}`,
+            id: String(item.id),
+            reasonKey,
+            response: item.flagged_text || 'No response text available',
+            createdAt: item.created_at,
+            status: item.status as Status,
+            resolvedExplanation: item.resolution_notes || undefined,
+          };
+        });
+
+        setRows(mappedRows);
+      } catch (err) {
+        console.error('Failed to fetch flagged responses:', err);
+        setRows(INITIAL_ROWS);
+      } finally {
+        setLoading(false);
+      }
+    };
+
+    fetchFlaggedResponses();
+  }, []);
 
   // Draft filters
   const [draftStatus, setDraftStatus] = useState<Set<Status>>(new Set());
@@ -207,6 +241,40 @@ export default function FlaggedResponsePage() {
   const [appliedReason, setAppliedReason] = useState<Set<ReasonKey>>(new Set());
   const [appliedFromIso, setAppliedFromIso] = useState("");
   const [appliedToIso, setAppliedToIso] = useState("");
+
+  // Allow dashboard drill-down via query params:
+  // /platformadmin/flagged?status=Pending&reason=misinfo
+  useEffect(() => {
+    const params = new URLSearchParams(location.search);
+    const statusParam = params.get("status");
+    const reasonParam = params.get("reason");
+
+    const nextStatus = new Set<Status>();
+    if (statusParam === "Pending" || statusParam === "Resolved") {
+      nextStatus.add(statusParam);
+    }
+
+    const nextReason = new Set<ReasonKey>();
+    if (reasonParam === "misinfo" || reasonParam === "outdated" || reasonParam === "harmful") {
+      nextReason.add(reasonParam);
+    }
+
+    // Only apply if any valid filter is present; avoid clobbering manual filters unnecessarily.
+    if (nextStatus.size === 0 && nextReason.size === 0) return;
+
+    setDraftStatus(new Set(nextStatus));
+    setDraftReason(new Set(nextReason));
+    setAppliedStatus(new Set(nextStatus));
+    setAppliedReason(new Set(nextReason));
+    setAppliedFromIso("");
+    setAppliedToIso("");
+    setDraftFrom("");
+    setDraftTo("");
+    setPage(1);
+    setOpenStatusDrop(false);
+    setOpenReasonDrop(false);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [location.search]);
 
   // dropdown controls
   const [openStatusDrop, setOpenStatusDrop] = useState(false);
@@ -337,15 +405,104 @@ export default function FlaggedResponsePage() {
     setIsEditing(true);
   };
 
-  const saveExplanation = () => {
+  const saveExplanation = async () => {
     if (!selected) return;
     if (selected.status !== "Resolved") return;
+
+    // Update in Supabase
+    try {
+      const { error } = await supabase
+        .from('flagged_responses')
+        .update({ resolution_notes: explanationDraft })
+        .eq('id', selected.id);
+      
+      if (error) {
+        console.error('Failed to update explanation in Supabase:', error);
+        alert('Failed to save explanation. Please try again.');
+        return;
+      }
+    } catch (err) {
+      console.error('Error updating explanation:', err);
+      alert('Failed to save explanation. Please try again.');
+      return;
+    }
 
     setRows((prev) =>
       prev.map((r) =>
         r.flagId === selected.flagId && r.id === selected.id ? { ...r, resolvedExplanation: explanationDraft } : r
       )
     );
+    setIsEditing(false);
+  };
+
+  const resolveRequest = async () => {
+    if (!selected) return;
+    if (selected.status !== "Pending") return;
+
+    // Update in Supabase
+    try {
+      const { error } = await supabase
+        .from('flagged_responses')
+        .update({ 
+          status: 'Resolved',
+          resolved_at: new Date().toISOString()
+        })
+        .eq('id', selected.id);
+      
+      if (error) {
+        console.error('Failed to resolve request in Supabase:', error);
+        alert('Failed to resolve request. Please try again.');
+        return;
+      }
+    } catch (err) {
+      console.error('Error resolving request:', err);
+      alert('Failed to resolve request. Please try again.');
+      return;
+    }
+
+    // Update local state
+    setRows((prev) =>
+      prev.map((r) =>
+        r.flagId === selected.flagId && r.id === selected.id ? { ...r, status: 'Resolved' } : r
+      )
+    );
+    
+    // Enable editing for the newly resolved request
+    setIsEditing(true);
+  };
+
+  const unresolveRequest = async () => {
+    if (!selected) return;
+    if (selected.status !== "Resolved") return;
+
+    // Update in Supabase
+    try {
+      const { error } = await supabase
+        .from('flagged_responses')
+        .update({ 
+          status: 'Pending',
+          resolved_at: null
+        })
+        .eq('id', selected.id);
+      
+      if (error) {
+        console.error('Failed to unresolve request in Supabase:', error);
+        alert('Failed to change status. Please try again.');
+        return;
+      }
+    } catch (err) {
+      console.error('Error changing status:', err);
+      alert('Failed to change status. Please try again.');
+      return;
+    }
+
+    // Update local state
+    setRows((prev) =>
+      prev.map((r) =>
+        r.flagId === selected.flagId && r.id === selected.id ? { ...r, status: 'Pending' } : r
+      )
+    );
+    
     setIsEditing(false);
   };
 
@@ -481,9 +638,13 @@ export default function FlaggedResponsePage() {
           </div>
 
           <div className="pa-tableBody">
-            {pageRows.length === 0 ? (
+            {loading ? (
               <div className="pa-empty">
-                No results. Adjust filters and click <b>Apply</b>.
+                Loading flagged responses...
+              </div>
+            ) : pageRows.length === 0 ? (
+              <div className="pa-empty">
+                {rows.length === 0 ? 'No flagged responses yet.' : 'No results. Adjust filters and click Apply.'}
               </div>
             ) : (
               pageRows.map((row) => (
@@ -604,13 +765,35 @@ export default function FlaggedResponsePage() {
                   >
                     Edit
                   </button>
+
+                  <button
+                    type="button"
+                    className="pa-modal__actionBtn"
+                    onClick={unresolveRequest}
+                    disabled={isEditing}
+                    title="Change back to Pending"
+                  >
+                    Reopen
+                  </button>
                 </div>
               )}
 
               {selected.status === "Pending" && (
-                <div className="pa-modal__hint">
-                  This request is <b>Pending</b>. Resolve first to write an explanation.
-                </div>
+                <>
+                  <div className="pa-modal__hint">
+                    This request is <b>Pending</b>. Resolve first to write an explanation.
+                  </div>
+                  <div className="pa-modal__actions">
+                    <button
+                      type="button"
+                      className="pa-modal__actionBtn"
+                      onClick={resolveRequest}
+                      title="Mark as Resolved"
+                    >
+                      Resolve
+                    </button>
+                  </div>
+                </>
               )}
             </div>
           </div>
