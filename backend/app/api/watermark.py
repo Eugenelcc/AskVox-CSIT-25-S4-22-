@@ -77,20 +77,31 @@ def insert_watermark(text: str, density: float = 0.05) -> str:
         if chars[i] in CYRILLIC_LOOKALIKES:
             replace_candidates.append(i)
 
+    # IMPORTANT: do replacements before insertions.
+    # Insertions shift indices, which can cause replace_candidates positions to point
+    # at the wrong character (and crash with KeyError).
+    if replace_candidates:
+        replace_count = max(1, int(len(replace_candidates) * density))
+        selected_replacements = random.sample(
+            replace_candidates, min(replace_count, len(replace_candidates))
+        )
+        for pos in selected_replacements:
+            if 0 <= pos < len(chars):
+                repl = CYRILLIC_LOOKALIKES.get(chars[pos])
+                if repl is not None:
+                    chars[pos] = repl
+
     markers = list(ZERO_WIDTH | THIN_SPACES)
 
     if insert_candidates and markers:
         insert_count = max(1, int(len(insert_candidates) * density))
-        selected_inserts = random.sample(insert_candidates, min(insert_count, len(insert_candidates)))
+        selected_inserts = random.sample(
+            insert_candidates, min(insert_count, len(insert_candidates))
+        )
         selected_inserts.sort(reverse=True)
         for pos in selected_inserts:
-            chars.insert(pos, random.choice(markers))
-
-    if replace_candidates:
-        replace_count = max(1, int(len(replace_candidates) * density))
-        selected_replacements = random.sample(replace_candidates, min(replace_count, len(replace_candidates)))
-        for pos in selected_replacements:
-            chars[pos] = CYRILLIC_LOOKALIKES[chars[pos]]
+            if 0 <= pos <= len(chars):
+                chars.insert(pos, random.choice(markers))
 
     return "".join(chars)
 
