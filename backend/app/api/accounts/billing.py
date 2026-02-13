@@ -331,7 +331,7 @@ async def checkout(
                         rows = get_prof.json() or []
                         cur_role = ((rows[0].get("role") if rows else None) or "").strip().lower()
                     if cur_role != "platform_admin":
-                        next_role = "educational" if sub_type == "education" else "paid_user"
+                        next_role = "educational_user" if sub_type == "education" else "paid_user"
                         upd = await client.patch(
                             f"{base}/rest/v1/profiles?id=eq.{uid}",
                             headers={
@@ -358,7 +358,7 @@ async def checkout(
                         "Content-Type": "application/json",
                         "Prefer": "return=representation",
                     },
-                    json={"role": "educational"},
+                    json={"role": "educational_user"},
                 )
                 if upd.status_code not in (200, 204):
                     # Don't fail checkout on role update; log-like error via response
@@ -681,7 +681,7 @@ async def delete_subscription(
             )
             if dresp.status_code not in (200, 204):
                 raise HTTPException(status_code=dresp.status_code, detail=dresp.text)
-            # Reset profile role back to 'user' if currently 'educational' or 'paid_user'
+            # Reset profile role back to 'user' if currently 'educational_user', 'educational' or 'paid_user'
             get_profile = await client.get(
                 f"{base}/rest/v1/profiles",
                 headers={
@@ -700,7 +700,7 @@ async def delete_subscription(
                 rows = get_profile.json() or []
                 cur_role = (rows[0].get("role") if rows else None) or ""
                 cur_role_norm = cur_role.strip().lower() if isinstance(cur_role, str) else ""
-                if cur_role_norm != "platform_admin" and cur_role_norm in ("educational", "paid_user", "paid"):
+                if cur_role_norm != "platform_admin" and cur_role_norm in ("educational", "educational_user", "paid_user", "paid"):
                     upd = await client.patch(
                         f"{base}/rest/v1/profiles",
                         headers={

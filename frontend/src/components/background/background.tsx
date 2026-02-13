@@ -31,7 +31,7 @@ const AskVoxStarBackground: React.FC = () => {
           background: #000;
           overflow: hidden;
           pointer-events: none; /* ensure background never blocks clicks */
-          z-index: 0;
+          z-index: -1;
         }
 
         .star {

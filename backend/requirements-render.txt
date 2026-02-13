@@ -127,7 +127,10 @@ pydantic_core==2.41.5
 
 # --- Uploads / Forms ---
 python-multipart==0.0.20
-
+pypdf==5.3.0
+python-docx==1.1.2
+python-multipart==0.0.20
+pytokens==0.3.0
 # --- Optional: keep if you actually use it ---
 numpy==2.3.5
 

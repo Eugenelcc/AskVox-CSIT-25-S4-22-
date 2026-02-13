@@ -3,6 +3,7 @@ import type { Session } from "@supabase/supabase-js";
 import { useNavigate } from "react-router-dom";
 import AskVoxStarBackground from "../../components/background/background";
 import AdminNavRail from "../../components/Sidebar/AdminNavRail";
+import EducationalNavRail from "../../components/Sidebar/EducationalNavRail";
 import { supabase } from "../../supabaseClient";
 import "./cssfiles/AccountDetails.css";
 import "./cssfiles/AccountEdit.css";
@@ -29,6 +30,7 @@ function getFileExt(f: File): string {
 interface Props {
   session: Session;
   isAdmin: boolean;
+  sidebarVariant?: "educational";
 }
 
 const ICONS: Array<{ id: string; src: string }> = [
@@ -246,7 +248,7 @@ export function AccountAvatarCard({ session }: { session: Session }) {
   );
 }
 
-export default function AccountAvatarPage({ session, isAdmin }: Props) {
+export default function AccountAvatarPage({ session, isAdmin, sidebarVariant }: Props) {
   const navigate = useNavigate();
 
   if (isAdmin) {
@@ -256,6 +258,22 @@ export default function AccountAvatarPage({ session, isAdmin }: Props) {
         <div className="admin-wrap admin-layout">
           <aside className="admin-sidebar">
             <AdminNavRail onNavigate={(path) => navigate(path)} />
+          </aside>
+          <main>
+            <AccountAvatarCard session={session} />
+          </main>
+        </div>
+      </>
+    );
+  }
+
+  if (sidebarVariant === "educational") {
+    return (
+      <>
+        <AskVoxStarBackground />
+        <div className="admin-wrap admin-layout">
+          <aside className="admin-sidebar">
+            <EducationalNavRail activeTab="settings" onNavigate={(path) => navigate(path)} />
           </aside>
           <main>
             <AccountAvatarCard session={session} />

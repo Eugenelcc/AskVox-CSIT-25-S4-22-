@@ -75,7 +75,7 @@
   .orb-caption {
     font-family: "ABeeZee", system-ui, -apple-system, BlinkMacSystemFont,
       "Segoe UI", sans-serif;
-    font-size: clamp(22px, 3.6vw, 40px);
+    font-size: clamp(28px, 3.8vw, 42px);
     line-height: 1.25;
     letter-spacing: 0.02em;
     color: #f0f0f0;
@@ -111,7 +111,7 @@
     left: var(--content-offset, 0px);
     right: 0;
     bottom: calc(
-      16px + env(safe-area-inset-bottom) + var(--av-chatbar-h) + 14px
+      16px + env(safe-area-inset-bottom) + var(--av-chatbar-h) + 100px
     );
     z-index: 19;
     display: flex;
@@ -162,6 +162,49 @@
 
   .av-voice-captions > * {
     pointer-events: auto;
+  }
+
+  /* Fixed-height, scrollable caption area (keeps layout concise) */
+  .av-voice-captions__scroll {
+    height: 140px;
+    max-height: 140px;
+    overflow-y: auto;
+    width: 100%;
+    pointer-events: auto;
+    padding: 0 6px;
+
+    /* Use normal block flow so overflow scrolling works reliably */
+    display: block;
+    overscroll-behavior: contain;
+    -webkit-overflow-scrolling: touch;
+    touch-action: pan-y;
+
+    /* "Invisible" scroll container (no background/border); hide scrollbars */
+    scrollbar-width: none;
+    -ms-overflow-style: none;
+  }
+
+  .av-voice-captions__scroll::-webkit-scrollbar {
+    width: 0;
+    height: 0;
+  }
+
+  .av-voice-caption-item {
+    width: 100%;
+  }
+
+  .av-voice-caption-label {
+    font-family: "ABeeZee", system-ui, -apple-system, BlinkMacSystemFont,
+      "Segoe UI", sans-serif;
+    font-size: 14px;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    text-align: left;
+    margin: 0 0 2px 0;
+  }
+
+  .av-voice-caption-text {
+    padding-left: 14px;
   }
 
   @media (max-width: 520px) {
@@ -247,6 +290,3 @@
   .fm-btnSecondary{background:#333;border-color:#5a3c18}
   .fm-btnPrimary{background:#434343;border-color:#754B1C}
   
-
-
-

@@ -16,6 +16,7 @@ export default function SmartRecPanel({
 }) {
   const [domains, setDomains] = useState<DomainCard[]>([]);
   const [loading, setLoading] = useState(false);
+  const [isRefreshing, setIsRefreshing] = useState(false);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
 
   const abortRef = useRef<AbortController | null>(null);
@@ -52,6 +53,7 @@ export default function SmartRecPanel({
   // ✅ GENERATE only when user clicks refresh (model call)
   const generate = async () => {
     if (!userId) return;
+    setIsRefreshing(true);
     setLoading(true);
     setErrorMsg(null);
     try {
@@ -66,6 +68,7 @@ export default function SmartRecPanel({
       setErrorMsg(e?.message || "Failed to generate recommendations.");
     } finally {
       setLoading(false);
+      setIsRefreshing(false);
     }
   };
 
@@ -124,8 +127,16 @@ export default function SmartRecPanel({
 
       <div className="av-divider" />
 
-      <div className="sr-domainList">
+      <div className={`sr-domainList ${isRefreshing ? "sr-domainList--refreshing" : ""}`.trim()}>
         {!!errorMsg && <div className="sr-empty">{errorMsg}</div>}
+
+        {isRefreshing && (
+          <div className="sr-refreshOverlay" aria-live="polite">
+            <span>
+              Refreshing Smart Rec Topic<span className="sr-dots" aria-hidden="true" />
+            </span>
+          </div>
+        )}
 
         {domains.map((d) => (
           <section key={d.domain} className="sr-domainCard">
@@ -143,7 +154,7 @@ export default function SmartRecPanel({
                   type="button"
                   className="sr-topicBtn"
                   onClick={() => handleTopicClick(t.id)}
-                  disabled={loading}
+                  disabled={loading || isRefreshing}
                   title={t.topic}
                 >
                   {t.topic}

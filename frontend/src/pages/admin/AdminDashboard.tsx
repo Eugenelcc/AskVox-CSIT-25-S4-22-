@@ -89,14 +89,23 @@ export default function AdminDashboard() {
   return (
     <>
       <AskVoxStarBackground />
-      <div className="admin-wrap admin-layout">
+      <div className="admin-wrap admin-layout admin-dashboard--compact">
         <aside className="admin-sidebar">
           <AdminNavRail onNavigate={(path)=>navigate(path)} />
         </aside>
         <main>
           <div className="admin-top">
             <h1 className="admin-title">Hey Platform Admin</h1>
-            <button className="logout-btn" onClick={logout}>Logout</button>
+            <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
+              <button
+                className="review-btn"
+                type="button"
+                onClick={() => navigate("/admin/education")}
+              >
+                Educational Verification Requests →
+              </button>
+              <button className="logout-btn" onClick={logout}>Logout</button>
+            </div>
           </div>
 
         <div className="admin-cards">
@@ -142,11 +151,6 @@ export default function AdminDashboard() {
           </div>
         </div>
 
-          <div className="admin-footer">
-            <button className="review-btn" onClick={()=>navigate("/admin/education")}>
-              Review Education Verification Requests →
-            </button>
-          </div>
         </main>
       </div>
     </>

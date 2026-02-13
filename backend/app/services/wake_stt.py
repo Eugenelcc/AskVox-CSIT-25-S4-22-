@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 import asyncio
 import base64
 import json
@@ -5,7 +7,7 @@ import os
 import re
 import time
 import zipfile
-from typing import Optional, List
+from typing import Any, Optional, List, TYPE_CHECKING
 
 import numpy as np
 from fastapi import APIRouter, Body, Query, Request
@@ -14,9 +16,14 @@ from app.core.config import settings
 from rapidfuzz import fuzz
 
 # ✅ Use faster-whisper instead of openai-whisper
+if TYPE_CHECKING:
+    from faster_whisper import WhisperModel as WhisperModelType
+else:
+    WhisperModelType = Any
+
 try:
     from faster_whisper import WhisperModel
-except Exception as e: 
+except Exception:
     WhisperModel = None
 
 try:
@@ -96,7 +103,7 @@ def _extract_wake_window(text: str, max_words: int = 5) -> str:
     return " ".join(text.split()[:max_words])
 
 
-_model: Optional[WhisperModel] = None
+_model: Optional[WhisperModelType] = None
 _vosk_model: Optional[object] = None
 _vosk_model_path_runtime: Optional[str] = None
 _vosk_prepare_lock = asyncio.Lock()

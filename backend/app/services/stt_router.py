@@ -4,15 +4,15 @@ from fastapi import APIRouter, UploadFile, File, HTTPException
 
 
 
-ASSEMBLYAI_API_KEY = os.getenv("ASSEMBLYAI_API_KEY")
-if not ASSEMBLYAI_API_KEY:
-    raise RuntimeError("Missing ASSEMBLYAI_API_KEY in environment")
+ASSEMBLYAI_API_KEY = (os.getenv("ASSEMBLYAI_API_KEY") or "").strip()
 UPLOAD_URL = "https://api.assemblyai.com/v2/upload"
 TRANSCRIBE_URL = "https://api.assemblyai.com/v2/transcript"
 
-headers = {
-    "authorization": ASSEMBLYAI_API_KEY,
-}
+
+def _headers() -> dict:
+    if not ASSEMBLYAI_API_KEY:
+        return {}
+    return {"authorization": ASSEMBLYAI_API_KEY}
 
 
 router = APIRouter(prefix="/stt", tags=["stt"])
@@ -23,9 +23,11 @@ router = APIRouter(prefix="/stt", tags=["stt"])
 
 def upload_to_assemblyai(audio_bytes: bytes) -> str:
     """Uploads audio bytes to AssemblyAI and returns upload_url."""
+    if not ASSEMBLYAI_API_KEY:
+        raise HTTPException(status_code=500, detail="ASSEMBLYAI_API_KEY not configured")
     response = requests.post(
         UPLOAD_URL,
-        headers=headers,
+        headers=_headers(),
         data=audio_bytes,
     )
 
@@ -37,6 +39,8 @@ def upload_to_assemblyai(audio_bytes: bytes) -> str:
 
 def request_transcription(upload_url: str) -> str:
     """Creates a transcription request and waits for result."""
+    if not ASSEMBLYAI_API_KEY:
+        raise HTTPException(status_code=500, detail="ASSEMBLYAI_API_KEY not configured")
     json_body = {
         "audio_url": upload_url
     }
@@ -45,7 +49,7 @@ def request_transcription(upload_url: str) -> str:
     res = requests.post(
         TRANSCRIBE_URL,
         json=json_body,
-        headers=headers
+        headers=_headers()
     )
 
     if res.status_code != 200:
@@ -57,7 +61,7 @@ def request_transcription(upload_url: str) -> str:
     while True:
         poll_res = requests.get(
             f"{TRANSCRIBE_URL}/{transcript_id}",
-            headers=headers
+            headers=_headers()
         ).json()
 
         status = poll_res["status"]
@@ -75,6 +79,8 @@ def request_transcription(upload_url: str) -> str:
 @router.post("/")
 async def stt_endpoint(file: UploadFile = File(...)):
     """Receives audio from frontend, sends to AssemblyAI, returns transcript."""
+    if not ASSEMBLYAI_API_KEY:
+        raise HTTPException(status_code=500, detail="AssemblyAI STT is not configured on this backend")
     audio_bytes = await file.read()
     try:
         print(f"🗣️  [STT] Using AssemblyAI; recv bytes={len(audio_bytes)}")

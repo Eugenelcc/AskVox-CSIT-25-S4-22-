@@ -1,4 +1,4 @@
-import { useState, useEffect, useMemo, useRef, useCallback } from "react";
+import { useState, useEffect, useMemo, useRef, useCallback, lazy, Suspense } from "react";
 import { useLocation, useNavigate } from "react-router-dom";
 import { supabase } from "../supabaseClient";
 import type { Session } from "@supabase/supabase-js";
@@ -7,12 +7,12 @@ import type { Session } from "@supabase/supabase-js";
 // Components
 import Background from "../components/background/background";
 import ChatBar from "../components/chat/ChatBar";
-import BlackHole from "../components/background/Blackhole";
 import RegisteredTopBar from "../components/TopBars/RegisteredTopBar"; 
 import PaidTopBar from "../components/TopBars/PaidTopBar";
 import ChatMessages from "../components/chat/ChatMessages"; 
 import Sidebar from "../components/Sidebar/Chat_Sidebar"; 
 import NavRail from "../components/Sidebar/NavRail"; 
+import EducationalNavRail from "../components/Sidebar/EducationalNavRail";
 import "./cssfiles/registerMain.css";
 import { useWakeWordBackend } from "../hooks/useWakeWordBackend";
 import SettingsSidebar from "../components/Sidebar/Settings_Sidebar";
@@ -20,8 +20,9 @@ import DiscoverSidebar from "../components/Sidebar/Discover_Sidebar";
 import SmartRecPanel from "../components/Sidebar/SmartRec_sidebar";
 import Quiz from "../components/quiz/Quiz";
 
-import { DiscoverView } from "../components/Discover/DiscoverView";
-import NewsContent from "../components/Discover/NewsContent/NewsContent";
+const BlackHole = lazy(() => import("../components/background/Blackhole"));
+const DiscoverView = lazy(() => import("../components/Discover/DiscoverView"));
+const NewsContent = lazy(() => import("../components/Discover/NewsContent/NewsContent"));
 
 
 // Types
@@ -73,18 +74,48 @@ export default function Dashboard({
   initialTab,
   micEnabled,
   setMicEnabled,
+  sidebarVariant,
 }: {
   session: Session;
   paid?: boolean;
   initialTab?: string;
   micEnabled: boolean;
   setMicEnabled: (next: boolean | ((prev: boolean) => boolean)) => void;
+  sidebarVariant?: "educational";
 }) {
   const navigate = useNavigate();
   const location = useLocation();
 
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [isSending, setIsSending] = useState(false);
+
+  const messagesRef = useRef(messages);
+  useEffect(() => {
+    messagesRef.current = messages;
+  }, [messages]);
+
+  const pendingPollSessionRef = useRef<string | null>(null);
+
+  const pendingKey = useCallback((sid: string) => `av:pending:${sid}`, []);
+  const pendingPromptKey = useCallback((sid: string) => `av:pending_prompt:${sid}`, []);
+  const markPendingForSession = useCallback((sid: string, prompt: string) => {
+    try {
+      // Don't overwrite an existing marker; the earliest timestamp is most useful.
+      if (sessionStorage.getItem(pendingKey(sid))) return;
+      sessionStorage.setItem(pendingKey(sid), String(Date.now()));
+      sessionStorage.setItem(pendingPromptKey(sid), prompt);
+    } catch {
+      // ignore
+    }
+  }, [pendingKey, pendingPromptKey]);
+  const clearPendingForSession = useCallback((sid: string) => {
+    try {
+      sessionStorage.removeItem(pendingKey(sid));
+      sessionStorage.removeItem(pendingPromptKey(sid));
+    } catch {
+      // ignore
+    }
+  }, [pendingKey, pendingPromptKey]);
   const [isSmartRecPending, setIsSmartRecPending] = useState(false);
   const [profile, setProfile] = useState<UserProfile | null>(null);
   const [isQuizOpen, setIsQuizOpen] = useState(false);
@@ -93,8 +124,7 @@ export default function Dashboard({
   const [isRecording, setIsRecording] = useState(false);
   const [isTranscribing, setIsTranscribing] = useState(false);
   const [isTtsPlaying, setIsTtsPlaying] = useState(false);
-  const [voiceUserCaption, setVoiceUserCaption] = useState("");
-  const [voiceAssistantCaption, setVoiceAssistantCaption] = useState("");
+  const [voiceCaptionFeed, setVoiceCaptionFeed] = useState<Array<{ id: string; role: "user" | "assistant"; text: string }>>([]);
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
   const audioChunksRef = useRef<BlobPart[]>([]);
   const audioPlayRef = useRef<HTMLAudioElement | null>(null);
@@ -106,6 +136,29 @@ export default function Dashboard({
   const ttsActiveRef = useRef(false);
   const ttsSanitizeRef = useRef<((t: string) => string) | null>(null);
   const voiceSessionIdRef = useRef<string | null>(null);
+  // When a brand-new session is created, we temporarily skip auto-refreshing messages
+  // because the first DB read can race ahead of the first chat_messages insert and
+  // wipe the optimistic message from the UI.
+  const bootstrappingSessionIdRef = useRef<string | null>(null);
+
+  const voiceCaptionScrollRef = useRef<HTMLDivElement | null>(null);
+  const voiceCaptionStickToBottomRef = useRef(true);
+
+  const onVoiceCaptionScroll = () => {
+    const el = voiceCaptionScrollRef.current;
+    if (!el) return;
+    voiceCaptionStickToBottomRef.current =
+      el.scrollTop + el.clientHeight >= el.scrollHeight - 6;
+  };
+
+  useEffect(() => {
+    const el = voiceCaptionScrollRef.current;
+    if (!el) return;
+    if (!voiceCaptionStickToBottomRef.current) return;
+    try {
+      el.scrollTop = el.scrollHeight;
+    } catch {}
+  }, [voiceCaptionFeed.length]);
   
   // Sidebar & Navigation State
   const [sessions, setSessions] = useState<{
@@ -119,7 +172,9 @@ export default function Dashboard({
   const [activeTab, setActiveTab] = useState<string>(
     initialTab ?? (location.pathname === "/discover" ? "discover" : (location.pathname === "/newchat" ? "newchat" : "newchat"))
   ); // Tracks which tab is active in the NavRail
-  const [isSidebarOpen, setSidebarOpen] = useState(false); // Sidebar visibility
+  const [isSidebarOpen, setSidebarOpen] = useState(
+    initialTab === "chats" || initialTab === "settings" || initialTab === "smartrec" || initialTab === "discover"
+  ); // Sidebar visibility
   const [isNewChat, setIsNewChat] = useState(false); //When user starts a new chat
   const [newsContext, setNewsContext] = useState<NewsContext | null>(null);
   // Stores chat folders
@@ -153,6 +208,16 @@ export default function Dashboard({
     () => `askvox:customize:v1:${session.user.id}`,
     [session.user.id]
   );
+
+  // File upload for document extraction and image attachments
+  const fileInputRef = useRef<HTMLInputElement | null>(null);
+  const [isExtractingFile, setIsExtractingFile] = useState(false);
+  const [attachedFile, setAttachedFile] = useState<{
+    file: File;
+    type: 'image' | 'pdf' | 'docx' | 'txt' | 'other';
+    previewUrl?: string;
+    extractedText?: string;
+  } | null>(null);
 
   const readCustomizeStore = useCallback((): CustomizeStore => {
     try {
@@ -303,6 +368,10 @@ export default function Dashboard({
 
   useEffect(() => {
     if (!activeSessionId || isNewChat) return; 
+
+    // Avoid spawning multiple poll loops for the same session.
+    if (pendingPollSessionRef.current === activeSessionId) return;
+    if (bootstrappingSessionIdRef.current && bootstrappingSessionIdRef.current === activeSessionId) return;
 
     const fetchMessages = async () => {
        const { data } = await supabase.from("chat_messages").select("*").eq("session_id", activeSessionId).order("created_at", { ascending: true });
@@ -491,6 +560,42 @@ export default function Dashboard({
 
 
   // --- Handlers ---
+
+  // If we deep-link or refresh on a session that has an article_context,
+  // hydrate `newsContext` automatically so follow-up questions keep the article.
+  useEffect(() => {
+    if (!activeSessionId || isNewChat) return;
+
+    const sess = sessions.find((s) => s.id === activeSessionId);
+    const articleCtx = sess?.article_context;
+
+    if (articleCtx?.title) {
+      const slug = articleCtx.title
+        .toLowerCase()
+        .replace(/[^a-z0-9]+/g, '-')
+        .replace(/(^-|-$)/g, '') || 'article';
+      setNewsContext({
+        sessionId: activeSessionId,
+        title: articleCtx.title,
+        imageUrl: articleCtx.imageUrl,
+        description: articleCtx.description,
+        publishedAt: articleCtx.publishedAt,
+        releasedMinutes: articleCtx.releasedMinutes,
+        all_sources: articleCtx.all_sources,
+        url: articleCtx.url,
+        slug,
+        path: "/discover/news",
+      });
+      return;
+    }
+
+    // If this session has no article context, clear any stale context from other sessions.
+    setNewsContext((prev) => {
+      if (!prev?.sessionId) return prev;
+      if (prev.sessionId === activeSessionId) return prev;
+      return null;
+    });
+  }, [activeSessionId, isNewChat, sessions]);
 
   const handleSelectSession = (sessionId: string) => {
     setActiveSessionId(sessionId);
@@ -772,6 +877,98 @@ export default function Dashboard({
     };
   }, [isSmartRecPending, activeSessionId, isNewChat, refreshActiveSessionMessages]);
 
+  // If we navigated/remounted while a request is still running, rehydrate the user's prompt
+  // and show the loading animation until an assistant reply appears in chat_messages.
+  useEffect(() => {
+    if (!activeSessionId || isNewChat) return;
+
+    let startedAt = 0;
+    try {
+      const raw = sessionStorage.getItem(pendingKey(activeSessionId));
+      startedAt = raw ? Number(raw) : 0;
+    } catch {
+      startedAt = 0;
+    }
+    if (!startedAt || !Number.isFinite(startedAt)) return;
+
+    pendingPollSessionRef.current = activeSessionId;
+
+    // If the pending marker is stale, clear it.
+    const ageMs = Date.now() - startedAt;
+    if (ageMs > 2 * 60 * 1000) {
+      clearPendingForSession(activeSessionId);
+      return;
+    }
+
+    // Ensure the user prompt is visible even if DB insert hasn't propagated yet.
+    try {
+      const p = sessionStorage.getItem(pendingPromptKey(activeSessionId)) || "";
+      if (p && (!messagesRef.current || messagesRef.current.length === 0)) {
+        setMessages([
+          {
+            id: `pending-${startedAt}`,
+            senderId: session.user.id,
+            content: p,
+            createdAt: new Date(startedAt).toISOString(),
+            displayName: profile?.username ?? "User",
+          },
+        ]);
+      }
+    } catch {
+      // ignore
+    }
+
+    setIsSending(true);
+    let cancelled = false;
+    let handle: number | null = null;
+    let attempts = 0;
+    const maxAttempts = 210; // ~3.5 minutes (RunPod can be slow)
+
+    const tick = async () => {
+      attempts += 1;
+      const sid = activeSessionId;
+      const mapped = await refreshActiveSessionMessages(sid);
+      if (cancelled) return;
+
+      const last = mapped && mapped.length ? mapped[mapped.length - 1] : null;
+      const done = last && last.senderId === LLAMA_ID && String(last.content || "").trim();
+      if (done) {
+        clearPendingForSession(sid);
+        setIsSending(false);
+        if (pendingPollSessionRef.current === sid) pendingPollSessionRef.current = null;
+        return;
+      }
+
+      if (attempts >= maxAttempts) {
+        clearPendingForSession(sid);
+        setIsSending(false);
+        if (pendingPollSessionRef.current === sid) pendingPollSessionRef.current = null;
+        return;
+      }
+
+      handle = window.setTimeout(tick, 1000);
+    };
+
+    handle = window.setTimeout(tick, 400);
+    return () => {
+      cancelled = true;
+      // Allow re-entering if session changes.
+      if (pendingPollSessionRef.current === activeSessionId) {
+        pendingPollSessionRef.current = null;
+      }
+      if (handle) window.clearTimeout(handle);
+    };
+  }, [
+    activeSessionId,
+    isNewChat,
+    refreshActiveSessionMessages,
+    session.user.id,
+    profile?.username,
+    pendingKey,
+    pendingPromptKey,
+    clearPendingForSession,
+  ]);
+
   // Keep component state in sync with /newchat and /chats/:sessionId
   useEffect(() => {
     const path = location.pathname;
@@ -790,7 +987,11 @@ export default function Dashboard({
       setActiveSessionId(sid);
       setActiveTab("chats");
       setSidebarOpen(true);
-      void refreshActiveSessionMessages(sid);
+      // If this is a freshly created session, don't immediately refresh from DB.
+      // We'll refresh right after the first user message insert completes.
+      if (!bootstrappingSessionIdRef.current || bootstrappingSessionIdRef.current !== sid) {
+        void refreshActiveSessionMessages(sid);
+      }
     }
   }, [location.pathname, refreshActiveSessionMessages]);
 
@@ -811,11 +1012,115 @@ export default function Dashboard({
   }, [location.pathname]);
 
 
+  // File upload handlers
+  const handleAttachClick = () => {
+    fileInputRef.current?.click();
+  };
+
+  const handleFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    setIsExtractingFile(true);
+
+    // Determine file type
+    const fileName = file.name.toLowerCase();
+    const isImage = file.type.startsWith("image/");
+    let fileType: 'image' | 'pdf' | 'docx' | 'txt' | 'other' = 'other';
+
+    if (isImage) {
+      fileType = 'image';
+      // Create preview URL for images
+      const previewUrl = URL.createObjectURL(file);
+      
+      // Store image data in session storage
+      const reader = new FileReader();
+      reader.onloadend = () => {
+        const base64 = reader.result as string;
+        try {
+          sessionStorage.setItem('av:last_uploaded_image', JSON.stringify({
+            name: file.name,
+            type: file.type,
+            size: file.size,
+            dataUrl: base64
+          }));
+        } catch (err) {
+          console.warn('Could not store image in session:', err);
+        }
+      };
+      reader.readAsDataURL(file);
+
+      setAttachedFile({ file, type: fileType, previewUrl });
+      setIsExtractingFile(false);
+    } else {
+      // Determine document type
+      if (fileName.endsWith('.pdf')) fileType = 'pdf';
+      else if (fileName.endsWith('.docx') || fileName.endsWith('.doc')) fileType = 'docx';
+      else if (fileName.endsWith('.txt') || fileName.endsWith('.md') || fileName.endsWith('.csv')) fileType = 'txt';
+
+      // Extract text from documents
+      const formData = new FormData();
+      formData.append("file", file);
+
+      try {
+        const res = await fetch(`${API_BASE_URL}/files/extract-text`, {
+          method: "POST",
+          body: formData,
+        });
+
+        if (!res.ok) {
+          alert("Failed to extract text from file.");
+          setIsExtractingFile(false);
+          return;
+        }
+
+        const data = await res.json();
+        if (data.error) {
+          alert(data.error);
+          setIsExtractingFile(false);
+          return;
+        }
+
+        const extractedText = data.text || "";
+        setAttachedFile({ file, type: fileType, extractedText });
+      } catch (err) {
+        console.error("File upload error:", err);
+        alert("File upload failed. Please try again.");
+      } finally {
+        setIsExtractingFile(false);
+      }
+    }
+
+    // Reset file input
+    if (fileInputRef.current) {
+      fileInputRef.current.value = "";
+    }
+  };
+
+  const clearAttachment = () => {
+    if (attachedFile?.previewUrl) {
+      URL.revokeObjectURL(attachedFile.previewUrl);
+    }
+    setAttachedFile(null);
+    sessionStorage.removeItem('av:last_uploaded_image');
+  };
+
   const handleSubmit = async (
     text: string,
     options?: { forceNewSession?: boolean; context?: ArticleContext }
   ): Promise<string | null> => {
-    const trimmed = text.trim();
+    let trimmed = text.trim();
+    
+    // If there's an attached file, prepend file context
+    if (attachedFile) {
+      if (attachedFile.type === 'image') {
+        trimmed = `[Image: ${attachedFile.file.name}]\n\n${trimmed || 'Please analyze this image.'}`;
+      } else if (attachedFile.extractedText) {
+        trimmed = `[Document: ${attachedFile.file.name}]\n\nExtracted content:\n${attachedFile.extractedText}\n\n${trimmed ? 'User question: ' + trimmed : ''}`;
+      }
+      clearAttachment();
+    }
+    
     if (!trimmed || !session?.user?.id) return null;
     console.log("💬 [Text] route=llamachats/cloud payload=", trimmed);
 
@@ -853,8 +1158,23 @@ export default function Dashboard({
         return null;
       }
 
-      currentSessionId = newSession.id;
+      const createdSid = newSession.id;
+      currentSessionId = createdSid;
+      bootstrappingSessionIdRef.current = currentSessionId;
       setActiveSessionId(currentSessionId);
+
+      // Mark pending immediately so if navigation remounts, the new instance can show prompt + loader.
+      markPendingForSession(createdSid, trimmed);
+
+      // ✅ Leave the /newchat route and enter the actual session route.
+      // Otherwise the app can remain visually stuck on the New Chat page.
+      setIsNewChat(false);
+      setActiveTab("chats");
+      setSidebarOpen(true);
+      const target = `/chats/${currentSessionId}`;
+      if (location.pathname !== target) {
+        navigate(target, { replace: true });
+      }
 
       // ✅ Refresh sidebar sessions from DB
       const { data: allSessions } = await supabase
@@ -864,6 +1184,11 @@ export default function Dashboard({
         .order('updated_at', { ascending: false });
 
       if (allSessions) setSessions(applyChatStylesToRows(allSessions as DbSessionRow[]));
+    }
+
+    // For existing sessions, mark as pending early too.
+    if (currentSessionId) {
+      markPendingForSession(currentSessionId, trimmed);
     }
 
     // 2. Prepare Name
@@ -951,13 +1276,25 @@ export default function Dashboard({
 
     
     // 4. Save USER message to Supabase (await to avoid race with initial fetch)
-    await supabase.from('chat_messages').insert({ 
+    const { error: userMsgInsertError } = await supabase.from('chat_messages').insert({ 
       session_id: currentSessionId, 
       user_id: session.user.id, 
       role: 'user', 
       content: trimmed,
       display_name: userName // <--- CRITICAL: Sending the name here
     });
+
+    // Now that the first user message is persisted, allow DB refresh.
+    if (bootstrappingSessionIdRef.current === currentSessionId) {
+      bootstrappingSessionIdRef.current = null;
+    }
+    // Only refresh from DB when the insert succeeds; otherwise we'd overwrite the
+    // optimistic message with an empty DB result (common if RLS blocks insert).
+    if (!userMsgInsertError) {
+      void refreshActiveSessionMessages(currentSessionId);
+    } else {
+      console.warn('Failed to insert user chat_message; keeping optimistic UI', userMsgInsertError);
+    }
 
     // Immediately promote locally so the UI reflects recency without waiting
     if (currentSessionId) promoteSessionToTop(currentSessionId);
@@ -1001,7 +1338,9 @@ export default function Dashboard({
               releasedMinutes: newsContext.releasedMinutes,
               all_sources: newsContext.all_sources,
             }
-          : undefined);
+          : (sessions.find((s) => s.id === currentSessionId)?.article_context?.title
+            ? (sessions.find((s) => s.id === currentSessionId)?.article_context as ArticleContext)
+            : undefined));
       const modelMessage = activeContext?.title
         ? `Regarding the article "${activeContext.title}", ${trimmed}`
         : trimmed;
@@ -1038,6 +1377,7 @@ export default function Dashboard({
       if (!response.ok) {
         const errorText = await response.text();
         console.error("❌ AI API error:", response.status, response.statusText, errorText);
+        if (currentSessionId) clearPendingForSession(currentSessionId);
         setIsSending(false);
         return null;
       }
@@ -1052,11 +1392,13 @@ export default function Dashboard({
       // Guard against empty responses (Prevents the "Dots" issue)
       if (!replyText) {
         console.warn("⚠️ Empty response from AI. Not saving.");
+        if (currentSessionId) clearPendingForSession(currentSessionId);
         setIsSending(false);
         return null;
       }
       
       setIsSending(false);
+      if (currentSessionId) clearPendingForSession(currentSessionId);
       
 
       const streamId = `llama-${Date.now()}`;
@@ -1069,8 +1411,46 @@ export default function Dashboard({
         meta,
       }]);
 
+      // Persist assistant response so the session shows full history after reload/switch.
+      // The backend may also mirror assistant messages; avoid duplicates by checking first.
+      try {
+        if (currentSessionId) {
+          const { data: existing } = await supabase
+            .from('chat_messages')
+            .select('id')
+            .eq('session_id', currentSessionId)
+            .eq('role', 'assistant')
+            .eq('content', replyText)
+            .order('created_at', { ascending: false })
+            .limit(1);
+
+          if (!existing || existing.length === 0) {
+            const baseInsert = {
+              session_id: currentSessionId,
+              user_id: session.user.id,
+              role: 'assistant',
+              content: replyText,
+              display_name: 'AskVox',
+            };
+
+            const { error: assistantErr } = await supabase
+              .from('chat_messages')
+              .insert({ ...baseInsert, meta });
+
+            if (assistantErr && isMissingColumnError(assistantErr)) {
+              await supabase.from('chat_messages').insert(baseInsert);
+            } else if (assistantErr) {
+              console.warn('Failed to insert assistant chat_message', assistantErr);
+            }
+          }
+        }
+      } catch (e) {
+        console.warn('Failed to persist assistant chat_message', e);
+      }
+
     } catch (err) { 
        console.error("❌ Error sending message:", err);
+       if (currentSessionId) clearPendingForSession(currentSessionId);
        setIsSending(false); 
     }
     return currentSessionId;
@@ -1186,10 +1566,6 @@ export default function Dashboard({
     try {
       const safeText = (ttsSanitizeRef.current?.(text)) ?? text;
       console.log("🔊 [TTS] requesting playback for:", safeText);
-      if (voiceModeRef.current) {
-        setVoiceUserCaption("");
-        setVoiceAssistantCaption(safeText);
-      }
       // Mark TTS active BEFORE stopping recorder to avoid re-arm race in onstop
       ttsActiveRef.current = true;
       setIsTtsPlaying(true);
@@ -1305,18 +1681,18 @@ export default function Dashboard({
 
         try {
           setIsTranscribing(true);
-          setVoiceUserCaption("");
-          setVoiceAssistantCaption("");
           const formData = new FormData();
           formData.append("file", audioBlob, "utterance.webm");
 
-          const sttRes = await fetch(`${API_BASE_URL}/stt/`, { method: "POST", body: formData });
+          const sttRes = await fetch(`${API_BASE_URL}/gstt/transcribe`, { method: "POST", body: formData });
           if (!sttRes.ok) { console.error("STT request failed"); return; }
           const sttData = await sttRes.json();
           const transcript: string = sttData.text ?? "";
           if (transcript) {
             console.log("🎙️  [VoiceMode STT] transcript:", transcript);
-            setVoiceUserCaption(transcript);
+            const capId = globalThis.crypto?.randomUUID?.() ?? `cap-${Date.now()}-${Math.random()}`;
+            // Stage: replace "listening" with the user's transcript
+            setVoiceCaptionFeed([{ id: capId, role: "user" as const, text: transcript }]);
           }
 
           if (transcript) {
@@ -1484,7 +1860,7 @@ export default function Dashboard({
 
             // Send to Sealion (server should route to SeaLion model), pass query linkage
             console.log("🌊 [VoiceMode] route=sealionchats payload=", transcript);
-            const sealionRes = await fetch(`${API_BASE_URL}/geminichats/`, {
+            const sealionRes = await fetch(`${API_BASE_URL}/llamachats-multi/cloud_plus`, {
               //`${API_BASE_URL}/geminichats/`
               method: "POST",
               headers: { "Content-Type": "application/json" },
@@ -1502,8 +1878,9 @@ export default function Dashboard({
             const sealionData = await sealionRes.json();
             const replyText = sealionData.answer || sealionData.response || sealionData.reply || "";
             if (replyText) {
-              setVoiceUserCaption("");
-              setVoiceAssistantCaption("");
+              const capId = globalThis.crypto?.randomUUID?.() ?? `cap-${Date.now()}-${Math.random()}`;
+              // Stage: replace the user's transcript with the assistant response
+              setVoiceCaptionFeed([{ id: capId, role: "assistant" as const, text: "" }]);
               // Append assistant reply, then reveal with a typewriter effect.
               const botMsgId = globalThis.crypto?.randomUUID?.() ?? `vbot-${Date.now()}-${Math.random()}`;
               setMessages(prev => [
@@ -1520,6 +1897,35 @@ export default function Dashboard({
               // Kick off TTS immediately (sets ttsActiveRef before first await).
               void speakWithGoogleTTS(replyText);
 
+              // Persist assistant voice response (best-effort) so chat history survives reloads.
+              try {
+                if (currentSessionId) {
+                  const { data: existing } = await supabase
+                    .from('chat_messages')
+                    .select('id')
+                    .eq('session_id', currentSessionId)
+                    .eq('role', 'assistant')
+                    .eq('content', replyText)
+                    .order('created_at', { ascending: false })
+                    .limit(1);
+
+                  if (!existing || existing.length === 0) {
+                    const { error: assistantErr } = await supabase.from('chat_messages').insert({
+                      session_id: currentSessionId,
+                      user_id: session.user.id,
+                      role: 'assistant',
+                      content: replyText,
+                      display_name: 'AskVox',
+                    });
+                    if (assistantErr) {
+                      console.warn('Failed to insert assistant voice chat_message', assistantErr);
+                    }
+                  }
+                }
+              } catch (e) {
+                console.warn('Failed to persist assistant voice chat_message', e);
+              }
+
               // Reveal text in the UI without blocking the voice loop.
               void (async () => {
                 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
@@ -1527,11 +1933,11 @@ export default function Dashboard({
                 for (let i = 0; i <= replyText.length; i += step) {
                   const partial = replyText.slice(0, i);
                   setMessages(prev => prev.map(m => (m.id === botMsgId ? { ...m, content: partial } : m)));
-                  setVoiceAssistantCaption(partial);
+                  setVoiceCaptionFeed([{ id: capId, role: "assistant" as const, text: partial }]);
                   await sleep(12);
                 }
                 setMessages(prev => prev.map(m => (m.id === botMsgId ? { ...m, content: replyText } : m)));
-                setVoiceAssistantCaption(replyText);
+                setVoiceCaptionFeed([{ id: capId, role: "assistant" as const, text: replyText }]);
               })();
             } else {
               // No reply; resume listening so the loop continues
@@ -1618,8 +2024,9 @@ export default function Dashboard({
     setIsVoiceMode(true);
     voiceModeRef.current = true;
     voiceSessionIdRef.current = null;
-    setVoiceUserCaption("");
-    setVoiceAssistantCaption("");
+    // Stage: show listening prompt immediately
+    const capId = globalThis.crypto?.randomUUID?.() ?? `cap-${Date.now()}-${Math.random()}`;
+    setVoiceCaptionFeed([{ id: capId, role: "assistant" as const, text: "AskVox is listening" }]);
     // No chatbar, no messages list during voice mode
     setActiveSessionId(null);
     setIsNewChat(true);
@@ -1634,8 +2041,7 @@ export default function Dashboard({
     setIsVoiceMode(false);
     setIsNewChat(false);
     setIsTtsPlaying(false);
-    setVoiceUserCaption("");
-    setVoiceAssistantCaption("");
+    setVoiceCaptionFeed([]);
     try { (window as any).speechSynthesis?.cancel?.(); } catch {}
     // Stop recorder and playback when exiting
     try {
@@ -1821,12 +2227,14 @@ export default function Dashboard({
     discover: 310, // Settings/Discover sidebar width
     settings: 310,
     chats: 368,    // Chat sidebar width
+    smartrec: 368, // SmartRec sidebar width (matches .sr-panel)
   } as const;
 
   const viewingArticle = location.pathname.startsWith("/discover/news");
   const discoverOpen = isSidebarOpen && (activeTab === "discover" || viewingArticle);
   const chatsOpen = isSidebarOpen && activeTab === "chats";
   const settingsOpen = isSidebarOpen && activeTab === "settings";
+  const smartrecOpen = isSidebarOpen && activeTab === "smartrec";
 
   const contentMarginLeft = discoverOpen
     ? `${leftOffset + widths.discover}px`
@@ -1834,18 +2242,27 @@ export default function Dashboard({
     ? `${leftOffset + widths.settings}px`
     : chatsOpen
     ? `${leftOffset + widths.chats}px`
+    : smartrecOpen
+    ? `${leftOffset + widths.smartrec}px`
     : `${navRailWidth}px`;
 
   return (
     <div className="uv-root" style={{ display: 'flex', overflowX: 'hidden', ['--content-offset' as any]: contentMarginLeft }}>
       <Background />
       
-      <NavRail
-        activeTab={activeTab}
-        onTabClick={handleTabClick}
-        onOpenSidebar={(tab) => setSidebarOpen(tab === "chats" || tab === "settings" || tab === "smartrec" || tab === "discover")}
-        avatarPath={profile?.avatar_url ?? "defaults/default.png"}
-      />
+      {sidebarVariant === "educational" ? (
+        <EducationalNavRail
+          activeTab={activeTab === "settings" ? "settings" : "checker"}
+          onNavigate={(path) => navigate(path)}
+        />
+      ) : (
+        <NavRail
+          activeTab={activeTab}
+          onTabClick={handleTabClick}
+          onOpenSidebar={(tab) => setSidebarOpen(tab === "chats" || tab === "settings" || tab === "smartrec" || tab === "discover")}
+          avatarPath={profile?.avatar_url ?? "defaults/default.png"}
+        />
+      )}
 
 
       <Sidebar
@@ -1957,41 +2374,80 @@ export default function Dashboard({
 
           ) : activeTab === "discover" ? (
             location.pathname.startsWith("/discover/news") ? (
-              <NewsContent sidebarOpen={discoverOpen} onAskQuestion={handleNewsQuestion} />
+              <Suspense fallback={null}>
+                <NewsContent sidebarOpen={discoverOpen} onAskQuestion={handleNewsQuestion} />
+              </Suspense>
             ) : (
-              <DiscoverView withNavOffset={false} category={discoverCategory} />
+              <Suspense fallback={null}>
+                <DiscoverView withNavOffset={false} category={discoverCategory} />
+              </Suspense>
             )
           ) : (
             <>
               {/* Voice mode: show minimal listening UI */}
               {isVoiceMode ? (
                 <section className="uv-hero">
-                  <BlackHole isActivated={isBlackHoleActive} />
+                  <Suspense fallback={null}>
+                    <BlackHole isActivated={isBlackHoleActive} />
+                  </Suspense>
                   <div className="av-voice-captions">
                     <div className="av-voice-captions__user">
-                      {!!voiceUserCaption && (
-                        <h4 className="orb-caption" style={{ fontSize: 22, opacity: 0.6, textAlign: "center" }}>
-                          {voiceUserCaption}
-                        </h4>
-                      )}
+                      {/* left column kept for layout; captions are rendered in the center feed */}
                     </div>
 
                     <div className="av-voice-captions__assistant">
-                      {(() => {
-                        const listening =
-                          !voiceUserCaption &&
-                          !voiceAssistantCaption &&
-                          (isRecording || isTranscribing)
-                            ? "Listening…"
-                            : "";
-                        const text = voiceAssistantCaption || listening;
-                        if (!text) return null;
-                        return (
-                          <h4 className="orb-caption" style={{ fontSize: 22, opacity: 0.8 }}>
-                            {text}
-                          </h4>
-                        );
-                      })()}
+                      <div
+                        ref={voiceCaptionScrollRef}
+                        className="av-voice-captions__scroll"
+                        onScroll={onVoiceCaptionScroll}
+                      >
+                        {(() => {
+                          const listening =
+                            !voiceCaptionFeed.length &&
+                            (isRecording || isTranscribing)
+                              ? "Listening…"
+                              : "";
+
+                          const items = voiceCaptionFeed.length
+                            ? voiceCaptionFeed
+                            : (listening ? [{ id: "listening", role: "assistant" as const, text: listening }] : []);
+
+                          return items.map((c) => {
+                            const baseOpacity = c.role === "assistant" ? 0.8 : 0.6;
+                            const isListeningLine = c.id === "listening" || c.text === "AskVox is listening" || c.text === "Listening…";
+                            const label = c.role === "user" ? "User Voice" : "Assistant response";
+                            const cleanedText = isListeningLine
+                              ? c.text
+                              : ((ttsSanitizeRef.current?.(c.text)) ?? c.text);
+                            return (
+                              <div
+                                key={c.id}
+                                className="av-voice-caption-item"
+                                style={{ opacity: baseOpacity }}
+                              >
+                                {isListeningLine ? (
+                                  <h4
+                                    className="orb-caption"
+                                    style={{ fontSize: 22, textAlign: "center" }}
+                                  >
+                                    {cleanedText}
+                                  </h4>
+                                ) : (
+                                  <>
+                                    <div className="av-voice-caption-label visual-askvox">{label}</div>
+                                    <div
+                                      className="orb-caption av-voice-caption-text"
+                                      style={{ fontSize: 22, textAlign: "left" }}
+                                    >
+                                      {cleanedText}
+                                    </div>
+                                  </>
+                                )}
+                              </div>
+                            );
+                          });
+                        })()}
+                      </div>
                     </div>
 
                     <div className="av-voice-captions__spacer" />
@@ -2000,7 +2456,9 @@ export default function Dashboard({
               ) : (
                 !activeSessionId && (
                   <section className="uv-hero">
-                    <BlackHole />
+                    <Suspense fallback={null}>
+                      <BlackHole />
+                    </Suspense>
                   </section>
                 )
               )}
@@ -2062,11 +2520,21 @@ export default function Dashboard({
         </h3>
       </div>
     )}
+    <input
+      ref={fileInputRef}
+      type="file"
+      accept=".pdf,.docx,.txt,.md,.csv,image/*"
+      hidden
+      onChange={handleFileUpload}
+    />
     <ChatBar
       onSubmit={handleSubmit}
-      disabled={isSending}
+      onAttachClick={handleAttachClick}
+      disabled={isSending || isExtractingFile}
       micEnabled={micEnabled}
       onQuizClick={() => setIsQuizOpen(true)}
+      attachedFile={attachedFile}
+      onClearAttachment={clearAttachment}
     />
 
    <Quiz

@@ -26,6 +26,7 @@ if not GEMINI_API_KEY:
 
 router = APIRouter(prefix="/geminichats", tags=["geminichat"])  # keep route stable for frontend
 
+from app.api.watermark import insert_watermark
 from app.services.rate_limit import enforce_chat_rate_limit
 
 Role = Literal["user", "assistant"]
@@ -237,7 +238,9 @@ async def chat(req: ChatRequest, request: Request):
                 except Exception as e:
                     print(f"⚠️ Failed to insert assistant chat_message: {e}")
 
-    return ChatResponse(answer=answer)
+    # Apply watermark to response
+    watermarked_answer = insert_watermark(answer)
+    return ChatResponse(answer=watermarked_answer)
 
 
 #app.include_router(stt_ws_router)

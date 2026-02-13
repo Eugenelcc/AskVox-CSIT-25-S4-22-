@@ -23,6 +23,9 @@ from app.api.news_worker import router as news_worker_router
 from app.services.quiz import router as quiz_router
 from app.api.domain_routes import router as domain_router
 from app.api.sports import router as sports_router
+from app.api.watermark import router as watermark_router
+from app.api.files import router as files_router
+from app.api.ai_text_judge import router as ai_text_judge_router
 
 
 app = FastAPI(title="AskVox API")
@@ -64,6 +67,9 @@ app.include_router(news_worker_router)
 app.include_router(quiz_router)
 app.include_router(domain_router)
 app.include_router(sports_router)
+app.include_router(watermark_router)
+app.include_router(files_router)
+app.include_router(ai_text_judge_router)
 
 
 
