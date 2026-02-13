@@ -132,7 +132,7 @@ python-docx==1.1.2
 python-multipart==0.0.20
 pytokens==0.3.0
 # --- Optional: keep if you actually use it ---
-numpy==1.26.4
+numpy==2.3.5
 
 faster-whisper==1.0.3      # 4x faster, actively maintained Whisper implementation
 sounddevice==0.4.7         # Audio input handling

@@ -2108,12 +2108,14 @@ export default function Dashboard({
     discover: 310, // Settings/Discover sidebar width
     settings: 310,
     chats: 368,    // Chat sidebar width
+    smartrec: 368, // SmartRec sidebar width (matches .sr-panel)
   } as const;
 
   const viewingArticle = location.pathname.startsWith("/discover/news");
   const discoverOpen = isSidebarOpen && (activeTab === "discover" || viewingArticle);
   const chatsOpen = isSidebarOpen && activeTab === "chats";
   const settingsOpen = isSidebarOpen && activeTab === "settings";
+  const smartrecOpen = isSidebarOpen && activeTab === "smartrec";
 
   const contentMarginLeft = discoverOpen
     ? `${leftOffset + widths.discover}px`
@@ -2121,6 +2123,8 @@ export default function Dashboard({
     ? `${leftOffset + widths.settings}px`
     : chatsOpen
     ? `${leftOffset + widths.chats}px`
+    : smartrecOpen
+    ? `${leftOffset + widths.smartrec}px`
     : `${navRailWidth}px`;
 
   return (

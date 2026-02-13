@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { useNavigate } from "react-router-dom";
+import { useLocation, useNavigate } from "react-router-dom";
 import Background from "../../components/background/background";
 import PlatformAdminNavRail from "./PlatformAdminNavRail";
 import { supabase } from "../../supabaseClient";
@@ -174,6 +174,7 @@ const INITIAL_ROWS: FlagRow[] = [
 
 export default function FlaggedResponsePage() {
   const navigate = useNavigate();
+  const location = useLocation();
   const [rows, setRows] = useState<FlagRow[]>([]);
   const [loading, setLoading] = useState(true);
 
@@ -240,6 +241,40 @@ export default function FlaggedResponsePage() {
   const [appliedReason, setAppliedReason] = useState<Set<ReasonKey>>(new Set());
   const [appliedFromIso, setAppliedFromIso] = useState("");
   const [appliedToIso, setAppliedToIso] = useState("");
+
+  // Allow dashboard drill-down via query params:
+  // /platformadmin/flagged?status=Pending&reason=misinfo
+  useEffect(() => {
+    const params = new URLSearchParams(location.search);
+    const statusParam = params.get("status");
+    const reasonParam = params.get("reason");
+
+    const nextStatus = new Set<Status>();
+    if (statusParam === "Pending" || statusParam === "Resolved") {
+      nextStatus.add(statusParam);
+    }
+
+    const nextReason = new Set<ReasonKey>();
+    if (reasonParam === "misinfo" || reasonParam === "outdated" || reasonParam === "harmful") {
+      nextReason.add(reasonParam);
+    }
+
+    // Only apply if any valid filter is present; avoid clobbering manual filters unnecessarily.
+    if (nextStatus.size === 0 && nextReason.size === 0) return;
+
+    setDraftStatus(new Set(nextStatus));
+    setDraftReason(new Set(nextReason));
+    setAppliedStatus(new Set(nextStatus));
+    setAppliedReason(new Set(nextReason));
+    setAppliedFromIso("");
+    setAppliedToIso("");
+    setDraftFrom("");
+    setDraftTo("");
+    setPage(1);
+    setOpenStatusDrop(false);
+    setOpenReasonDrop(false);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [location.search]);
 
   // dropdown controls
   const [openStatusDrop, setOpenStatusDrop] = useState(false);
