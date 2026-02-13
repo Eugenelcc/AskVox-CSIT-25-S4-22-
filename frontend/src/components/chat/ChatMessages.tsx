@@ -139,9 +139,9 @@ const ChatMessages: FC<ChatMessagesProps> = ({ messages, isLoading }) => {
               key={m.id}
               className={`av-chat-row ${isUser ? "av-chat-row-user" : "av-chat-row-assistant"}`}
             >
-              <div className="av-message-container">
-                <div className={`av-chat-bubble ${isUser ? "av-chat-bubble-user" : "av-chat-bubble-assistant"}`}>
-                  {isAssistant ? (
+              {isAssistant ? (
+                <div className="av-message-container">
+                  <div className={`av-chat-bubble av-chat-bubble-assistant`}>
                     <>
                       <div className="av-md">
                         <ReactMarkdown remarkPlugins={[remarkGfm]} components={markdownComponents}>
@@ -228,25 +228,21 @@ const ChatMessages: FC<ChatMessagesProps> = ({ messages, isLoading }) => {
                         </div>
                       </div>
                     )}
-                  </>
-                ) : (
-                  m.content
-                )}
-              </div>
+                    </>
+                  </div>
 
-                {/* Report button BELOW bubble - only for assistant messages */}
-                {isAssistant && (
+                  {/* Report button BELOW bubble - only for assistant messages */}
                   <div className="av-report-button-wrapper-below">
-                  <button
-                    className="av-message-menu-btn"
-                    onClick={() => {
-                      setReportModal(reportModal === m.id ? null : m.id);
-                      setSelectedReason(null);
-                    }}
-                    title="Report message"
-                  >
-                    ⋯
-                  </button>
+                    <button
+                      className="av-message-menu-btn"
+                      onClick={() => {
+                        setReportModal(reportModal === m.id ? null : m.id);
+                        setSelectedReason(null);
+                      }}
+                      title="Report message"
+                    >
+                      ⋯
+                    </button>
                   
                   {/* Success modal */}
                   {reportSuccess === m.id && (
@@ -303,8 +299,12 @@ const ChatMessages: FC<ChatMessagesProps> = ({ messages, isLoading }) => {
                     </div>
                   )}
                 </div>
-                )}
               </div>
+              ) : (
+                <div className="av-chat-bubble av-chat-bubble-user">
+                  {m.content}
+                </div>
+              )}
             </div>
         );
       })}

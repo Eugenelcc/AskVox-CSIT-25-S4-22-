@@ -1,6 +1,5 @@
 .av-chatbar-wrapper {
   position: fixed;
-  /* align with main content area; uses CSS var set on .uv-root */
   left: var(--content-offset, 80px);
   right: 0;
   bottom: var(--av-chatbar-offset, 88px);
@@ -19,12 +18,18 @@
   border-radius: 24px;
   border: 1px solid #ff951c;
   background: #1B1A1A;
-
   display: flex;
-  align-items: flex-end;
+  flex-direction: column;
   padding: 8px 14px;
   gap: 10px;
-  overflow: hidden;
+  overflow: visible;
+}
+
+/* Input row (paperclip, textarea, buttons) */
+.av-input-row {
+  display: flex;
+  align-items: flex-end;
+  gap: 10px;
 }
 
 @media (max-width: 768px) {
@@ -37,6 +42,30 @@
   .av-chatbar-wrapper {
     left: 0;
     bottom: var(--av-chatbar-offset, 12px);
+  }
+
+  .av-file-preview-inline.document {
+    height: 60px;
+  }
+
+  .av-file-preview-inline.image {
+    height: 140px;
+  }
+
+  .av-file-name {
+    font-size: 14px;
+    line-height: 18px;
+  }
+
+  .av-file-type {
+    font-size: 11px;
+    line-height: 14px;
+  }
+
+  .av-file-icon {
+    width: 40px;
+    height: 45px;
+    font-size: 20px;
   }
 }
 
@@ -176,4 +205,136 @@
     transform: scale(1.3);
     opacity: 0;
   }
+}
+
+/* File preview inline (inside chatbar) */
+.av-file-preview-inline {
+  display: flex;
+  gap: 12px;
+  padding: 8px 12px;
+  border-radius: 15px;
+  border: 1px solid #FF951C;
+  background: rgba(27, 26, 26, 0.95);
+  align-items: center;
+  align-self: flex-start;
+}
+
+.av-file-preview-inline.document {
+  flex-direction: row;
+  height: 72px;
+  width: fit-content;
+  max-width: 90%;
+}
+
+.av-file-preview-inline.image {
+  flex-direction: column;
+  align-items: stretch;
+  height: 162px;
+  width: 400px;
+  max-width: 90%;
+  padding: 0;
+  position: relative;
+  background: transparent;
+}
+
+.av-file-preview-image {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  border-radius: 15px;
+}
+
+.av-file-icon {
+  width: 45.69px;
+  height: 50.79px;
+  border-radius: 5px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  font-size: 24px;
+}
+
+.av-file-icon.pdf {
+  background: rgba(255, 55, 55, 0.86);
+}
+
+.av-file-icon.docx {
+  background: rgba(33, 150, 243, 0.86);
+}
+
+.av-file-icon.txt {
+  background: rgba(76, 175, 80, 0.86);
+}
+
+.av-file-icon.other {
+  background: rgba(158, 158, 158, 0.86);
+}
+
+.av-file-info {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.av-file-name {
+  font-family: 'ABeeZee', system-ui, sans-serif;
+  font-weight: 400;
+  font-size: 16px;
+  line-height: 20px;
+  letter-spacing: 0.02em;
+  color: #FFFFFF;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.av-file-type {
+  font-family: 'ABeeZee', system-ui, sans-serif;
+  font-weight: 400;
+  font-size: 12px;
+  line-height: 16px;
+  letter-spacing: 0.02em;
+  color: rgba(255, 255, 255, 0.7);
+  text-transform: uppercase;
+}
+
+.av-file-close-inline {
+  width: 24px;
+  height: 24px;
+  flex-shrink: 0;
+  background: transparent;
+  border: none;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: #FF951C;
+  font-size: 18px;
+  font-weight: bold;
+  padding: 0;
+  transition: transform 0.2s ease, color 0.2s ease;
+}
+
+.av-file-close-inline:hover {
+  transform: scale(1.2);
+  color: #FFA81C;
+}
+
+.av-file-close-inline:active {
+  transform: scale(0.95);
+}
+
+.av-file-preview-inline.image .av-file-close-inline {
+  position: absolute;
+  top: 8px;
+  right: 8px;
+  background: rgba(0, 0, 0, 0.6);
+  border-radius: 50%;
+  width: 28px;
+  height: 28px;
+  backdrop-filter: blur(4px);
+  z-index: 1;
 }

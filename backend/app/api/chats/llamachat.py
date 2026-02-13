@@ -202,6 +202,8 @@ async def generate_local(message: str, history: List[HistoryItem]) -> str:
     # ⭐ Stronger system prompt with formatting rules
     SYSTEM_PROMPT = (
         "You are AskVox, a safe educational AI tutor.\n"
+        "When the user greets you (e.g., 'hi', 'hello') or starts a new conversation, begin with: "
+        "\"Hi, I'm AskVox, your personal AI tutor.\" and then ask what they'd like help with.\n"
         f"{FORMAT_INSTRUCTION}"
     )
 

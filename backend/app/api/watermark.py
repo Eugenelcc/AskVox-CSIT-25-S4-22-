@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import random
 import unicodedata
 from typing import Any
 
@@ -27,6 +28,82 @@ THIN_SPACES = {
     "\u202f",  # NARROW NO-BREAK SPACE
     "\u205f",  # MEDIUM MATHEMATICAL SPACE
 }
+
+CYRILLIC_LOOKALIKES = {
+    "A": "А",
+    "B": "В",
+    "C": "С",
+    "E": "Е",
+    "H": "Н",
+    "K": "К",
+    "M": "М",
+    "O": "О",
+    "P": "Р",
+    "T": "Т",
+    "X": "Х",
+    "a": "а",
+    "c": "с",
+    "e": "е",
+    "o": "о",
+    "p": "р",
+    "x": "х",
+    "y": "у",
+}
+
+
+def insert_watermark(text: str, density: float = 0.05) -> str:
+    """
+    Insert invisible watermark characters (zero-width spaces) into text.
+    
+    Args:
+        text: The text to watermark
+        density: Fraction of positions to watermark (0.0 to 1.0). Default 0.05 = 5%
+    
+    Returns:
+        Watermarked text with invisible characters inserted
+    """
+    if not text or density <= 0:
+        return text
+    
+    # Convert to list for easier manipulation
+    chars = list(text)
+
+    insert_candidates = []
+    replace_candidates = []
+
+    for i in range(len(chars)):
+        if i > 0 and chars[i - 1] in {" ", ",", ".", "!", "?", ";", ":", "\n"}:
+            insert_candidates.append(i)
+        if chars[i] in CYRILLIC_LOOKALIKES:
+            replace_candidates.append(i)
+
+    # IMPORTANT: do replacements before insertions.
+    # Insertions shift indices, which can cause replace_candidates positions to point
+    # at the wrong character (and crash with KeyError).
+    if replace_candidates:
+        replace_count = max(1, int(len(replace_candidates) * density))
+        selected_replacements = random.sample(
+            replace_candidates, min(replace_count, len(replace_candidates))
+        )
+        for pos in selected_replacements:
+            if 0 <= pos < len(chars):
+                repl = CYRILLIC_LOOKALIKES.get(chars[pos])
+                if repl is not None:
+                    chars[pos] = repl
+
+    markers = list(ZERO_WIDTH | THIN_SPACES)
+
+    if insert_candidates and markers:
+        insert_count = max(1, int(len(insert_candidates) * density))
+        selected_inserts = random.sample(
+            insert_candidates, min(insert_count, len(insert_candidates))
+        )
+        selected_inserts.sort(reverse=True)
+        for pos in selected_inserts:
+            if 0 <= pos <= len(chars):
+                chars.insert(pos, random.choice(markers))
+
+    return "".join(chars)
 
 
 def _is_cyrillic(ch: str) -> bool:

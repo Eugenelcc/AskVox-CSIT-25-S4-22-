@@ -1,0 +1,191 @@
+/* Chatbar container that holds both file preview and input */
+.av-chatbar-container {
+  position: fixed;
+  left: var(--content-offset, 80px);
+  right: 0;
+  bottom: var(--av-chatbar-offset, 88px);
+  width: auto;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 12px;
+  z-index: 120;
+}
+
+/* File attachment preview component */
+.av-file-preview {
+  position: relative;
+  filter: drop-shadow(0px 4px 4px rgba(0, 0, 0, 0.25));
+}
+
+/* Document preview (PDF, DOCX, TXT) */
+.av-file-preview.document {
+  width: 459px;
+  max-width: calc(100vw - 160px);
+  height: 71.85px;
+  box-sizing: border-box;
+  background: rgba(27, 26, 26, 0.95);
+  border: 1px solid #FF951C;
+  border-radius: 15px;
+  display: flex;
+  align-items: center;
+  padding: 10px 16px;
+  gap: 12px;
+}
+
+/* Image preview */
+.av-file-preview.image {
+  width: 287px;
+  max-width: calc(100vw - 160px);
+  height: 162px;
+  box-sizing: border-box;
+  border: 1px solid #FF951C;
+  border-radius: 15px;
+  box-shadow: 0px 4px 4px rgba(0, 0, 0, 0.25);
+  overflow: hidden;
+  position: relative;
+}
+
+/* Document type icon */
+.av-file-icon {
+  width: 45.69px;
+  height: 50.79px;
+  border-radius: 5px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  font-size: 24px;
+}
+
+.av-file-icon.pdf {
+  background: rgba(255, 55, 55, 0.86);
+}
+
+.av-file-icon.docx {
+  background: rgba(33, 150, 243, 0.86);
+}
+
+.av-file-icon.txt {
+  background: rgba(76, 175, 80, 0.86);
+}
+
+.av-file-icon.other {
+  background: rgba(158, 158, 158, 0.86);
+}
+
+/* Image thumbnail */
+.av-file-preview.image img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+/* File info container */
+.av-file-info {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+/* Filename */
+.av-file-name {
+  font-family: 'ABeeZee', system-ui, sans-serif;
+  font-style: normal;
+  font-weight: 400;
+  font-size: 20px;
+  line-height: 24px;
+  letter-spacing: 0.02em;
+  color: #FFFFFF;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* File type label (PDF, DOCX, etc.) */
+.av-file-type {
+  font-family: 'ABeeZee', system-ui, sans-serif;
+  font-style: normal;
+  font-weight: 400;
+  font-size: 14px;
+  line-height: 18px;
+  letter-spacing: 0.02em;
+  color: rgba(255, 255, 255, 0.7);
+  text-transform: uppercase;
+}
+
+/* Close button */
+.av-file-close {
+  width: 24px;
+  height: 24px;
+  flex-shrink: 0;
+  background: transparent;
+  border: none;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: #FF951C;
+  font-size: 18px;
+  font-weight: bold;
+  padding: 0;
+  transition: transform 0.2s ease, color 0.2s ease;
+  position: relative;
+}
+
+.av-file-close:hover {
+  transform: scale(1.2);
+  color: #FFA81C;
+}
+
+.av-file-close:active {
+  transform: scale(0.95);
+}
+
+/* Position close button for images (top-right corner) */
+.av-file-preview.image .av-file-close {
+  position: absolute;
+  top: 8px;
+  right: 8px;
+  background: rgba(0, 0, 0, 0.6);
+  border-radius: 50%;
+  width: 28px;
+  height: 28px;
+  backdrop-filter: blur(4px);
+}
+
+/* Mobile responsive */
+@media (max-width: 768px) {
+  .av-chatbar-container {
+    left: 0;
+    bottom: var(--av-chatbar-offset, 12px);
+  }
+
+  .av-file-preview.document {
+    width: calc(100vw - 40px);
+    padding: 8px 12px;
+  }
+
+  .av-file-preview.image {
+    width: calc(100vw - 40px);
+    height: 140px;
+  }
+
+  .av-file-name {
+    font-size: 16px;
+    line-height: 20px;
+  }
+
+  .av-file-type {
+    font-size: 12px;
+    line-height: 16px;
+  }
+
+  .av-file-icon {
+    width: 40px;
+    height: 45px;
+    font-size: 20px;
+  }
+}
