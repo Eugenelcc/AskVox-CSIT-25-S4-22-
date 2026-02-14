@@ -118,6 +118,25 @@ export default function Dashboard({
   }, [pendingKey, pendingPromptKey]);
   const [isSmartRecPending, setIsSmartRecPending] = useState(false);
   const [profile, setProfile] = useState<UserProfile | null>(null);
+
+  const [toast, setToast] = useState<string | null>(null);
+  const toastTimerRef = useRef<number | null>(null);
+  const showToast = useCallback((msg: string) => {
+    setToast(msg);
+    if (toastTimerRef.current) {
+      window.clearTimeout(toastTimerRef.current);
+    }
+    toastTimerRef.current = window.setTimeout(() => {
+      setToast(null);
+      toastTimerRef.current = null;
+    }, 2200);
+  }, []);
+
+  const canCustomizeWakeWord = useMemo(() => {
+    if (paid) return true;
+    const role = (profile?.role || "").toString().trim().toLowerCase();
+    return role === "paid_user" || role === "paid";
+  }, [paid, profile?.role]);
   const [isQuizOpen, setIsQuizOpen] = useState(false);
   const [isVoiceMode, setIsVoiceMode] = useState(false);
   // Voice capture (reuse ChatBar approach)
@@ -309,8 +328,14 @@ export default function Dashboard({
   const [activeSettingsKey, setActiveSettingsKey] = useState<SettingsKey | null>(null); // To track active settings section
 
   const handleSettingsSelect = (key: SettingsKey) => {
+    if (key === "wakeword" && !canCustomizeWakeWord) {
+      showToast("Premium features");
+      return;
+    }
     setActiveSettingsKey(key);
   };
+
+
 
   // --- Data Fetching ---
   useEffect(() => {
@@ -2293,6 +2318,8 @@ export default function Dashboard({
         activeKey={activeSettingsKey}
         onSelect={handleSettingsSelect}
         onClose={() => setSidebarOpen(false)}
+        wakeWordLocked={!canCustomizeWakeWord}
+        onWakeWordLockedClick={() => showToast("Premium features")}
       />
       <DiscoverSidebar
         isOpen={showDiscover}
@@ -2532,6 +2559,7 @@ export default function Dashboard({
       onAttachClick={handleAttachClick}
       disabled={isSending || isExtractingFile}
       micEnabled={micEnabled}
+      wakeWord={typeof profile?.wake_word === "string" && profile.wake_word.trim() ? profile.wake_word.trim() : undefined}
       onQuizClick={() => setIsQuizOpen(true)}
       attachedFile={attachedFile}
       onClearAttachment={clearAttachment}
@@ -2578,6 +2606,38 @@ export default function Dashboard({
                   {folderModalBusy ? "Creating..." : "Create"}
                 </button>
               </div>
+            </div>
+          </div>
+        )}
+
+        {toast && (
+          <div
+            key={toast}
+            role="status"
+            aria-live="polite"
+            aria-atomic="true"
+            style={{
+              position: "fixed",
+              top: 18,
+              left: "50%",
+              transform: "translateX(-50%)",
+              width: "min(560px, calc(100vw - 36px))",
+              zIndex: 1000,
+            }}
+          >
+            <div
+              style={{
+                background: "#2a2a2a",
+                border: "1px solid rgba(255,149,28,.35)",
+                color: "#ff951c",
+                padding: "12px 16px",
+                borderRadius: 12,
+                boxShadow: "0 6px 18px rgba(0,0,0,.45)",
+                textAlign: "center",
+                animation: "uv-toast-dropdown 240ms cubic-bezier(0.2, 0.8, 0.2, 1)",
+              }}
+            >
+              <div style={{ fontSize: 16, lineHeight: 1.3 }}>{toast}</div>
             </div>
           </div>
         )}

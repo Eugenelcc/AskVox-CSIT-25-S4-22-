@@ -43,14 +43,30 @@ export default function WakeWord({ session }: { session: Session }) {
     if (!trimmed) { setErr("Wake word cannot be empty"); return; }
     setBusy(true); setErr(null); setSaved(false);
     try {
-      const { error } = await supabase
-        .from("profiles")
-        .update({ wake_word: trimmed })
-        .eq("id", userId);
-      if (error) throw error;
+      const sess = (await supabase.auth.getSession()).data.session;
+      const token = sess?.access_token as string | undefined;
+      if (!token) throw new Error("Not authenticated");
+
+      const resp = await fetch(`${import.meta.env.VITE_API_URL}/wake/wake_word`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${token}`,
+        },
+        body: JSON.stringify({ wake_word: trimmed }),
+      });
+      if (!resp.ok) {
+        const detail = await resp.text().catch(() => "");
+        throw new Error(detail || "Failed to save wake word");
+      }
       setInitial(trimmed);
       setSaved(true);
       setShowDone(true);
+      try {
+        window.dispatchEvent(new Event("askvox:profile-updated"));
+      } catch {
+        /* ignore */
+      }
       // Auto-close modal after 3 seconds
       window.setTimeout(() => {
         // Return to the edit view after showing success for 3s

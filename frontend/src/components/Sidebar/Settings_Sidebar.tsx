@@ -1,5 +1,5 @@
 import "./cssfiles/Settings_Sidebar.css";
-import { PanelLeftClose } from "lucide-react";
+import { Lock, PanelLeftClose } from "lucide-react";
 
 type SettingsKey = "account" | "billing" | "delete" | "wakeword";
 
@@ -8,6 +8,8 @@ interface SettingsSidebarProps {
   activeKey?: SettingsKey | null;
   onSelect?: (key: SettingsKey) => void;
   onClose: () => void;
+  wakeWordLocked?: boolean;
+  onWakeWordLockedClick?: () => void;
 }
 
 export default function SettingsSidebar({
@@ -15,10 +17,20 @@ export default function SettingsSidebar({
   activeKey = null,
   onSelect,
   onClose,
+  wakeWordLocked = false,
+  onWakeWordLockedClick,
 }: SettingsSidebarProps) {
   if (!isOpen) return null;
 
   const pick = (k: SettingsKey) => onSelect?.(k);
+
+  const onWakeWordClick = () => {
+    if (wakeWordLocked) {
+      onWakeWordLockedClick?.();
+      return;
+    }
+    pick("wakeword");
+  };
 
   return (
     <aside className="av-settings" aria-label="Settings Sidebar">
@@ -62,10 +74,13 @@ export default function SettingsSidebar({
 
         <button
           type="button"
-          className={`av-settings__item ${activeKey === "wakeword" ? "is-active" : ""}`}
-          onClick={() => pick("wakeword")}
+          className={`av-settings__item ${activeKey === "wakeword" && !wakeWordLocked ? "is-active" : ""}`}
+          onClick={onWakeWordClick}
+          aria-disabled={wakeWordLocked}
+          title={wakeWordLocked ? "Premium features" : undefined}
         >
-          Customize Wake Word
+          <span style={{ flex: 1 }}>Customize Wake Word</span>
+          {wakeWordLocked && <Lock size={16} style={{ opacity: 0.8 }} />}
         </button>
       </nav>
     </aside>
