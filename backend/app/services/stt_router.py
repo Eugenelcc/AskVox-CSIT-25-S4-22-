@@ -31,6 +31,12 @@ def upload_to_assemblyai(audio_bytes: bytes) -> str:
         data=audio_bytes,
     )
 
+    # Debug: log what AssemblyAI returned so we can see why /stt/ fails.
+    try:
+        print(f"[STT][/v2/upload] status={response.status_code} body={response.text[:200]}")
+    except Exception:
+        pass
+
     if response.status_code != 200:
         raise HTTPException(status_code=500, detail="Failed to upload audio.")
 
@@ -42,7 +48,11 @@ def request_transcription(upload_url: str) -> str:
     if not ASSEMBLYAI_API_KEY:
         raise HTTPException(status_code=500, detail="ASSEMBLYAI_API_KEY not configured")
     json_body = {
-        "audio_url": upload_url
+        "audio_url": upload_url,
+        # AssemblyAI requires an explicit speech model. To support
+        # additional languages like zh (per their error message), include
+        # both universal-3-pro and universal-2.
+        "speech_models": ["universal-3-pro", "universal-2"],
     }
 
     # Start transcription
@@ -52,6 +62,11 @@ def request_transcription(upload_url: str) -> str:
         headers=_headers()
     )
 
+    try:
+        print(f"[STT][/v2/transcript] start status={res.status_code} body={res.text[:200]}")
+    except Exception:
+        pass
+
     if res.status_code != 200:
         raise HTTPException(status_code=500, detail="Failed to start transcription.")
 
@@ -59,17 +74,21 @@ def request_transcription(upload_url: str) -> str:
 
     # Poll until done
     while True:
-        poll_res = requests.get(
+        poll_response = requests.get(
             f"{TRANSCRIBE_URL}/{transcript_id}",
             headers=_headers()
-        ).json()
+        )
+        poll_res = poll_response.json()
 
         status = poll_res["status"]
 
         if status == "completed":
             return poll_res["text"]
-
         if status == "error":
+            try:
+                print(f"[STT][/v2/transcript] poll error body={poll_res}")
+            except Exception:
+                pass
             raise HTTPException(status_code=500, detail="Transcription failed.")
 
         import time

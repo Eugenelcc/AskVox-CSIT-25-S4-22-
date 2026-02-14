@@ -25,6 +25,14 @@ export function useWakeWordBackend({
 }: UseWakeProps) {
   const [status, setStatus] = useState<'idle' | 'listening' | 'awaiting_command'>('idle');
   const statusRef = useRef<'idle' | 'listening' | 'awaiting_command'>('idle');
+  // Mirror `enabled` in a ref so audio callbacks see live value,
+  // not the initial prop snapshot.
+  const enabledRef = useRef<boolean>(enabled);
+  // Once a wake is detected and we hand control to conversational mode,
+  // fully suspend wake listening until the hook is torn down or
+  // re-enabled. This prevents extra segments / voice_logs during
+  // conversation.
+  const wakeSuspendedRef = useRef<boolean>(false);
   const streamRef = useRef<MediaStream | null>(null);
   const audioCtxRef = useRef<AudioContext | null>(null);
   const analyserRef = useRef<AnalyserNode | null>(null);
@@ -65,6 +73,30 @@ export function useWakeWordBackend({
     } catch {
       /* ignore */
     }
+  };
+
+  // Keep enabledRef in sync with the latest prop.
+  useEffect(() => {
+    enabledRef.current = !!enabled;
+  }, [enabled]);
+
+  const stopCapture = () => {
+    try { processorRef.current?.disconnect(); } catch { /* ignore */ }
+    processorRef.current = null;
+    try { analyserRef.current?.disconnect(); } catch { /* ignore */ }
+    analyserRef.current = null;
+    try { streamRef.current?.getTracks().forEach(t => t.stop()); } catch { /* ignore */ }
+    streamRef.current = null;
+    try { audioCtxRef.current?.close(); } catch { /* ignore */ }
+    audioCtxRef.current = null;
+
+    pcmChunksRef.current = [];
+    preRollRef.current = [];
+    hadSpeechRef.current = false;
+    silenceStartRef.current = null;
+    trailingSilenceMsRef.current = 0;
+    currentSegRef.current = null;
+    segStartAtRef.current = null;
   };
 
   const flushSegment = async () => {
@@ -123,6 +155,11 @@ export function useWakeWordBackend({
 
       if (wake) {
         postLog(`wake (score=${score})`, 'wake');
+        // Suspend wake listening and tear down the audio graph so that
+        // conversational mode can take over the mic without any
+        // additional wake segments or voice_logs.
+        wakeSuspendedRef.current = true;
+        stopCapture();
         onWake?.(score);
         // Mute capture briefly to avoid recording TTS "Yes?"
         muteUntilRef.current = Date.now() + 800;
@@ -187,7 +224,7 @@ export function useWakeWordBackend({
     processor.connect(audioCtx.destination);
 
     processor.onaudioprocess = (e) => {
-      if (!enabled) return;
+      if (!enabledRef.current || wakeSuspendedRef.current) return;
       const now = Date.now();
       if (now < muteUntilRef.current) return;
       const ch0 = e.inputBuffer.getChannelData(0);
@@ -293,7 +330,7 @@ export function useWakeWordBackend({
     const buf = new Float32Array(analyser.fftSize);
 
     const tick = () => {
-      if (!enabled) return;
+      if (!enabledRef.current || wakeSuspendedRef.current) return;
       analyser.getFloatTimeDomainData(buf);
       let sum = 0; for (let i = 0; i < buf.length; i++) sum += buf[i] * buf[i];
       const rms = Math.sqrt(sum / buf.length);
@@ -327,7 +364,16 @@ export function useWakeWordBackend({
   useEffect(() => {
     let cancelled = false;
     (async () => {
-      if (!enabled) return;
+      if (!enabled) {
+        // When disabled (mic off or in conversational mode),
+        // tear down capture but keep wakeSuspendedRef as-is so
+        // the hook stays fully off until re-enabled.
+        stopCapture();
+        statusRef.current = 'idle';
+        setStatus('idle');
+        return;
+      }
+      wakeSuspendedRef.current = false;
       // One-time proof that the hook is alive in production.
       try { postLog('wake listening enabled', 'wake'); } catch { /* ignore */ }
       statusRef.current = 'listening';
@@ -345,13 +391,7 @@ export function useWakeWordBackend({
     })();
     return () => {
       cancelled = true;
-      try { processorRef.current?.disconnect(); } catch { /* ignore */ }
-      processorRef.current = null;
-      try { streamRef.current?.getTracks().forEach(t => t.stop()); } catch { /* ignore */ }
-      streamRef.current = null;
-      audioCtxRef.current?.close();
-      audioCtxRef.current = null;
-      analyserRef.current = null;
+      stopCapture();
       statusRef.current = 'idle';
       setStatus('idle');
     };
