@@ -1586,19 +1586,19 @@ export default function Dashboard({
     voiceModeRef.current = isVoiceMode;
   }, [isVoiceMode]);
 
-  // Removed local beep/speech confirmation; using Sesame CSM-1B TTS on RunPod
-  const speakWithSesameTTS = async (text: string, rearmAfterPlayback: boolean = true) => {
+  // Removed local beep/speech confirmation; using Google TTS for consistency
+  const speakWithGoogleTTS = async (text: string, rearmAfterPlayback: boolean = true) => {
     try {
       const safeText = (ttsSanitizeRef.current?.(text)) ?? text;
       console.log("🔊 [TTS] requesting playback for:", safeText);
       // Mark TTS active BEFORE stopping recorder to avoid re-arm race in onstop
       ttsActiveRef.current = true;
       setIsTtsPlaying(true);
-      // Request WAV audio from backend (Sesame CSM-1B via RunPod)
-      const res = await fetch(`${API_BASE_URL}/tts/sesame`, {
+      // Request MP3 audio from backend
+      const res = await fetch(`${API_BASE_URL}/tts/google`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ text: safeText }),
+        body: JSON.stringify({ text: safeText, language_code: "en-US" }),
       });
       if (!res.ok) { console.error("TTS request failed"); setIsTtsPlaying(false); ttsActiveRef.current = false; return; }
       const blob = await res.blob();
@@ -1709,8 +1709,7 @@ export default function Dashboard({
           const formData = new FormData();
           formData.append("file", audioBlob, "utterance.webm");
 
-          // Use backend AssemblyAI STT router instead of legacy Google STT
-          const sttRes = await fetch(`${API_BASE_URL}/stt/`, { method: "POST", body: formData });
+          const sttRes = await fetch(`${API_BASE_URL}/gstt/transcribe`, { method: "POST", body: formData });
           if (!sttRes.ok) { console.error("STT request failed"); return; }
           const sttData = await sttRes.json();
           const transcript: string = sttData.text ?? "";
@@ -1899,7 +1898,6 @@ export default function Dashboard({
                 query_id: queryId,
                 session_id: currentSessionId,
                 user_id: session.user.id,
-                domain: "voice",
               }),
             });
             const sealionData = await sealionRes.json();
@@ -1922,7 +1920,7 @@ export default function Dashboard({
               ]);
 
               // Kick off TTS immediately (sets ttsActiveRef before first await).
-              void speakWithSesameTTS(replyText);
+              void speakWithGoogleTTS(replyText);
 
               // Persist assistant voice response (best-effort) so chat history survives reloads.
               try {
@@ -2045,27 +2043,6 @@ export default function Dashboard({
     }
   };
 
-  const playListeningPromptAndStart = () => {
-    const phrase = "AskVox is listening";
-    try {
-      const synth = (window as any).speechSynthesis;
-      // If Web Speech API is unavailable, fall back to immediate recording.
-      if (!synth || typeof (window as any).SpeechSynthesisUtterance === "undefined") {
-        void startVoiceRecording();
-        return;
-      }
-      const utter = new (window as any).SpeechSynthesisUtterance(phrase);
-      utter.rate = 1.0;
-      utter.pitch = 1.0;
-      utter.onend = () => { void startVoiceRecording(); };
-      utter.onerror = () => { void startVoiceRecording(); };
-      try { synth.cancel(); } catch { /* ignore */ }
-      synth.speak(utter);
-    } catch {
-      void startVoiceRecording();
-    }
-  };
-
   const enterVoiceMode = () => {
     if (!micEnabled) return;
     // Hide chat UI; show BlackHole only
@@ -2080,8 +2057,8 @@ export default function Dashboard({
     setIsNewChat(true);
     // Close sidebar for focused voice mode
     setSidebarOpen(false);
-    // Play a lightweight local voice prompt, then begin STT capture.
-    playListeningPromptAndStart();
+    // Speak confirmation via Google TTS, then re-arm mic after playback ends
+    void speakWithGoogleTTS("AskVox is listening", true);
   };
 
   const exitVoiceMode = () => {

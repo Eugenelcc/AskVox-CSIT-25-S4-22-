@@ -353,17 +353,17 @@ const UnregisteredMain = ({
     voiceModeRef.current = isVoiceMode;
   }, [isVoiceMode]);
 
-  const speakWithSesameTTS = async (text: string, rearmAfterPlayback: boolean = true) => {
+  const speakWithGoogleTTS = async (text: string, rearmAfterPlayback: boolean = true) => {
     try {
       const safeText = (ttsSanitizeRef.current?.(text)) ?? text;
       postLog(`TTS request: ${safeText}`, 'tts');
       // Mark TTS active BEFORE stopping recorder to avoid re-arm race in onstop
       ttsActiveRef.current = true;
       setIsTtsPlaying(true);
-      const res = await fetch(`${API_BASE_URL}/tts/sesame`, {
+      const res = await fetch(`${API_BASE_URL}/tts/google`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ text: safeText }),
+        body: JSON.stringify({ text: safeText, language_code: "en-US" }),
       });
       if (!res.ok) { console.error("TTS request failed"); setIsTtsPlaying(false); ttsActiveRef.current = false; return; }
       const blob = await res.blob();
@@ -423,26 +423,6 @@ const UnregisteredMain = ({
     }
   };
 
-  const playListeningPromptAndStart = () => {
-    const phrase = "AskVox is listening";
-    try {
-      const synth = (window as any).speechSynthesis;
-      if (!synth || typeof (window as any).SpeechSynthesisUtterance === "undefined") {
-        void startVoiceRecording();
-        return;
-      }
-      const utter = new (window as any).SpeechSynthesisUtterance(phrase);
-      utter.rate = 1.0;
-      utter.pitch = 1.0;
-      utter.onend = () => { void startVoiceRecording(); };
-      utter.onerror = () => { void startVoiceRecording(); };
-      try { synth.cancel(); } catch { /* ignore */ }
-      synth.speak(utter);
-    } catch {
-      void startVoiceRecording();
-    }
-  };
-
   const startVoiceRecording = async () => {
     if (isRecording || !voiceModeRef.current || ttsActiveRef.current) return;
     try {
@@ -475,8 +455,7 @@ const UnregisteredMain = ({
           setIsTranscribing(true);
           const formData = new FormData();
           formData.append("file", audioBlob, "utterance.webm");
-          // Use backend AssemblyAI STT router instead of legacy Google STT
-          const sttRes = await fetch(`${API_BASE_URL}/stt/`, { method: "POST", body: formData });
+          const sttRes = await fetch(`${API_BASE_URL}/gstt/transcribe`, { method: "POST", body: formData });
           if (!sttRes.ok) { return; }
           const sttData = await sttRes.json();
           const transcript: string = sttData.text ?? "";
@@ -545,7 +524,6 @@ const UnregisteredMain = ({
                 history: messages.map(m => ({ role: m.senderId === USER_ID ? "user" : "assistant", content: m.content })),
                 query_id: typeof queryId !== 'undefined' ? queryId : null,
                 session_id: currentSessionId ?? null,
-                domain: "voice",
               }),
             });
             const sealionData = await sealionRes.json();
@@ -558,7 +536,7 @@ const UnregisteredMain = ({
               setMessages(prev => [...prev, { id: botMsgId, senderId: LLAMA_ID, content: "", createdAt: new Date().toISOString() }]);
 
               // Start TTS immediately and type out the response in parallel.
-              void speakWithSesameTTS(replyText);
+              void speakWithGoogleTTS(replyText);
               void (async () => {
                 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
                 const step = 4;
@@ -642,9 +620,8 @@ const UnregisteredMain = ({
     // Stage: show listening prompt immediately
     const capId = globalThis.crypto?.randomUUID?.() ?? `cap-${Date.now()}-${Math.random()}`;
     setVoiceCaptionFeed([{ id: capId, role: "assistant" as const, text: "AskVox is listening" }]);
-    // In voice mode, hide chat input, show BlackHole, play a short
-    // local voice prompt, then start STT capture.
-    playListeningPromptAndStart();
+    // In voice mode, hide chat input, show BlackHole, start with TTS confirmation
+    void speakWithGoogleTTS("AskVox is listening", true);
   };
 
   const exitVoiceMode = () => {

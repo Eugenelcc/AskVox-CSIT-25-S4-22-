@@ -372,7 +372,6 @@ def build_runpod_user_prompt(
     article_block: str = "",
     chat_mode: bool = False,
     learning_preference: Optional[str] = None,
-    voice_mode: bool = False,
 ) -> str:
     """Build a RunPod prompt.
 
@@ -391,34 +390,6 @@ def build_runpod_user_prompt(
     safe_evidence = _truncate(web_evidence_block, MAX_EVIDENCE_CHARS)
 
     system_text = build_backend_system_prompt(chat_mode=chat_mode, learning_preference=learning_preference)
-    # Local copies so we can optionally include these hints in the user-visible
-    # part of the prompt as well, even though they are already baked into the
-    # backend system prompt.
-    pref_instruction = build_learning_preference_instruction(learning_preference).strip()
-    emoji_instruction = build_emoji_style_instruction(AV_EMOJI_STYLE).strip()
-
-    # Keep it compact: user's system prompt already covers friendly tutor tone.
-    if chat_mode:
-        # Provide short conversation transcript with clear role cues.
-        lines: List[str] = []
-        if pref_instruction:
-            lines.append(pref_instruction.strip())
-        if emoji_instruction:
-            lines.append(emoji_instruction.strip())
-        if voice_mode:
-            # Conversational wake-word mode: keep answers short and spoken-style.
-            lines.append(
-                "VOICE MODE: Answer as if speaking aloud in a natural conversation. "
-                "Keep the reply concise (about 3–5 sentences) and avoid long lists or very long paragraphs."
-            )
-        lines.append(FORMAT_INSTRUCTION.strip())
-        if safe_article:
-            lines.append("ARTICLE_CONTEXT (use when relevant):")
-            lines.append(safe_article)
-        if safe_rag:
-            lines.append(safe_rag)
-        if safe_evidence:
-            lines.append(safe_evidence)
 
     p = (
         "<|begin_of_text|>"
@@ -2454,7 +2425,6 @@ async def generate_cloud_structured(
     user_id: Optional[str] = None,
     domain: Optional[str] = None,
     max_history: int = 3,
-    voice_mode: bool = False,
 ) -> AssistantPayload:
     t_start = time.perf_counter()
     if not (LLAMA_CLOUDRUN_URL or RUNPOD_RUN_ENDPOINT):
@@ -2602,15 +2572,6 @@ async def generate_cloud_structured(
         return {"max_tokens": 900 if not chat_mode else 720, "temperature": 0.7, "top_p": 0.95}
 
     tuned = _gen_for_pref(learning_pref, chat_flag)
-    # In conversational voice mode, keep answers shorter for TTS.
-    if voice_mode and chat_flag:
-        try:
-            base_max = int(tuned.get("max_tokens") or 0) if isinstance(tuned, dict) else 0
-        except Exception:
-            base_max = 0
-        short_cap = 380  # ~3–5 spoken sentences
-        tuned_max = base_max or short_cap
-        tuned["max_tokens"] = min(tuned_max, short_cap)
     if AV_LOG_LEARNING_PREF:
         print(
             "🎛️ gen_tuning:",
@@ -2738,7 +2699,6 @@ async def generate_cloud_structured(
             article_block=article_block,
             chat_mode=chat_flag,
             learning_preference=learning_pref,
-            voice_mode=voice_mode,
         )
         raw = await call_runpod_job_prompt(
             prompt1,
@@ -3570,10 +3530,6 @@ async def chat_cloud_plus(req: ChatRequest, request: Request):
         article_title = article_title or (article_context or {}).get("title")
         article_url = article_url or (article_context or {}).get("url")
 
-    # Treat a special requested domain of "voice" as conversational wake-word mode
-    # for response shaping, while still classifying the topical domain separately.
-    is_voice_mode = (req.domain or "").strip().lower() == "voice"
-
     detected_domain = detect_domain_for_message(req.message, req.domain)
     if req.query_id:
         await update_query_domain(req.query_id, detected_domain)
@@ -3588,7 +3544,6 @@ async def chat_cloud_plus(req: ChatRequest, request: Request):
         user_id=req.user_id,
         domain=detected_domain,
         max_history=4 if req.user_id else 2,
-        voice_mode=is_voice_mode,
     )
 
     # Persist response to Supabase 'responses' table if query_id provided
