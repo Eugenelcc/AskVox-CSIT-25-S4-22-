@@ -1646,6 +1646,20 @@ def strip_plan_json_leak(text: str) -> str:
     except Exception:
         pass
 
+    # If a plan-like JSON object was appended but is truncated/invalid, keep the prose prefix.
+    # Do this BEFORE attempting answer_markdown regex extraction, because answer_markdown is
+    # often partial when the JSON is truncated.
+    try:
+        last_obj_start = -1
+        for m in re.finditer(r"\{\s*(?:\"answer_markdown\"|'answer_markdown')\s*:\s*", s):
+            last_obj_start = m.start()
+        if last_obj_start > 0:
+            prefix = s[:last_obj_start].strip()
+            if prefix:
+                return prefix
+    except Exception:
+        pass
+
     # Fallback: regex extraction of answer_markdown value from JSON-ish text.
     try:
         m = re.search(r"\"answer_markdown\"\s*:\s*\"(?P<v>(?:\\\\.|[^\"\\\\])*)\"", s, flags=re.S)
