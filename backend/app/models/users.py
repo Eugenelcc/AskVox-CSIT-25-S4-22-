@@ -11,6 +11,7 @@ class UserRole(str, enum.Enum):
     user = "user"
     developer = "developer"
     educational = "educational"
+    educational_user = "educational_user"
     unregistered = "unregistered" 
 
 

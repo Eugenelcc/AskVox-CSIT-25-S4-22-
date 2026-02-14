@@ -12,6 +12,7 @@ import PaidTopBar from "../components/TopBars/PaidTopBar";
 import ChatMessages from "../components/chat/ChatMessages"; 
 import Sidebar from "../components/Sidebar/Chat_Sidebar"; 
 import NavRail from "../components/Sidebar/NavRail"; 
+import EducationalNavRail from "../components/Sidebar/EducationalNavRail";
 import "./cssfiles/registerMain.css";
 import { useWakeWordBackend } from "../hooks/useWakeWordBackend";
 import SettingsSidebar from "../components/Sidebar/Settings_Sidebar";
@@ -73,12 +74,14 @@ export default function Dashboard({
   initialTab,
   micEnabled,
   setMicEnabled,
+  sidebarVariant,
 }: {
   session: Session;
   paid?: boolean;
   initialTab?: string;
   micEnabled: boolean;
   setMicEnabled: (next: boolean | ((prev: boolean) => boolean)) => void;
+  sidebarVariant?: "educational";
 }) {
   const navigate = useNavigate();
   const location = useLocation();
@@ -115,6 +118,25 @@ export default function Dashboard({
   }, [pendingKey, pendingPromptKey]);
   const [isSmartRecPending, setIsSmartRecPending] = useState(false);
   const [profile, setProfile] = useState<UserProfile | null>(null);
+
+  const [toast, setToast] = useState<string | null>(null);
+  const toastTimerRef = useRef<number | null>(null);
+  const showToast = useCallback((msg: string) => {
+    setToast(msg);
+    if (toastTimerRef.current) {
+      window.clearTimeout(toastTimerRef.current);
+    }
+    toastTimerRef.current = window.setTimeout(() => {
+      setToast(null);
+      toastTimerRef.current = null;
+    }, 2200);
+  }, []);
+
+  const canCustomizeWakeWord = useMemo(() => {
+    if (paid) return true;
+    const role = (profile?.role || "").toString().trim().toLowerCase();
+    return role === "paid_user" || role === "paid";
+  }, [paid, profile?.role]);
   const [isQuizOpen, setIsQuizOpen] = useState(false);
   const [isVoiceMode, setIsVoiceMode] = useState(false);
   // Voice capture (reuse ChatBar approach)
@@ -169,7 +191,9 @@ export default function Dashboard({
   const [activeTab, setActiveTab] = useState<string>(
     initialTab ?? (location.pathname === "/discover" ? "discover" : (location.pathname === "/newchat" ? "newchat" : "newchat"))
   ); // Tracks which tab is active in the NavRail
-  const [isSidebarOpen, setSidebarOpen] = useState(false); // Sidebar visibility
+  const [isSidebarOpen, setSidebarOpen] = useState(
+    initialTab === "chats" || initialTab === "settings" || initialTab === "smartrec" || initialTab === "discover"
+  ); // Sidebar visibility
   const [isNewChat, setIsNewChat] = useState(false); //When user starts a new chat
   const [newsContext, setNewsContext] = useState<NewsContext | null>(null);
   // Stores chat folders
@@ -203,6 +227,16 @@ export default function Dashboard({
     () => `askvox:customize:v1:${session.user.id}`,
     [session.user.id]
   );
+
+  // File upload for document extraction and image attachments
+  const fileInputRef = useRef<HTMLInputElement | null>(null);
+  const [isExtractingFile, setIsExtractingFile] = useState(false);
+  const [attachedFile, setAttachedFile] = useState<{
+    file: File;
+    type: 'image' | 'pdf' | 'docx' | 'txt' | 'other';
+    previewUrl?: string;
+    extractedText?: string;
+  } | null>(null);
 
   const readCustomizeStore = useCallback((): CustomizeStore => {
     try {
@@ -294,8 +328,14 @@ export default function Dashboard({
   const [activeSettingsKey, setActiveSettingsKey] = useState<SettingsKey | null>(null); // To track active settings section
 
   const handleSettingsSelect = (key: SettingsKey) => {
+    if (key === "wakeword" && !canCustomizeWakeWord) {
+      showToast("Premium features");
+      return;
+    }
     setActiveSettingsKey(key);
   };
+
+
 
   // --- Data Fetching ---
   useEffect(() => {
@@ -997,11 +1037,115 @@ export default function Dashboard({
   }, [location.pathname]);
 
 
+  // File upload handlers
+  const handleAttachClick = () => {
+    fileInputRef.current?.click();
+  };
+
+  const handleFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    setIsExtractingFile(true);
+
+    // Determine file type
+    const fileName = file.name.toLowerCase();
+    const isImage = file.type.startsWith("image/");
+    let fileType: 'image' | 'pdf' | 'docx' | 'txt' | 'other' = 'other';
+
+    if (isImage) {
+      fileType = 'image';
+      // Create preview URL for images
+      const previewUrl = URL.createObjectURL(file);
+      
+      // Store image data in session storage
+      const reader = new FileReader();
+      reader.onloadend = () => {
+        const base64 = reader.result as string;
+        try {
+          sessionStorage.setItem('av:last_uploaded_image', JSON.stringify({
+            name: file.name,
+            type: file.type,
+            size: file.size,
+            dataUrl: base64
+          }));
+        } catch (err) {
+          console.warn('Could not store image in session:', err);
+        }
+      };
+      reader.readAsDataURL(file);
+
+      setAttachedFile({ file, type: fileType, previewUrl });
+      setIsExtractingFile(false);
+    } else {
+      // Determine document type
+      if (fileName.endsWith('.pdf')) fileType = 'pdf';
+      else if (fileName.endsWith('.docx') || fileName.endsWith('.doc')) fileType = 'docx';
+      else if (fileName.endsWith('.txt') || fileName.endsWith('.md') || fileName.endsWith('.csv')) fileType = 'txt';
+
+      // Extract text from documents
+      const formData = new FormData();
+      formData.append("file", file);
+
+      try {
+        const res = await fetch(`${API_BASE_URL}/files/extract-text`, {
+          method: "POST",
+          body: formData,
+        });
+
+        if (!res.ok) {
+          alert("Failed to extract text from file.");
+          setIsExtractingFile(false);
+          return;
+        }
+
+        const data = await res.json();
+        if (data.error) {
+          alert(data.error);
+          setIsExtractingFile(false);
+          return;
+        }
+
+        const extractedText = data.text || "";
+        setAttachedFile({ file, type: fileType, extractedText });
+      } catch (err) {
+        console.error("File upload error:", err);
+        alert("File upload failed. Please try again.");
+      } finally {
+        setIsExtractingFile(false);
+      }
+    }
+
+    // Reset file input
+    if (fileInputRef.current) {
+      fileInputRef.current.value = "";
+    }
+  };
+
+  const clearAttachment = () => {
+    if (attachedFile?.previewUrl) {
+      URL.revokeObjectURL(attachedFile.previewUrl);
+    }
+    setAttachedFile(null);
+    sessionStorage.removeItem('av:last_uploaded_image');
+  };
+
   const handleSubmit = async (
     text: string,
     options?: { forceNewSession?: boolean; context?: ArticleContext }
   ): Promise<string | null> => {
-    const trimmed = text.trim();
+    let trimmed = text.trim();
+    
+    // If there's an attached file, prepend file context
+    if (attachedFile) {
+      if (attachedFile.type === 'image') {
+        trimmed = `[Image: ${attachedFile.file.name}]\n\n${trimmed || 'Please analyze this image.'}`;
+      } else if (attachedFile.extractedText) {
+        trimmed = `[Document: ${attachedFile.file.name}]\n\nExtracted content:\n${attachedFile.extractedText}\n\n${trimmed ? 'User question: ' + trimmed : ''}`;
+      }
+      clearAttachment();
+    }
+    
     if (!trimmed || !session?.user?.id) return null;
     console.log("💬 [Text] route=llamachats/cloud payload=", trimmed);
 
@@ -2154,12 +2298,19 @@ export default function Dashboard({
     <div className="uv-root" style={{ display: 'flex', overflowX: 'hidden', ['--content-offset' as any]: contentMarginLeft }}>
       <Background />
       
-      <NavRail
-        activeTab={activeTab}
-        onTabClick={handleTabClick}
-        onOpenSidebar={(tab) => setSidebarOpen(tab === "chats" || tab === "settings" || tab === "smartrec" || tab === "discover")}
-        avatarPath={profile?.avatar_url ?? "defaults/default.png"}
-      />
+      {sidebarVariant === "educational" ? (
+        <EducationalNavRail
+          activeTab={activeTab === "settings" ? "settings" : "checker"}
+          onNavigate={(path) => navigate(path)}
+        />
+      ) : (
+        <NavRail
+          activeTab={activeTab}
+          onTabClick={handleTabClick}
+          onOpenSidebar={(tab) => setSidebarOpen(tab === "chats" || tab === "settings" || tab === "smartrec" || tab === "discover")}
+          avatarPath={profile?.avatar_url ?? "defaults/default.png"}
+        />
+      )}
 
 
       <Sidebar
@@ -2190,6 +2341,8 @@ export default function Dashboard({
         activeKey={activeSettingsKey}
         onSelect={handleSettingsSelect}
         onClose={() => setSidebarOpen(false)}
+        wakeWordLocked={!canCustomizeWakeWord}
+        onWakeWordLockedClick={() => showToast("Premium features")}
       />
       <DiscoverSidebar
         isOpen={showDiscover}
@@ -2417,11 +2570,22 @@ export default function Dashboard({
         </h3>
       </div>
     )}
+    <input
+      ref={fileInputRef}
+      type="file"
+      accept=".pdf,.docx,.txt,.md,.csv,image/*"
+      hidden
+      onChange={handleFileUpload}
+    />
     <ChatBar
       onSubmit={handleSubmit}
-      disabled={isSending}
+      onAttachClick={handleAttachClick}
+      disabled={isSending || isExtractingFile}
       micEnabled={micEnabled}
+      wakeWord={typeof profile?.wake_word === "string" && profile.wake_word.trim() ? profile.wake_word.trim() : undefined}
       onQuizClick={() => setIsQuizOpen(true)}
+      attachedFile={attachedFile}
+      onClearAttachment={clearAttachment}
     />
 
    <Quiz
@@ -2465,6 +2629,38 @@ export default function Dashboard({
                   {folderModalBusy ? "Creating..." : "Create"}
                 </button>
               </div>
+            </div>
+          </div>
+        )}
+
+        {toast && (
+          <div
+            key={toast}
+            role="status"
+            aria-live="polite"
+            aria-atomic="true"
+            style={{
+              position: "fixed",
+              top: 18,
+              left: "50%",
+              transform: "translateX(-50%)",
+              width: "min(560px, calc(100vw - 36px))",
+              zIndex: 1000,
+            }}
+          >
+            <div
+              style={{
+                background: "#2a2a2a",
+                border: "1px solid rgba(255,149,28,.35)",
+                color: "#ff951c",
+                padding: "12px 16px",
+                borderRadius: 12,
+                boxShadow: "0 6px 18px rgba(0,0,0,.45)",
+                textAlign: "center",
+                animation: "uv-toast-dropdown 240ms cubic-bezier(0.2, 0.8, 0.2, 1)",
+              }}
+            >
+              <div style={{ fontSize: 16, lineHeight: 1.3 }}>{toast}</div>
             </div>
           </div>
         )}

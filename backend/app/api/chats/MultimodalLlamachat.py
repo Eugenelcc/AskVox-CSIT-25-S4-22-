@@ -16,6 +16,7 @@ from app.services.rag_service import retrieve_rag_context, is_rag_domain, is_rag
 from app.services.domain_classifier import classify_domain
 from app.services.moderation_service import moderate_message
 from app.services.domain_classifier import classify_domain, validate_domain
+from app.api.watermark import insert_watermark
 
 load_dotenv()
 
@@ -1609,16 +1610,82 @@ def strip_plan_json_leak(text: str) -> str:
     if not (looks_jsonish or has_plan_keys or has_answer_key):
         return s
 
-    # Best case: valid JSON somewhere in the output.
+    def _find_plan_json_span(src: str) -> tuple[dict[str, Any] | None, int, int]:
+        """Return (obj, start, end) for the *last* plan-like JSON object found in src.
+
+        We pick the last match because models often append the JSON plan at the end
+        after emitting normal prose.
+        """
+        if not src:
+            return (None, -1, -1)
+        last: tuple[dict[str, Any] | None, int, int] = (None, -1, -1)
+        n = len(src)
+        for i in range(n):
+            if src[i] != '{':
+                continue
+            depth = 0
+            for j in range(i, n):
+                if src[j] == '{':
+                    depth += 1
+                elif src[j] == '}':
+                    depth -= 1
+                    if depth == 0:
+                        candidate = src[i : j + 1]
+                        try:
+                            obj = json.loads(candidate)
+                        except Exception:
+                            break
+                        if isinstance(obj, dict):
+                            # Consider it a plan/contract JSON if it has any of the known keys.
+                            if (
+                                ("answer_markdown" in obj)
+                                or ("need_web_sources" in obj)
+                                or ("need_images" in obj)
+                                or ("need_youtube" in obj)
+                                or ("web_query" in obj)
+                                or ("image_query" in obj)
+                                or ("youtube_query" in obj)
+                            ):
+                                last = (obj, i, j)
+                        break
+        return last
+
+    # Best case: valid plan JSON somewhere in the output.
     try:
-        obj = extract_json(s)
-        if isinstance(obj, dict):
+        obj, i, j = _find_plan_json_span(s)
+        if isinstance(obj, dict) and i >= 0 and j >= i:
+            prefix = s[:i].strip()
+            suffix = s[j + 1 :].strip()
+
+            # If the model produced prose and then appended JSON, keep the prose and drop JSON.
+            # This avoids showing raw JSON to users (and avoids truncating to answer_markdown
+            # if the model's JSON is partial).
+            if prefix:
+                combined = (prefix + ("\n\n" + suffix if suffix else "")).strip()
+                return combined
+
+            # If the output is *just* JSON (or JSON-first), extract answer_markdown if present.
             ans = obj.get("answer_markdown")
             if isinstance(ans, str) and ans.strip():
                 return ans.strip()
+
             # Plan-like JSON with no answer: suppress.
             if has_plan_keys and not ans:
                 return ""
+    except Exception:
+        pass
+
+    # If a plan-like JSON object was appended but is truncated/invalid, keep the prose prefix.
+    # Do this BEFORE attempting answer_markdown regex extraction, because answer_markdown is
+    # often partial when the JSON is truncated.
+    try:
+        last_obj_start = -1
+        for m in re.finditer(r"\{\s*(?:\"answer_markdown\"|'answer_markdown')\s*:\s*", s):
+            last_obj_start = m.start()
+        if last_obj_start > 0:
+            prefix = s[:last_obj_start].strip()
+            if prefix:
+                return prefix
     except Exception:
         pass
 
@@ -3573,12 +3640,18 @@ async def chat_cloud_plus(req: ChatRequest, request: Request):
             print(f"⚠️ Failed to insert response into Supabase: {e}", flush=True)
 
     if req.session_id and req.user_id:
+        # Apply watermark BEFORE persisting so DB content matches what the client receives.
+        # Otherwise the frontend may insert a second assistant message because it de-dupes by exact content.
+        watermarked_answer = insert_watermark(payload.answer_markdown)
         await persist_assistant_message(
             session_id=req.session_id,
             user_id=req.user_id,
-            answer_md=payload.answer_markdown,
+            answer_md=watermarked_answer,
             payload=payload,
             model_used="llama2-cloudrag",
         )
+        return ChatResponse(answer=watermarked_answer, payload=payload)
 
-    return ChatResponse(answer=payload.answer_markdown, payload=payload)
+    # Guest/anonymous chats: still watermark the returned answer.
+    watermarked_answer = insert_watermark(payload.answer_markdown)
+    return ChatResponse(answer=watermarked_answer, payload=payload)

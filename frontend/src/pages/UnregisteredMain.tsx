@@ -36,6 +36,7 @@ const UnregisteredMain = ({
   
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [isSending, setIsSending] = useState(false);
+  const [toast, setToast] = useState<string | null>(null);
   const [guestSessionId, setGuestSessionId] = useState<string | null>(null);
   const [isVoiceMode, setIsVoiceMode] = useState(false);
   const [isRecording, setIsRecording] = useState(false);
@@ -56,6 +57,30 @@ const UnregisteredMain = ({
 
   const voiceCaptionScrollRef = useRef<HTMLDivElement | null>(null);
   const voiceCaptionStickToBottomRef = useRef(true);
+  const toastTimerRef = useRef<number | null>(null);
+
+  const showRegisterPrompt = (featureLabel: string) => {
+    const feature = (featureLabel || "This feature").trim();
+    const msg = `${feature} is not available. Please register.`;
+    setToast(msg);
+    if (toastTimerRef.current) {
+      window.clearTimeout(toastTimerRef.current);
+      toastTimerRef.current = null;
+    }
+    toastTimerRef.current = window.setTimeout(() => {
+      setToast(null);
+      toastTimerRef.current = null;
+    }, 2500);
+  };
+
+  useEffect(() => {
+    return () => {
+      if (toastTimerRef.current) {
+        window.clearTimeout(toastTimerRef.current);
+        toastTimerRef.current = null;
+      }
+    };
+  }, []);
 
   const onVoiceCaptionScroll = () => {
     const el = voiceCaptionScrollRef.current;
@@ -771,7 +796,45 @@ const UnregisteredMain = ({
               </h3>
             </div>
           )}
-          <ChatBar onSubmit={handleSubmit} disabled={isSending} micEnabled={micEnabled} />
+          <ChatBar
+            onSubmit={handleSubmit}
+            disabled={isSending}
+            micEnabled={micEnabled}
+            onAttachClick={() => showRegisterPrompt("Upload attachment")}
+            onQuizClick={() => showRegisterPrompt("Quiz")}
+          />
+        </div>
+      )}
+
+      {toast && (
+        <div
+          key={toast}
+          role="status"
+          aria-live="polite"
+          aria-atomic="true"
+          style={{
+            position: "fixed",
+            top: 18,
+            left: "50%",
+            transform: "translateX(-50%)",
+            width: "min(560px, calc(100vw - 36px))",
+            zIndex: 1000,
+          }}
+        >
+          <div
+            style={{
+              background: "#2a2a2a",
+              border: "1px solid rgba(255,149,28,.35)",
+              color: "#ff951c",
+              padding: "12px 16px",
+              borderRadius: 12,
+              boxShadow: "0 6px 18px rgba(0,0,0,.45)",
+              textAlign: "center",
+              animation: "uv-toast-dropdown 240ms cubic-bezier(0.2, 0.8, 0.2, 1)",
+            }}
+          >
+            <div style={{ fontSize: 16, lineHeight: 1.3 }}>{toast}</div>
+          </div>
         </div>
       )}
     </div>

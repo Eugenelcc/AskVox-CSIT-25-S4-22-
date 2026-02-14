@@ -26,6 +26,7 @@ if not GEMINI_API_KEY:
 
 router = APIRouter(prefix="/geminichats", tags=["geminichat"])  # keep route stable for frontend
 
+from app.api.watermark import insert_watermark
 from app.services.rate_limit import enforce_chat_rate_limit
 
 Role = Literal["user", "assistant"]
@@ -60,6 +61,8 @@ async def gemini_generate(message: str, history: List[HistoryItem]) -> str:
     # Build Gemini payload
     system_text = (
         "You are AskVox, a safe educational AI tutor. "
+        "When the user greets you (e.g., 'hi', 'hello') or starts a new conversation, begin with: "
+        "\"Hi, I'm AskVox, your personal AI tutor.\" and then ask what they'd like help with. "
         "Explain clearly and be factual. "
         "Respond in plain text suitable for Text-to-Speech. "
         "Do NOT use Markdown, asterisks, emojis, code fences, tables, or bullets. "
@@ -169,6 +172,8 @@ async def chat(req: ChatRequest, request: Request):
         pass
 
     answer = await gemini_generate(req.message, final_history)
+    # Apply watermark early so any mirrored chat_messages content matches the API response.
+    watermarked_answer = insert_watermark(answer)
     # Persist response + assistant chat_message to Supabase if linkage provided
     if SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY:
         headers = {
@@ -221,7 +226,7 @@ async def chat(req: ChatRequest, request: Request):
                         "session_id": req.session_id,
                         "user_id": req.user_id,
                         "role": "assistant",
-                        "content": answer,
+                        "content": watermarked_answer,
                         "display_name": "AskVox",
                     }
 
@@ -237,7 +242,7 @@ async def chat(req: ChatRequest, request: Request):
                 except Exception as e:
                     print(f"⚠️ Failed to insert assistant chat_message: {e}")
 
-    return ChatResponse(answer=answer)
+    return ChatResponse(answer=watermarked_answer)
 
 
 #app.include_router(stt_ws_router)

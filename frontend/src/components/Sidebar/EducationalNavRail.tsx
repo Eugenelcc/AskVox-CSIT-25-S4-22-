@@ -52,7 +52,7 @@ export default function EducationalNavRail({ activeTab, onNavigate }: Educationa
       <button
         type="button"
         className="admin-settings"
-        onClick={() => onNavigate("/settings/account")}
+        onClick={() => onNavigate("/educationaluser/settings")}
         aria-label="Settings"
         title="Settings"
       >

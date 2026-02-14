@@ -11,9 +11,15 @@ from typing import Any, Optional, List, TYPE_CHECKING
 
 import numpy as np
 from fastapi import APIRouter, Body, Query, Request
+from fastapi import Depends, HTTPException
+from fastapi.security import HTTPAuthorizationCredentials
+from pydantic import BaseModel
 import httpx
 from app.core.config import settings
 from rapidfuzz import fuzz
+
+from app.api.deps import bearer as auth_bearer
+from app.services.rate_limit import is_user_paid
 
 # ✅ Use faster-whisper instead of openai-whisper
 if TYPE_CHECKING:
@@ -61,6 +67,77 @@ WHISPER_TEMPERATURE = float(os.getenv("WHISPER_TEMPERATURE", "0.0"))
 CORE_ONLY_THRESHOLD = int(os.getenv("CORE_ONLY_THRESHOLD", "78"))
 
 router = APIRouter(prefix="/wake", tags=["wake"])
+
+
+class WakeWordUpdateIn(BaseModel):
+    wake_word: str
+
+
+@router.post("/wake_word", summary="Update user's wake word (paid users only)")
+async def update_wake_word(
+    payload: WakeWordUpdateIn,
+    creds: HTTPAuthorizationCredentials | None = Depends(auth_bearer),
+):
+    base = settings.supabase_url or os.getenv("SUPABASE_URL")
+    service_key = settings.supabase_service_role_key or os.getenv("SUPABASE_SERVICE_ROLE_KEY")
+    anon_key = settings.supabase_anon_key or os.getenv("SUPABASE_ANON_KEY")
+    if not base or not service_key or not anon_key:
+        raise HTTPException(status_code=500, detail="Supabase not configured")
+
+    if not creds:
+        raise HTTPException(status_code=401, detail="Missing bearer token")
+    access_token = creds.credentials
+
+    wake_word = (payload.wake_word or "").strip()
+    if not wake_word:
+        raise HTTPException(status_code=400, detail="Wake word cannot be empty")
+    if len(wake_word) > 64:
+        raise HTTPException(status_code=400, detail="Wake word is too long")
+
+    async with httpx.AsyncClient(timeout=10) as client:
+        # Resolve Supabase user id from provided user JWT
+        uresp = await client.get(
+            f"{base}/auth/v1/user",
+            headers={
+                "Authorization": f"Bearer {access_token}",
+                "apikey": anon_key,
+            },
+        )
+        if uresp.status_code != 200:
+            raise HTTPException(status_code=401, detail="Invalid Supabase token")
+        uid = (uresp.json() or {}).get("id")
+        if not uid:
+            raise HTTPException(status_code=401, detail="Invalid Supabase token")
+
+    try:
+        paid = await is_user_paid(str(uid))
+    except Exception:
+        paid = False
+    if not paid:
+        raise HTTPException(status_code=403, detail="Paid plan required")
+
+    headers = {
+        "Authorization": f"Bearer {service_key}",
+        "apikey": service_key,
+        "Content-Type": "application/json",
+        "Prefer": "return=representation",
+    }
+    async with httpx.AsyncClient(timeout=10) as client:
+        presp = await client.patch(
+            f"{base}/rest/v1/profiles?id=eq.{uid}",
+            headers=headers,
+            json={"wake_word": wake_word},
+        )
+        if presp.status_code not in (200, 204):
+            raise HTTPException(status_code=presp.status_code, detail=presp.text)
+
+    # Bust cache used by wake transcription route.
+    try:
+        _wake_phrase_cache.pop(str(uid), None)
+    except Exception:
+        pass
+
+    return {"ok": True, "wake_word": wake_word}
 
 
 def _log(msg: str) -> None:
@@ -290,6 +367,26 @@ def _wake_alias_norms(user_phrase: str) -> List[str]:
 
     extra_raw: List[str] = []
 
+    # Greeting variants:
+    # - If user saved "adam", accept "hey adam", "ok adam", etc.
+    # - If user saved "hey adam", also accept "adam" and other greetings.
+    try:
+        tokens = [t for t in base.split() if t]
+        cores = _core_words(base)
+        core_phrase = " ".join(cores) if cores else base
+        if tokens:
+            first = tokens[0]
+            if first in GREETINGS:
+                # accept without greeting + other greeting forms
+                extra_raw.append(core_phrase)
+                for g in GREETINGS:
+                    extra_raw.append(f"{g} {core_phrase}")
+            else:
+                for g in GREETINGS:
+                    extra_raw.append(f"{g} {base}")
+    except Exception:
+        pass
+
     # Common brand split: askvox -> ask vox
     if "askvox" in base.replace(" ", ""):
         extra_raw.append(base.replace("askvox", "ask vox"))
@@ -442,6 +539,41 @@ def _best_wake_match(wake_window: str, wake_phrase: str) -> tuple[int, str]:
     return best_score, best_alias
 
 
+def _strip_wake_prefix(text_norm: str, best_alias: str, wake_phrase: str) -> str:
+    """Remove wake prefix from normalized text.
+
+    Prefer exact alias token stripping. If STT splits/varies the core word
+    (e.g. "adam" -> "a damn"), fall back to removing greetings and a fuzzy
+    core token span.
+    """
+    tokens = [t for t in (text_norm or "").split() if t]
+    if not tokens:
+        return ""
+
+    alias_tokens = [t for t in (best_alias or "").split() if t]
+    if alias_tokens and tokens[: len(alias_tokens)] == alias_tokens:
+        return " ".join(tokens[len(alias_tokens) :]).strip()
+
+    # Fallback: strip leading greetings, then consume up to 3 tokens to match core.
+    while tokens and tokens[0] in GREETINGS:
+        tokens.pop(0)
+
+    core_words = _core_words(_normalize(wake_phrase))
+    core_compact = "".join(core_words)
+    if not core_compact:
+        return " ".join(tokens).strip()
+
+    consumed: List[str] = []
+    # Use ratio (not partial_ratio) to avoid 1-letter partial matches.
+    target = max(65, CORE_ONLY_THRESHOLD - 10)
+    for _ in range(min(3, len(tokens))):
+        consumed.append(tokens.pop(0))
+        if int(fuzz.ratio("".join(consumed), core_compact)) >= target:
+            break
+
+    return " ".join(tokens).strip()
+
+
 def _vosk_transcribe(text_audio_i16: bytes, sr: int, wake_phrase: str) -> str:
     model = _get_vosk_model()
     # KaldiRecognizer accepts an optional JSON grammar to constrain decoding
@@ -585,9 +717,19 @@ async def transcribe_pcm(
         wake_match = score >= WAKE_THRESHOLD
         wake_words = [w for w in best_alias.split() if w]
         core_words = [w for w in wake_words if w not in GREETINGS]
+        core_phrase = " ".join(core_words) if core_words else ""
         core_present = sum(1 for w in core_words if w in wake_window)
-        if len(core_words) > 0:
-            if core_present < 1:
+        core_score = int(fuzz.partial_ratio(wake_window, core_phrase)) if core_phrase else 0
+        core_compact_score = (
+            int(fuzz.partial_ratio(wake_window.replace(" ", ""), core_phrase.replace(" ", "")))
+            if core_phrase
+            else 0
+        )
+
+        if core_words:
+            # Don't require exact core token presence; STT may split ("adam" -> "a damn").
+            # Gate by fuzzy core similarity instead.
+            if max(core_score, core_compact_score) < CORE_ONLY_THRESHOLD:
                 wake_match = False
         else:
             present = sum(1 for w in wake_words if w in wake_window)
@@ -600,16 +742,13 @@ async def transcribe_pcm(
             if tok in core_words:
                 earliest_core_pos = idx
                 break
-        core_score = 0
-        if core_words:
-            core_phrase = " ".join(core_words)
-            core_score = int(fuzz.partial_ratio(wake_window, core_phrase))
-        if not wake_match and earliest_core_pos is not None and core_score >= CORE_ONLY_THRESHOLD:
+
+        if not wake_match and max(core_score, core_compact_score) >= CORE_ONLY_THRESHOLD:
             wake_match = True
 
         _log(
             f"🔍 [Wake] phrase='{user_phrase}' best_alias='{best_alias}' window='{wake_window}' "
-            f"score={score} core_score={core_score} core_present={core_present}/{len(core_words)} "
+            f"score={score} core_score={core_score} core_compact_score={core_compact_score} core_present={core_present}/{len(core_words)} "
             f"earliest_core_pos={earliest_core_pos} match={wake_match}"
         )
         _log(str({
@@ -624,12 +763,7 @@ async def transcribe_pcm(
 
         command = text
         if wake_match and best_alias:
-            tokens2 = text.split()
-            wake_tokens = best_alias.split()
-            while tokens2 and wake_tokens and tokens2[0] == wake_tokens[0]:
-                tokens2.pop(0)
-                wake_tokens.pop(0)
-            command = " ".join(tokens2).strip()
+            command = _strip_wake_prefix(text, best_alias, user_phrase)
             if len(command.split()) < 2:
                 command = ""
             _log(f"🧾 [Command] '{command}'")

@@ -235,7 +235,8 @@ export default function Payment() {
   };
 
   const redirectToPaid = () => {
-    try { window.location.assign("/paiduserhome"); } catch { navigate("/paiduserhome"); }
+    const destination = subscriptionType === "education" ? "/educationInstitutional" : "/paiduserhome";
+    try { window.location.assign(destination); } catch { navigate(destination); }
   };
 
   return (
