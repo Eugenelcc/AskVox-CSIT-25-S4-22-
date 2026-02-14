@@ -38,6 +38,7 @@ origins = [
     "https://askvox-csit-25-s4-22-1.onrender.com",
     "https://askvox-front-production.up.railway.app",
     "http://localhost:3000",
+    "https://askvox.chat/",
 ]
 
 app.add_middleware(
