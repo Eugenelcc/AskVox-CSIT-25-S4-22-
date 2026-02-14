@@ -3580,6 +3580,8 @@ async def chat_cloud_plus(req: ChatRequest, request: Request):
         except Exception as e:
             print(f"⚠️ Failed to insert response into Supabase: {e}", flush=True)
 
+    watermarked_answer = insert_watermark(payload.answer_markdown)
+
     if req.session_id and req.user_id:
         # Apply watermark BEFORE persisting so DB content matches what the client receives.
         # Otherwise the frontend may insert a second assistant message because it de-dupes by exact content.
@@ -3593,6 +3595,9 @@ async def chat_cloud_plus(req: ChatRequest, request: Request):
         )
         return ChatResponse(answer=watermarked_answer, payload=payload)
 
+<<<<<<< HEAD
     # Guest/anonymous chats: still watermark the returned answer.
     watermarked_answer = insert_watermark(payload.answer_markdown)
+=======
+>>>>>>> 7423173 (Finalize watermark detector, backend endpoint, and frontend integration)
     return ChatResponse(answer=watermarked_answer, payload=payload)

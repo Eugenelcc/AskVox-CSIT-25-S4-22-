@@ -93,6 +93,12 @@ def insert_watermark(text: str, density: float = 0.05) -> str:
 
     markers = list(ZERO_WIDTH | THIN_SPACES)
 
+    if replace_candidates:
+        replace_count = max(1, int(len(replace_candidates) * density))
+        selected_replacements = random.sample(replace_candidates, min(replace_count, len(replace_candidates)))
+        for pos in selected_replacements:
+            chars[pos] = CYRILLIC_LOOKALIKES.get(chars[pos], chars[pos])
+
     if insert_candidates and markers:
         insert_count = max(1, int(len(insert_candidates) * density))
         selected_inserts = random.sample(
@@ -100,8 +106,12 @@ def insert_watermark(text: str, density: float = 0.05) -> str:
         )
         selected_inserts.sort(reverse=True)
         for pos in selected_inserts:
+<<<<<<< HEAD
             if 0 <= pos <= len(chars):
                 chars.insert(pos, random.choice(markers))
+=======
+            chars.insert(pos, random.choice(markers))
+>>>>>>> 7423173 (Finalize watermark detector, backend endpoint, and frontend integration)
 
     return "".join(chars)
 

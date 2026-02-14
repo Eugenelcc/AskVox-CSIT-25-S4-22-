@@ -172,7 +172,10 @@ async def chat(req: ChatRequest, request: Request):
         pass
 
     answer = await gemini_generate(req.message, final_history)
+<<<<<<< HEAD
     # Apply watermark early so any mirrored chat_messages content matches the API response.
+=======
+>>>>>>> 7423173 (Finalize watermark detector, backend endpoint, and frontend integration)
     watermarked_answer = insert_watermark(answer)
     # Persist response + assistant chat_message to Supabase if linkage provided
     if SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY:
@@ -188,7 +191,7 @@ async def chat(req: ChatRequest, request: Request):
                 try:
                     payload = {
                         "query_id": req.query_id,
-                        "response_text": answer,
+                        "response_text": watermarked_answer,
                         "model_used": f"gemini:{GEMINI_MODEL}",
                     }
                     r = await client.post(
@@ -200,7 +203,7 @@ async def chat(req: ChatRequest, request: Request):
                         # Fallback to alt schema using 'content'
                         alt_payload = {
                             "query_id": req.query_id,
-                            "content": answer,
+                            "content": watermarked_answer,
                             "model_used": f"gemini:{GEMINI_MODEL}",
                         }
                         r2 = await client.post(
