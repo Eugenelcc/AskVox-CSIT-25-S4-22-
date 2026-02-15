@@ -13,7 +13,6 @@ import asyncio
 from dotenv import load_dotenv
 from urllib.parse import urlparse
 from app.services.rag_service import retrieve_rag_context, is_rag_domain, is_rag_available
-from app.services.domain_classifier import classify_domain
 from app.services.moderation_service import moderate_message
 from app.services.domain_classifier import classify_domain, validate_domain
 from app.api.watermark import insert_watermark
@@ -265,30 +264,64 @@ def build_learning_preference_instruction(pref: Optional[str]) -> str:
 
     if p == "secondary":
         return (
-            "LEARNING PREFERENCE: Secondary.\n"
-            "- Explain in simple terms, avoid jargon, and define any necessary terms.\n"
-            "- Use short paragraphs and step-by-step guidance.\n"
-            "- Give 1–2 concrete examples; keep math/light formalism minimal unless asked.\n"
+            "LEARNING PREFERENCE: Secondary School Mode (ages ~1317).\n"
+            "- Goal: build solid conceptual understanding for school-style questions.\n"
+            "- Always define key terms in simple language before using them.\n"
+            "- Explain concepts step-by-step using short sections and clear headings.\n"
+            "- Use bullet points or numbered lists when explaining procedures or multi-part ideas.\n"
+            "- Include 12 concrete, real-world examples to reinforce each major idea.\n"
+            "- For scientific topics: describe the process logically in order (input f process f outcome).\n"
+            "- For historical topics: give a short timeline (before f event f consequences).\n"
+            "- For maths: show reasoning steps, not just the final answer.\n"
+            "- Ask one short reflective question at the end (e.g., ""What do you think would happen if0?"" ).\n"
+            "- Suggest one closely related topic the student could learn next.\n"
+            "- Never assume university-level prior knowledge or use heavy jargon without a brief explanation.\n"
+            "- End the answer with exactly this sentence: 'Would you like to try a short practice question on this?'\n"
         )
     if p == "tertiary":
         return (
-            "LEARNING PREFERENCE: Tertiary.\n"
-            "- Use moderately technical language and introduce key terms with brief definitions.\n"
-            "- Prefer structured explanations (steps, bullets) and include practical examples.\n"
-            "- Include important details, but avoid overly long proofs/derivations unless asked.\n"
+            "LEARNING PREFERENCE: Pre-University / A-Level / Diploma Mode.\n"
+            "- Goal: provide academically structured, conceptually rigorous explanations.\n"
+            "- Organise the answer into clear sections with short headings (e.g., Definition, Key Ideas, Examples, Implications).\n"
+            "- Use proper academic terminology and briefly define complex terms when first introduced.\n"
+            "- Go beyond simple definitions: explain how and why the concept works.\n"
+            "- Highlight cause-and-effect relationships and important assumptions.\n"
+            "- For scientific topics: describe mechanisms, variables, and how they interact.\n"
+            "- For economics/business: explain the model, its assumptions, and real-world implications.\n"
+            "- For history: analyse causes, consequences, and different perspectives, not just a timeline.\n"
+            "- Include at least one concrete example, case study, or simple quantitative illustration if relevant.\n"
+            "- Suggest 12 extension topics or follow-up angles for deeper study.\n"
+            "- Avoid oversimplifying to the point of losing key nuance, but do not write full textbook chapters.\n"
+            "- End the answer with exactly this sentence: 'Would you like to explore the deeper theory behind this?'\n"
         )
     if p == "university":
         return (
-            "LEARNING PREFERENCE: University.\n"
-            "- Provide a rigorous, higher-level explanation with assumptions and precise terminology.\n"
-            "- When useful, include deeper reasoning, edge cases, and (optional) equations/derivations.\n"
-            "- Keep structure clear: definitions → intuition → details → example(s) or algorithm.\n"
+            "LEARNING PREFERENCE: University / Tertiary Mode.\n"
+            "- Goal: give academically rigorous, discipline-aware explanations appropriate for higher education.\n"
+            "- Start with a concise, direct answer to the question in 12 sentences.\n"
+            "- Then provide a structured analytic explanation with clear sections (e.g., Definition, Mechanism, Models/Theory, Examples, Limitations).\n"
+            "- Use precise terminology relevant to the discipline and assume basic undergraduate background in that field.\n"
+            "- Explain mechanisms, models, or theoretical frameworks, including key equations or formal relations where appropriate.\n"
+            "- Discuss assumptions, limitations, edge cases, and competing perspectives when relevant.\n"
+            "- Where useful, connect the concept to empirical evidence, applications, or current debates.\n"
+            "- Keep the writing analytical and compact; avoid storytelling tone unless used briefly for intuition.\n"
+            "- Do not fabricate citations, data, or named research papers.\n"
+            "- End the answer with exactly this sentence: 'Would you like to examine a related advanced concept or research direction?'\n"
         )
     # leisure
     return (
-        "LEARNING PREFERENCE: Leisure Learning.\n"
-        "- Keep it friendly and intuitive; focus on big-picture understanding.\n"
-        "- Use simple examples and avoid heavy technical depth unless asked.\n"
+        "LEARNING PREFERENCE: Leisure Learning Mode.\n"
+        "- Goal: make learning enjoyable, curiosity-driven, and fact-rich (not exam-style).\n"
+        "- Use a friendly, enthusiastic tone and write in short, readable sections.\n"
+        "- Explain ideas using storytelling, analogies, and concrete real-world examples.\n"
+        "- Include specific names, dates, numbers, or locations when they make the story more vivid.\n"
+        "- Add at least one surprising or 'Did you know...?' style insight when possible, but do not invent facts.\n"
+        "- Avoid heavy academic jargon; if you must use a technical term, explain it in plain language.\n"
+        "- Use bullet points only when they clearly help readability; otherwise prefer short conversational paragraphs.\n"
+        "- Naturally suggest related topics or fun follow-up questions the user could explore.\n"
+        "- When media tools are available, you may gently suggest visuals (e.g., 'Would you like to see what this looks like?').\n"
+        "- Never give extremely short or robotic textbook-style answers.\n"
+        "- End the answer with exactly this sentence: 'Would you like to learn more about this?'\n"
     )
 
 
@@ -1722,6 +1755,26 @@ def cleanup_model_text(text: str) -> str:
     m = re.search(r"\n\[SOURCES\]", out, flags=re.IGNORECASE)
     if m:
         out = out[: m.start()]  # drop everything from [SOURCES] downward
+    # Strip common capability disclaimers that conflict with the app UX,
+    # such as "I'm a large language model, I don't have the capability
+    # to display images/videos" and "you can try searching for".
+    disclaimer_patterns = [
+        r"^.*\b(as an?\s+)?(ai\s+)?large\s+language\s+model\b.*$",
+        r"^.*\b(as an?\s+)?(ai\s+)?language\s+model\b.*$",
+        r"^.*\bdo not have the capabilit(?:y|ies) to display\s+(images?|videos?)\b.*$",
+        r"^.*\bcannot display\s+(images?|videos?)\b.*$",
+        r"^.*\bcan(?:'t|not) display\s+(images?|videos?)\b.*$",
+        r"^.*\byou can (try )?searching for\b.*$",
+        # Evidence/meta disclaimers that reference the internal evidence block or sources
+        r"^\s*Note:\s*The provided evidence.*$",
+        r"^\s*Note:\s*Based on the provided evidence.*$",
+        r"^\s*Note:\s*The sources (do not|don't) contain.*$",
+        r"^\s*The provided evidence (does not|doesn't) contain.*$",
+        r"^\s*Based on the provided evidence.*$",
+    ]
+    for pat in disclaimer_patterns:
+        out = re.sub(pat, "", out, flags=re.IGNORECASE | re.MULTILINE)
+
     # Normalize excessive blank lines
     out = re.sub(r"\n{3,}", "\n\n", out).strip()
     return out
@@ -3082,10 +3135,13 @@ async def generate_cloud_structured(
             s = (q or "").strip().lower()
             if not s:
                 return True
+            # Queries that are literally just media words are generic.
             if re.match(r"^(videos?|images?|pictures?|photos?)\b", s or "") is not None:
                 return True
+            # Very short queries are unlikely to carry topic information.
             if len(s) < 8:
                 return True
+
             # Treat media-only followups like "to show photos" as generic.
             stripped = re.sub(
                 r"\b(show me|give me|find|search|look for|to|video|videos|youtube|yt|image|images|picture|pictures|photo|photos)\b",
@@ -3546,6 +3602,16 @@ async def chat_cloud_plus(req: ChatRequest, request: Request):
         max_history=4 if req.user_id else 2,
     )
 
+    # Final safety: ensure no internal planning JSON (e.g. {"answer_markdown": ...})
+    # or meta schema lines leak into the user-visible answer, even if an upstream
+    # path skipped cleanup. This is effectively idempotent with the cleanup run
+    # inside generate_cloud_structured but protects against any future regressions.
+    clean_answer = cleanup_model_text(payload.answer_markdown)
+    clean_answer = strip_meta_prompts(clean_answer)
+    clean_answer = normalize_markdown_spacing(clean_answer)
+    clean_answer = enhance_markdown_for_ui(clean_answer)
+    payload.answer_markdown = clean_answer
+
     # Persist response to Supabase 'responses' table if query_id provided
     if SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY and req.query_id:
         headers = {
@@ -3597,7 +3663,7 @@ async def chat_cloud_plus(req: ChatRequest, request: Request):
     if req.session_id and req.user_id:
         # Apply watermark BEFORE persisting so DB content matches what the client receives.
         # Otherwise the frontend may insert a second assistant message because it de-dupes by exact content.
-        watermarked_answer = insert_watermark(payload.answer_markdown)
+        watermarked_answer = insert_watermark(clean_answer)
         await persist_assistant_message(
             session_id=req.session_id,
             user_id=req.user_id,
@@ -3608,5 +3674,6 @@ async def chat_cloud_plus(req: ChatRequest, request: Request):
         return ChatResponse(answer=watermarked_answer, payload=payload)
 
     # Guest/anonymous chats: still watermark the returned answer.
-    watermarked_answer = insert_watermark(payload.answer_markdown)
+    watermarked_answer = insert_watermark(clean_answer)
     return ChatResponse(answer=watermarked_answer, payload=payload)
+

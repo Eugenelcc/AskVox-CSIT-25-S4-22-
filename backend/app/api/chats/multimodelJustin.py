@@ -1,4 +1,4 @@
-#Befoere RAG , learning prefence , domain specific searches 
+
 from __future__ import annotations
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel, Field
@@ -12,6 +12,7 @@ from datetime import datetime, timezone
 import asyncio
 from dotenv import load_dotenv
 from urllib.parse import urlparse
+from app.api.watermark import insert_watermark
 
 load_dotenv()
 
@@ -44,7 +45,11 @@ YOUTUBE_API_KEY = os.getenv("YOUTUBE_API_KEY", "")
 TAVILY_API_KEY = os.getenv("TAVILY_API_KEY", "")
 
 USE_SUPABASE_STORAGE_FOR_IMAGES = os.getenv("USE_SUPABASE_STORAGE_FOR_IMAGES", "0") == "1"
-FORCE_WEB_SOURCES = os.getenv("FORCE_WEB_SOURCES", "0") == "1"
+# Default to forcing web sources on when providers are configured so
+# factual/time-sensitive queries (e.g. 2025/2026 questions) always run
+# through the web + model pipeline unless explicitly disabled via env.
+FORCE_WEB_SOURCES = os.getenv("FORCE_WEB_SOURCES", "1") == "1"
+ENABLE_SANITY_SECOND_PASS = os.getenv("ENABLE_SANITY_SECOND_PASS", "0") == "1"
 FORCE_YOUTUBE = os.getenv("FORCE_YOUTUBE", "0") == "1"
 FORCE_IMAGES = os.getenv("FORCE_IMAGES", "0") == "1"
 MODEL_KNOWLEDGE_CUTOFF_YEAR = int(os.getenv("MODEL_KNOWLEDGE_CUTOFF_YEAR", "2023"))
@@ -53,6 +58,11 @@ BLOCK_IMAGE_HOSTS = [s.strip().lower() for s in (os.getenv(
     "BLOCK_IMAGE_HOSTS",
     "instagram.com,fbcdn.net,facebook.com,x.com,twitter.com,tiktok.com,linkedin.com,reddit.com,redd.it"
 ).split(",")) if s.strip()]
+
+# Learning preference tuning (optional; values: secondary | tertiary | university | leisure)
+_LEARNING_PREF_ALLOWED = {"secondary", "tertiary", "university", "leisure"}
+_learning_pref_cache: Dict[str, Tuple[float, str]] = {}
+_LEARNING_PREF_TTL_SEC = float(os.getenv("LEARNING_PREF_TTL_SEC", "300"))
 
 # Output style (friendly tone + emoji) — configurable
 AV_EMOJI_STYLE = (os.getenv("AV_EMOJI_STYLE", "light") or "").strip().lower()  # off | light | strong
@@ -196,6 +206,8 @@ MODEL_JSON_INSTRUCTION = (
         + "\n\n"
         + CITATION_TOKEN_RULES
         + "\n\n"
+        "- Give a reasonably detailed answer, not just a single short sentence.\n"
+        "  When helpful, include brief background, key details, and 1–3 interesting facts.\n"
         "- If need_web_sources=false then web_query must be \"\" (same for image/youtube).\n"
         "- Do not invent citations. Only cite if evidence exists.\n"
         "- If the user includes a specific year (e.g., 2026), the web_query MUST include that year when relevant.\n"
@@ -244,8 +256,8 @@ def build_second_pass_prompt_chat(
         "You are AskVox, a helpful assistant. Update and correct the original answer using the latest facts from the provided sources. "
         "Your internal knowledge may be outdated beyond 2023; when sources conflict with prior knowledge, trust the latest [SOURCES]. "
         "Do not mention training cutoffs or model limitations in the answer. "
-        "Write a complete, well-structured markdown response (NOT JSON). Prefer concise paragraphs; use lists only when they improve clarity. "
-        "If a line is 'Title - details', render as '**Title** — details'. Do not include any [SOURCES] section at the end.\n"
+        "Write a complete, well-structured markdown response (NOT JSON). Start with a clear direct answer in 1–2 sentences, then add a bit of context, key details, and a few notable highlights where relevant. "
+        "Prefer concise paragraphs; use lists only when they improve clarity. If a line is 'Title - details', render as '**Title** — details'. Do not include any [SOURCES] section at the end.\n"
         + tone_lines +
         "<|eot_id|>"
     )
@@ -326,8 +338,14 @@ def build_sanity_web_query(
             prefer_year = None
     elif recency_intent or current_year > MODEL_KNOWLEDGE_CUTOFF_YEAR:
         prefer_year = current_year
-    if prefer_year and str(prefer_year) not in q:
-        q = f"{q} {prefer_year}".strip()
+
+    # For future-year or current-year queries, bias toward concrete
+    # upcoming-release style results instead of generic thinkpieces.
+    if prefer_year:
+        if str(prefer_year) not in q:
+            q = f"{q} {prefer_year}".strip()
+        q = f"{q} upcoming releases confirmed titles cast schedule".strip()
+
     return q[:120]
 
 # -----------------------
@@ -411,6 +429,7 @@ class ChatRequest(BaseModel):
     query_id: Optional[str] = None
     session_id: Optional[str] = None
     user_id: Optional[str] = None
+    learning_preference: Optional[str] = None
     article_title: Optional[str] = None
     article_url: Optional[str] = None
 
@@ -451,8 +470,9 @@ class ChatResponse(BaseModel):
 # -----------------------
 # Option A: Keyword Router + Option C: Escalation + Tool Budget
 # -----------------------
-# NOTE: avoid overly generic triggers like "how to" which match many normal questions.
-_MEDIA_WORDS_RE = re.compile(r"\b(video|videos|youtube|yt|watch|tutorial|guide|how to|walkthrough)\b", re.I)
+# NOTE: avoid overly generic triggers like "how to" or plain "watch" which
+# match many normal questions (e.g., "what should I watch?").
+_MEDIA_WORDS_RE = re.compile(r"\b(video|videos|youtube|yt|tutorial|guide|how to|walkthrough)\b", re.I)
 _IMAGE_WORDS_RE = re.compile(r"\b(image|images|picture|pictures|photo|photos|png|jpg|jpeg|sticker|diagram|infographic|show me)\b", re.I)
 
 # ✅ UPDATED: web triggers are more "explicit web intent" + year-based "released in 2026"
@@ -512,6 +532,31 @@ def is_smalltalk_or_identity(message: str) -> bool:
     if not msg:
         return False
     return bool(_SMALLTALK_RE.search(msg))
+
+
+def is_explicit_media_request(message: str) -> bool:
+    """Return True only when the user is clearly asking to *show* media.
+
+    This is stricter than generic media-word detection. It is meant for cases
+    like "show me some pictures of it" or "can I see more images/videos?",
+    and should *not* trigger on questions such as "what should I watch".
+    """
+    msg = (message or "").strip().lower()
+    if not msg:
+        return False
+
+    has_media_word = bool(
+        re.search(r"\b(image|images|picture|pictures|photo|photos|video|videos|trailer|clip|clips)\b", msg)
+    )
+    has_show_verb = bool(
+        re.search(r"\b(show|see|display|send|share|pull up|bring up)\b", msg)
+    )
+    # Treat short follow-ups like "show more pictures of it" or
+    # "can I see some images?" as explicit media requests.
+    if has_media_word and has_show_verb:
+        return True
+
+    return False
 
 # Follow-up intents like "elaborate more" / "apart from that" that
 # suggest the user wants additional information beyond what was already given.
@@ -591,17 +636,37 @@ def infer_need_web_sources(
     if not _has_web_providers():
         return False, "no_providers"
 
+    # Pure media follow-ups like "show me some pictures of it" should
+    # *not* trigger web text tools; they are handled by the image/YouTube
+    # pipeline instead. Skip web escalation entirely for these.
+    if is_explicit_media_request(message):
+        return False, "explicit_media_no_web"
+
     if is_smalltalk_or_identity(message):
         return False, "smalltalk_or_identity"
 
+    # Explicit user intent always wins.
     if user_flags.get("want_web"):
         return True, "explicit_web_intent"
 
-    # Soft time-budget guard: avoid web escalation when we're already close to the total budget.
-    # (Still allow explicit requests via want_web above.)
+    msg = (message or "").strip()
+    years = extract_years(msg)
+    has_future_year = any(int(y) > MODEL_KNOWLEDGE_CUTOFF_YEAR for y in years if y.isdigit())
+    factual_q = bool(msg and is_fact_seeking_question(msg) and not is_general_advice_question(msg))
+
+    # When FORCE_WEB_SOURCES is enabled and we have providers, always route
+    # through web for non-smalltalk, non-media questions so that
+    # up-to-date answers (especially 2025/2026) always see fresh
+    # evidence. Media-only requests are already short-circuited above.
+    if FORCE_WEB_SOURCES:
+        return True, "forced_env"
+
+    # Soft time-budget guard: avoid web escalation when we're already close
+    # to the total budget, but do NOT skip web for clearly factual or
+    # future-year questions.
     if elapsed_sec is not None:
         remaining = _TOTAL_BUDGET_SEC - float(elapsed_sec)
-        if remaining < 2.0:
+        if remaining < 2.0 and not (has_future_year or factual_q):
             return False, "budget_exhausted"
 
     # Option C: for learning prompts, fetch sources proactively.
@@ -619,8 +684,7 @@ def infer_need_web_sources(
     if looks_like_deflection_or_nonanswer(answer_md) and is_fact_seeking_question(message):
         return True, "draft_nonanswer_fact_seeking"
 
-    msg = (message or "").strip()
-    if msg and is_fact_seeking_question(msg) and not is_general_advice_question(msg):
+    if factual_q:
         return True, "factual_or_time_sensitive"
 
     return False, "not_needed"
@@ -766,16 +830,127 @@ def enhance_markdown_for_ui(text: str) -> str:
         out_lines.append(line)
 
     return "\n".join(out_lines).strip()
+
+
+# -----------------------
+# Learning preference helpers (mirroring MultimodalLlamachat)
+# -----------------------
+def _normalize_learning_pref(pref: Optional[str]) -> Optional[str]:
+    p = (pref or "").strip().lower()
+    return p if p in _LEARNING_PREF_ALLOWED else None
+
+
+async def fetch_learning_preference(user_id: Optional[str]) -> Optional[str]:
+    """Fetch user's learning_preference from Supabase (fail-soft + cached)."""
+    uid = (user_id or "").strip()
+    if not uid:
+        return None
+    if not (SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY):
+        return None
+
+    now = time.perf_counter()
+    cached = _learning_pref_cache.get(uid)
+    if cached and (now - cached[0] <= _LEARNING_PREF_TTL_SEC):
+        return cached[1]
+
+    headers = {
+        "apikey": SUPABASE_SERVICE_ROLE_KEY,
+        "Authorization": f"Bearer {SUPABASE_SERVICE_ROLE_KEY}",
+        "Content-Type": "application/json",
+    }
+    url = f"{SUPABASE_URL}/rest/v1/profiles?id=eq.{uid}&select=learning_preference&limit=1"
+    try:
+        async with httpx.AsyncClient(timeout=6.0) as client:
+            r = await client.get(url, headers=headers)
+        if r.status_code >= 400:
+            return None
+        rows = r.json() or []
+        row = rows[0] if rows and isinstance(rows[0], dict) else {}
+        pref = _normalize_learning_pref(row.get("learning_preference"))
+        if pref:
+            _learning_pref_cache[uid] = (now, pref)
+        return pref
+    except Exception:
+        return None
+
+
+def build_learning_preference_instruction(pref: Optional[str]) -> str:
+    """Return system-instruction text that shapes depth/structure based on preference."""
+    p = _normalize_learning_pref(pref)
+    if not p:
+        return ""
+
+    if p == "secondary":
+        return (
+            "LEARNING PREFERENCE: Secondary School Mode (ages ~13–17).\n"
+            "- Goal: build solid conceptual understanding for school-style questions.\n"
+            "- Always define key terms in simple language before using them.\n"
+            "- Explain concepts step-by-step using short sections and clear headings.\n"
+            "- Use bullet points or numbered lists when explaining procedures or multi-part ideas.\n"
+            "- Include 1–2 concrete, real-world examples to reinforce each major idea.\n"
+            "- For scientific topics: describe the process logically in order (input → process → outcome).\n"
+            "- For historical topics: give a short timeline (before → event → consequences).\n"
+            "- For maths: show reasoning steps, not just the final answer.\n"
+            "- When the user is clearly asking to learn or practise a concept (for example, a homework-style question), you may end with a short reflective question and a gentle practice offer such as 'Would you like to try a short practice question on this?'.\n"
+            "- Skip reflective/practice closings for casual or non-academic requests (such as entertainment recommendations or opinions).\n"
+        )
+    if p == "tertiary":
+        return (
+            "LEARNING PREFERENCE: Pre-University / A-Level / Diploma Mode.\n"
+            "- Goal: provide academically structured, conceptually rigorous explanations.\n"
+            "- Organise the answer into clear sections with short headings (e.g., Definition, Key Ideas, Examples, Implications).\n"
+            "- Use proper academic terminology and briefly define complex terms when first introduced.\n"
+            "- Go beyond simple definitions: explain how and why the concept works.\n"
+            "- Highlight cause-and-effect relationships and important assumptions.\n"
+            "- For scientific topics: describe mechanisms, variables, and how they interact.\n"
+            "- For economics/business: explain the model, its assumptions, and real-world implications.\n"
+            "- For history: analyse causes, consequences, and different perspectives, not just a timeline.\n"
+            "- Include at least one concrete example, case study, or simple quantitative illustration if relevant.\n"
+            "- Suggest 1–2 extension topics or follow-up angles for deeper study.\n"
+            "- Avoid oversimplifying to the point of losing key nuance, but do not write full textbook chapters.\n"
+            "- When the question is clearly about understanding a concept in depth, you may close with a short, natural invitation like 'Would you like to explore the deeper theory behind this?'.\n"
+            "- Skip such academic closings for casual requests (for example, recommendations, opinions, or everyday life questions).\n"
+        )
+    if p == "university":
+        return (
+            "LEARNING PREFERENCE: University / Tertiary Mode.\n"
+            "- Goal: give academically rigorous, discipline-aware explanations appropriate for higher education.\n"
+            "- Start with a concise, direct answer to the question in 1–2 sentences.\n"
+            "- Then provide a structured analytic explanation with clear sections (e.g., Definition, Mechanism, Models/Theory, Examples, Limitations).\n"
+            "- Use precise terminology relevant to the discipline and assume basic undergraduate background in that field.\n"
+            "- Explain mechanisms, models, or theoretical frameworks, including key equations or formal relations where appropriate.\n"
+            "- Discuss assumptions, limitations, edge cases, and competing perspectives when relevant.\n"
+            "- Where useful, connect the concept to empirical evidence, applications, or current debates.\n"
+            "- Keep the writing analytical and compact; avoid storytelling tone unless used briefly for intuition.\n"
+            "- Do not fabricate citations, data, or named research papers.\n"
+            "- For clearly academic questions, you may end with a brief, natural invitation such as 'Would you like to examine a related advanced concept or research direction?'.\n"
+            "- For casual or entertainment‑oriented questions, give a practical, user‑friendly answer and skip research‑style closing lines.\n"
+        )
+    # leisure
+    return (
+        "LEARNING PREFERENCE: Leisure Learning Mode.\n"
+        "- Goal: make learning enjoyable, curiosity-driven, and fact-rich (not exam-style).\n"
+        "- Use a friendly, enthusiastic tone and write in short, readable sections.\n"
+        "- Explain ideas using storytelling, analogies, and concrete real-world examples.\n"
+        "- Include specific names, dates, numbers, or locations when they make the story more vivid.\n"
+        "- Add at least one surprising or 'Did you know...?' style insight when possible, but do not invent facts.\n"
+        "- Avoid heavy academic jargon; if you must use a technical term, explain it in plain language.\n"
+        "- Use bullet points only when they clearly help readability; otherwise prefer short conversational paragraphs.\n"
+        "- Naturally suggest related topics or fun follow-up questions the user could explore.\n"
+        "- When media tools are available, you may gently suggest visuals (e.g., 'Would you like to see what this looks like?').\n"
+        "- Never give extremely short or robotic textbook-style answers.\n"
+        "- You may optionally end with a light invitation like 'Would you like to learn more about this?' when the user seems curious about the topic; skip it when it feels out of place.\n"
+    )
     
 
 # -----------------------
-# PLACEHOLDER: Moderation
+# Moderation (placeholder – no external service)
 # -----------------------
-async def moderation_check(text: str) -> Dict[str, Any]:
+async def moderation_check(text: str, user_id: Optional[str] = None, session_id: Optional[str] = None) -> Dict[str, Any]:
     return {"allowed": True, "label": "ok", "score": 0.0, "reason": ""}
 
 # -----------------------
-# PLACEHOLDER: Internal RAG
+# Internal RAG (placeholder – disabled)
 # -----------------------
 async def rag_retrieve(query: str, k: int = 4) -> List[Dict[str, str]]:
     return []
@@ -937,17 +1112,27 @@ async def google_image_search(query: str, num: int = 4) -> List[Dict[str, str]]:
 def _is_displayable_image_url(url: str) -> bool:
     if not url:
         return False
-    u = url.lower().strip()
+    u = url.strip()
+    lu = u.lower()
     # Allow Pinterest CDN (pinimg.com) explicitly; block others from env list
-    host = urlparse(u).netloc
+    host = urlparse(lu).netloc
     if host.endswith("pinimg.com"):
         pass  # allow Pinterest CDN images
     elif any(b in host for b in BLOCK_IMAGE_HOSTS):
         return False
-    # Require a standard image extension
-    if not re.search(r"\.(jpg|jpeg|png|webp)(\?.*)?$", u):
-        return False
-    return True
+    # Be permissive about URL shape: many CSE image links include query
+    # parameters or CDN paths without a clean file extension. Prefer
+    # obvious image extensions when present, but do not *require* them.
+    path = urlparse(lu).path or ""
+    if re.search(r"\.(jpg|jpeg|png|webp)(\?.*)?$", path):
+        return True
+    # Fallback: accept URLs that look like direct image/CDN resources
+    # even if the extension is hidden (common with resized/proxied
+    # images). This keeps host-based safety filtering while avoiding
+    # over‑rejecting valid image URLs.
+    if any(tok in path for tok in ["/images/", "/img/", "/photos/", "/photo/", "=w", "=h"]):
+        return True
+    return False
 
 # -----------------------
 # Supabase storage upload for images
@@ -1166,9 +1351,170 @@ def extract_json(text: str) -> Dict[str, Any]:
                             break
     return {}
 
+def strip_plan_json_leak(text: str) -> str:
+    """Prevent the model's planning JSON from leaking into the visible answer.
+
+    - If the text contains a plan-like JSON object with a non-empty `answer_markdown`, return that.
+    - If the text is plan-like JSON (need_web_sources/web_query/etc.) but has no `answer_markdown`, return "" so
+      downstream fallback messaging can kick in.
+    - Otherwise, return the original text.
+    """
+    s = (text or "").strip()
+    if not s:
+        return ""
+
+    # Fast heuristics to avoid touching normal prose.
+    looks_jsonish = s.startswith("{") and s.endswith("}")
+    has_plan_keys = any(
+        k in s
+        for k in (
+            "need_web_sources",
+            "need_images",
+            "need_youtube",
+            "web_query",
+            "image_query",
+            "youtube_query",
+        )
+    )
+    has_answer_key = ("\"answer_markdown\"" in s) or ("'answer_markdown'" in s)
+    if not (looks_jsonish or has_plan_keys or has_answer_key):
+        return s
+
+    def _find_plan_json_span(src: str) -> tuple[dict[str, Any] | None, int, int]:
+        """Return (obj, start, end) for the *last* plan-like JSON object found in src.
+
+        We pick the last match because models often append the JSON plan at the end
+        after emitting normal prose.
+        """
+        if not src:
+            return (None, -1, -1)
+        last: tuple[dict[str, Any] | None, int, int] = (None, -1, -1)
+        n = len(src)
+        for i in range(n):
+            if src[i] != '{':
+                continue
+            depth = 0
+            for j in range(i, n):
+                if src[j] == '{':
+                    depth += 1
+                elif src[j] == '}':
+                    depth -= 1
+                    if depth == 0:
+                        candidate = src[i : j + 1]
+                        try:
+                            obj = json.loads(candidate)
+                        except Exception:
+                            break
+                        if isinstance(obj, dict):
+                            # Consider it a plan/contract JSON if it has any of the known keys.
+                            if (
+                                ("answer_markdown" in obj)
+                                or ("need_web_sources" in obj)
+                                or ("need_images" in obj)
+                                or ("need_youtube" in obj)
+                                or ("web_query" in obj)
+                                or ("image_query" in obj)
+                                or ("youtube_query" in obj)
+                            ):
+                                last = (obj, i, j)
+                        break
+        return last
+
+    # Best case: valid plan JSON somewhere in the output.
+    try:
+        obj, i, j = _find_plan_json_span(s)
+        if isinstance(obj, dict) and i >= 0 and j >= i:
+            prefix = s[:i].strip()
+            suffix = s[j + 1 :].strip()
+
+            # If the model produced prose and then appended JSON, keep the prose and drop JSON.
+            # This avoids showing raw JSON to users (and avoids truncating to answer_markdown
+            # if the model's JSON is partial).
+            if prefix:
+                combined = (prefix + (("\n\n" + suffix) if suffix else "")).strip()
+                return combined
+
+            # If the output is *just* JSON (or JSON-first), extract answer_markdown if present.
+            ans = obj.get("answer_markdown")
+            if isinstance(ans, str) and ans.strip():
+                return ans.strip()
+
+            # Plan-like JSON with no answer: suppress.
+            if has_plan_keys and not ans:
+                return ""
+    except Exception:
+        pass
+
+    # If a plan-like JSON object was appended but is truncated/invalid, keep the prose prefix.
+    # Do this BEFORE attempting answer_markdown regex extraction, because answer_markdown is
+    # often partial when the JSON is truncated.
+    try:
+        last_obj_start = -1
+        for m in re.finditer(r"\{\s*(?:\"answer_markdown\"|'answer_markdown')\s*:\s*", s):
+            last_obj_start = m.start()
+        if last_obj_start > 0:
+            prefix = s[:last_obj_start].strip()
+            if prefix:
+                return prefix
+    except Exception:
+        pass
+
+    # Fallback: regex extraction of answer_markdown value from JSON-ish text.
+    try:
+        m = re.search(r"\"answer_markdown\"\s*:\s*\"(?P<v>(?:\\\\.|[^\"\\\\])*)\"", s, flags=re.S)
+        if m:
+            v = m.group("v")
+            try:
+                return json.loads('"' + v + '"').strip()
+            except Exception:
+                return v.replace("\\n", "\n").replace("\\t", "\t").replace('\\"', '"').replace("\\\\", "\\").strip()
+
+        m2 = re.search(r"'answer_markdown'\s*:\s*'(?P<v>(?:\\\\.|[^'\\\\])*)'", s, flags=re.S)
+        if m2:
+            v = m2.group("v")
+            return v.replace("\\n", "\n").replace("\\t", "\t").replace("\\'", "'").replace("\\\\", "\\").strip()
+
+        if has_plan_keys and not has_answer_key:
+            return ""
+    except Exception:
+        pass
+
+    return s
+
+
+def _unwrap_runpod_container(text: str) -> Optional[str]:
+    """If `text` looks like a raw RunPod status JSON string, unwrap `output.response`.
+
+    This handles cases where the whole job result JSON accidentally gets surfaced as
+    the model "answer"; we only keep the nested natural-language response.
+    """
+    s = (text or "").strip()
+    if not (s.startswith("{") and s.endswith("}")):
+        return None
+    try:
+        obj = json.loads(s)
+    except Exception:
+        return None
+    if not isinstance(obj, dict):
+        return None
+
+    # Prefer nested output.response
+    out = obj.get("output")
+    if isinstance(out, dict):
+        ans = out.get("response") or out.get("answer") or out.get("reply")
+        if isinstance(ans, str) and ans.strip():
+            return ans.strip()
+
+    # Fallback: top-level response field
+    ans2 = obj.get("response") or obj.get("answer") or obj.get("reply")
+    if isinstance(ans2, str) and ans2.strip():
+        return ans2.strip()
+    return None
+
+
 def safe_wrap_json(raw_text: str) -> Dict[str, Any]:
-    rt = (raw_text or "").strip()
-    rt = cleanup_model_text(rt)
+    rt = strip_plan_json_leak(raw_text)
+    rt = cleanup_model_text((rt or "").strip())
     return {
         "answer_markdown": rt,
         "need_web_sources": False,
@@ -1179,10 +1525,19 @@ def safe_wrap_json(raw_text: str) -> Dict[str, Any]:
         "youtube_query": "",
     }
 
+
 def cleanup_model_text(text: str) -> str:
     if not text:
         return ""
-    out = text
+
+    # First, unwrap any raw RunPod container JSON that leaked through.
+    unwrapped = _unwrap_runpod_container(text)
+    if isinstance(unwrapped, str) and unwrapped.strip():
+        text = unwrapped
+
+    # If the model echoed our JSON schema / plan, unwrap it.
+    out = strip_plan_json_leak(text)
+
     # Remove any embedded schema/YAML-like lines the model may echo
     schema_keys = [
         r"^\s*answer_markdown\s*:\s*.*$",
@@ -1195,16 +1550,42 @@ def cleanup_model_text(text: str) -> str:
     ]
     for pat in schema_keys:
         out = re.sub(pat, "", out, flags=re.MULTILINE)
+
     # Remove inline citation tokens like [[cite:1]] or [[cite:4, 6]] (UI shows sources separately)
     out = re.sub(r"\[\[\s*cite\s*:\s*[^\]]+\]\]", "", out, flags=re.IGNORECASE)
+
     # Strip leaked special tokens (e.g., <|eot_id|>, <|start_header_id|>)
     out = re.sub(r"<\|.*?\|>", "", out)
+
     # Remove [USER] and [ASSISTANT] tags (model echoes)
     out = re.sub(r"^\s*\[(USER|ASSISTANT)\]\s*", "", out, flags=re.MULTILINE)
+
     # Remove trailing [SOURCES] section entirely (frontend shows clickable sources separately)
     m = re.search(r"\n\[SOURCES\]", out, flags=re.IGNORECASE)
     if m:
         out = out[: m.start()]  # drop everything from [SOURCES] downward
+
+    # Strip common capability disclaimers that conflict with the app UX,
+    # such as "I'm a large language model, I don't have the capability
+    # to display images/videos" and "you can try searching for".
+    disclaimer_patterns = [
+        r"^.*\b(as an?\s+)?(ai\s+)?large\s+language\s+model\b.*$",
+        r"^.*\b(as an?\s+)?(ai\s+)?language\s+model\b.*$",
+        r"^.*\bdo not have the capabilit(?:y|ies) to display\s+(images?|videos?)\b.*$",
+        r"^.*\bdon't have the capabilit(?:y|ies) to display\s+(images?|videos?)\b.*$",
+        r"^.*\bcannot display\s+(images?|videos?)\b.*$",
+        r"^.*\bcan(?:'t|not) display\s+(images?|videos?)\b.*$",
+        r"^.*\byou can (try )?searching for\b.*$",
+        # Evidence/meta disclaimers that reference the internal evidence block or sources
+        r"^\s*Note:\s*The provided evidence.*$",
+        r"^\s*Note:\s*Based on the provided evidence.*$",
+        r"^\s*Note:\s*The sources (do not|don't) contain.*$",
+        r"^\s*The provided evidence (does not|doesn't) contain.*$",
+        r"^\s*Based on the provided evidence.*$",
+    ]
+    for pat in disclaimer_patterns:
+        out = re.sub(pat, "", out, flags=re.IGNORECASE | re.MULTILINE)
+
     # Normalize excessive blank lines
     out = re.sub(r"\n{3,}", "\n\n", out).strip()
     return out
@@ -1212,7 +1593,30 @@ def cleanup_model_text(text: str) -> str:
 def strip_meta_prompts(text: str) -> str:
     if not text:
         return ""
+    # First, drop any obvious meta-instruction lines that leaked from
+    # system prompts (e.g. [SOURCES] / REVISION_RULES / citation rules).
+    cleaned_lines: List[str] = []
+    for line in (text or "").splitlines():
+        s = (line or "").strip()
+        lower = s.lower()
+        # Lines that explicitly talk about sources/citation instructions
+        if "[sources]" in lower:
+            continue
+        if "revision_rules" in lower:
+            continue
+        if "citation rules" in lower or "citations rules" in lower:
+            continue
+        if lower.startswith("update answer to reflect"):
+            continue
+        if lower.startswith("remove all [sources]"):
+            continue
+        if "do not include any [sources]" in lower:
+            continue
+        cleaned_lines.append(line)
 
+    out = "\n".join(cleaned_lines)
+
+    # Then strip simpler web-source boilerplate.
     patterns = [
         r"^💡?\s*Need web sources\??.*$",
         r"^\s*yes\s*$",
@@ -1221,7 +1625,6 @@ def strip_meta_prompts(text: str) -> str:
         r"^Here are some web sources.*$",
     ]
 
-    out = text
     for p in patterns:
         out = re.sub(p, "", out, flags=re.IGNORECASE | re.MULTILINE)
 
@@ -1243,17 +1646,48 @@ def extract_titles_from_answer(text: str) -> List[str]:
         s = (line or "").strip()
         if not s:
             continue
+        # 1) Bold heading lines like "**Crash Landing on You** — details"
         m_bold = re.match(r"^\*\*(.+?)\*\*\s+—\s+.*$", s)
         if m_bold:
             titles.append((m_bold.group(1) or "").strip())
             continue
+
+        # 2) Numbered list items like "1. Crash Landing on You - ..."
         m_num = re.match(r"^\s*\d+[\.)]\s*([A-Z][A-Za-z0-9'&\- ]{2,})(?::|\s+-)\s+.*$", s)
         if m_num:
             titles.append((m_num.group(1) or "").strip())
             continue
+
+        # 3) Title: details pattern
         m_tc = re.match(r"^([A-Z][A-Za-z0-9'&\- ]{2,})\s*:\s+.*$", s)
         if m_tc:
             titles.append((m_tc.group(1) or "").strip())
+            continue
+
+        # 4) Any bolded span "**Title**" inside the line
+        for b in re.findall(r"\*\*([^*]{2,80})\*\*", s):
+            b_clean = (b or "").strip()
+            if b_clean:
+                titles.append(b_clean)
+
+        # 5) Quoted titles "Title" or “Title”
+        for q in re.findall(r"\"([^\"]{2,80})\"", s):
+            q_clean = (q or "").strip()
+            if q_clean:
+                titles.append(q_clean)
+        for q in re.findall(r"[“‘]([^”’]{2,80})[”’]", s):
+            q_clean = (q or "").strip()
+            if q_clean:
+                titles.append(q_clean)
+
+        # 6) Inline pattern "Title is a ..." (e.g., "Crash Landing on You is a ...")
+        m_inline = re.match(r"^([A-Z][A-Za-z0-9'&\- ]{2,})\s+is\s+(a|an|the)\b.*$", s)
+        if m_inline:
+            cand = (m_inline.group(1) or "").strip()
+            lower = cand.lower()
+            # Avoid clearly non-title headings
+            if not any(bad in lower for bad in ["recommendation", "recommendations", "overview", "introduction", "summary", "conclusion"]):
+                titles.append(cand)
 
     seen: set = set()
     uniq: List[str] = []
@@ -1360,6 +1794,8 @@ def build_prompt(
     web_evidence_block: str = "",
     article_block: str = "",
     chat_mode: bool = False,
+    learning_preference: Optional[str] = None,
+    time_sensitive: bool = False,
 ) -> str:
     def _truncate(text: str, limit: int) -> str:
         if not text:
@@ -1375,7 +1811,7 @@ def build_prompt(
 
     # LLaMA-3.3 Instruct chat headers
     if chat_mode:
-        # Minimal system + recent history (compact) + current user
+        # Minimal system + learning preference + recent history (compact) + current user
         tone_lines = ""
         # Configure friendly tone + emoji usage without hardcoding specific emojis everywhere
         if AV_EMOJI_STYLE != "off":
@@ -1394,6 +1830,8 @@ def build_prompt(
             "avoid generic boilerplate, and omit closings for formal, code, or long answers.\n"
         )
 
+        pref_instruction = build_learning_preference_instruction(learning_preference).strip()
+
         p = (
             "<|begin_of_text|>"
             "<|start_header_id|>system<|end_header_id|>\n"
@@ -1407,6 +1845,7 @@ def build_prompt(
             "Use concise paragraphs. "
             "If a line is in the form 'Title - details', render it as '**Title** — details'. "
             "Avoid giant wall-of-text paragraphs.\n"
+            + (pref_instruction + "\n" if pref_instruction else "")
             + tone_lines +
             "<|eot_id|>"
         )
@@ -1457,6 +1896,18 @@ def build_prompt(
         "<|start_header_id|>system<|end_header_id|>\n"
     )
     p += MODEL_JSON_INSTRUCTION
+    if time_sensitive:
+        # For fact/time-sensitive questions (e.g., specific dates, winners,
+        # statistics, prices), prioritise *current* web facts over any
+        # potentially outdated internal knowledge or earlier drafts.
+        p += (
+            "\nTIME-SENSITIVE QUERY RULES (IMPORTANT):\n"
+            "- The user's question is factual or time-sensitive (for example, who/what/when, dates, results, prices, or events in a specific year).\n"
+            "- Rely primarily on the latest facts implied by the evidence and context, not on older memorised knowledge.\n"
+            "- If earlier answers or prior knowledge conflict with the evidence, prefer the evidence and correct the answer.\n"
+            "- Do NOT mention that you used web sources, evidence blocks, or that you updated an earlier answer.\n"
+            "- Write a *detailed* answer: start with the direct fact in 1–2 clear sentences, then add several sentences of concise context, background, or significance (not just a short one‑liner).\n"
+        )
     if safe_article:
         p += "\nUse the provided ARTICLE_CONTEXT as the primary source for the user's question.\n"
         p += f"\n{safe_article}\n"
@@ -1852,6 +2303,7 @@ async def generate_cloud_structured(
     article_context: Optional[Dict[str, Any]] = None,
     session_id: Optional[str] = None,
     max_history: int = 3,
+    learning_preference: Optional[str] = None,
 ) -> AssistantPayload:
     t_start = time.perf_counter()
     if not (LLAMA_CLOUDRUN_URL or RUNPOD_RUN_ENDPOINT):
@@ -1907,6 +2359,11 @@ async def generate_cloud_structured(
     def _is_generic_followup(s: str) -> bool:
         t = (s or "").strip()
         if not t:
+            return True
+        # Explicit media follow-ups like "show me some pictures/videos" should
+        # always be treated as generic, since they refer back to the previous
+        # topic rather than introducing a new one.
+        if is_explicit_media_request(t):
             return True
         has_media_word = bool(_MEDIA_WORDS_RE.search(t) or _IMAGE_WORDS_RE.search(t))
         has_pronoun_ref = bool(re.search(r"\b(it|those|them|that|this)\b", t, re.I))
@@ -1982,6 +2439,7 @@ async def generate_cloud_structured(
                 rag_block=rag_block,
                 article_block=article_block,
                 chat_mode=chat_flag,
+                learning_preference=learning_preference,
             )
         )
     else:
@@ -1992,6 +2450,7 @@ async def generate_cloud_structured(
                 rag_block=rag_block,
                 article_block=article_block,
                 chat_mode=chat_flag,
+                learning_preference=learning_preference,
             ),
             timeout=timeout,
         )
@@ -2009,6 +2468,11 @@ async def generate_cloud_structured(
     # Immediate fallback: if model didn't return JSON, show raw text
     if not answer_md and raw:
         answer_md = raw.strip()
+
+    # Keep a copy of the initial draft so later web-based passes can
+    # enrich/extend it instead of completely overwriting with a very
+    # short update (e.g., just a couple of bullet points).
+    draft_answer_md = answer_md
 
     # Ensure plan has required keys so downstream logic stays consistent
     if not plan:
@@ -2036,7 +2500,11 @@ async def generate_cloud_structured(
         recency_intent = bool(re.search(r"\b(now|currently|today|this year|latest|trending|airing|released|premiered)\b", msg_text, re.I))
         mentions_future = any(int(y) > MODEL_KNOWLEDGE_CUTOFF_YEAR for y in years if y.isdigit())
         should_sanity = recency_intent or mentions_future or (current_year > MODEL_KNOWLEDGE_CUTOFF_YEAR)
-        if should_sanity:
+        # The sanity pass uses an extra RunPod/CloudRun call to lightly
+        # revise the draft using Google results. It has been observed to
+        # often return an empty response while still costing latency, so
+        # it is disabled by default unless ENABLE_SANITY_SECOND_PASS=1.
+        if should_sanity and ENABLE_SANITY_SECOND_PASS:
             sanity_q = build_sanity_web_query(message, answer_md, context_query_base=None)
             sanity_q_used = sanity_q
             # Prefer last year for recency queries; no domain-specific hardcoding
@@ -2116,6 +2584,9 @@ async def generate_cloud_structured(
         need_yt = True
 
     # ✅ Smart web decision: explicit intent OR factual/time-sensitive OR model uncertainty
+    # Also detect whether this looks like a fact/time-sensitive question so
+    # later passes can decide whether to fully replace the draft answer.
+    time_sensitive = bool(is_fact_seeking_question(message))
     need_web, need_web_reason = infer_need_web_sources(
         message=message,
         answer_md=answer_md,
@@ -2192,6 +2663,10 @@ async def generate_cloud_structured(
         t = (s or "").strip()
         if not t:
             return True
+        # Explicit media follow-ups like "show me some pictures/videos" should
+        # be treated as generic so we fall back to the last real topic message.
+        if is_explicit_media_request(t):
+            return True
         # Use existing media identifiers + pronoun/more reference to detect generic follow-ups
         has_media_word = bool(_MEDIA_WORDS_RE.search(t) or _IMAGE_WORDS_RE.search(t))
         has_pronoun_ref = bool(re.search(r"\b(it|those|them|that|this)\b", t, re.I))
@@ -2221,28 +2696,96 @@ async def generate_cloud_structured(
     if need_yt and not yt_q:
         yt_q = f"{base_topic} highlights"[:120]
 
-    # Inline refinement for generic media follow-ups using current answer/title context
+    # Inline refinement for media queries using current answer/title context
+    # so that images/videos are tied to concrete items from the model's
+    # response (e.g., specific K-dramas) rather than only a generic topic.
     if need_img or need_yt:
-        # Detect generic phrases
-        def _is_generic(q: str) -> bool:
+        # Detect generic phrases for media queries
+        def _is_generic_media(q: str) -> bool:
             s = (q or "").strip().lower()
-            return not s or re.match(r"^(videos?|images?|pictures?|photos?)\b", s or "") is not None or len(s) < 8
+            if not s:
+                return True
+            # Queries that are literally just media words are generic.
+            if re.match(r"^(videos?|images?|pictures?|photos?)\b", s or "") is not None:
+                return True
+            # Very short queries are unlikely to carry topic information.
+            if len(s) < 8:
+                return True
 
-        # Prefer a concrete topic from the current answer (e.g., show title)
-        topic_title = None
+            # Treat media-only followups like "to show photos" as generic.
+            stripped = re.sub(
+                r"\b(show me|give me|find|search|look for|to|video|videos|youtube|yt|image|images|picture|pictures|photo|photos)\b",
+                " ",
+                s,
+                flags=re.I,
+            )
+            stripped = re.sub(r"\s+", " ", stripped).strip().lower()
+            if not stripped:
+                return True
+            if re.fullmatch(r"(show|see|watch)", stripped):
+                return True
+
+            # If, after stripping media verbs, the query is mostly pronouns
+            # or auxiliary words (e.g. "can of it ? 2025"), then it doesn't
+            # contain a real topic and should be treated as generic so we
+            # fall back to the previous answer/topic.
+            tokens = re.findall(r"[a-zA-Z]{3,}", stripped)
+            if tokens:
+                content_tokens = [
+                    t
+                    for t in tokens
+                    if t not in {
+                        "can",
+                        "could",
+                        "would",
+                        "should",
+                        "have",
+                        "get",
+                        "see",
+                        "show",
+                        "please",
+                        "this",
+                        "that",
+                        "them",
+                        "those",
+                        "it",
+                        "you",
+                        "your",
+                        "me",
+                        "mine",
+                        "ours",
+                        "and",
+                        "the",
+                        "for",
+                        "with",
+                        "from",
+                        "into",
+                        "about",
+                    }
+                ]
+                if not content_tokens:
+                    return True
+
+            return False
+
+        # Prefer concrete titles from the current answer (e.g., show names)
+        title_list: List[str] = []
         try:
-            title_list = extract_titles_from_answer(answer_md)
-            if title_list:
-                topic_title = title_list[0]
+            title_list = extract_titles_from_answer(answer_md) or []
         except Exception:
-            topic_title = None
-        if not topic_title:
-            # Fallbacks: sanity query, base topic, or message
-            topic_title = (sanity_q_used or base_topic or context_query_base or message)
+            title_list = []
 
-        if need_img and _is_generic(img_q):
+        topic_title = title_list[0] if title_list else None
+        if not topic_title:
+            # Fallbacks: prefer a specific topic (base_topic) over a very
+            # generic sanity query like "2025" so media searches stay tied
+            # to the original question/answer instead of drifting to a bare year.
+            topic_title = (base_topic or sanity_q_used or context_query_base or message)
+
+        # Tighten generic queries to the main detected title when they are vague
+        if need_img and _is_generic_media(img_q):
             img_q = f"{topic_title} poster stills promotional photos cast".strip()[:120]
-        if need_yt and _is_generic(yt_q):
+        if need_yt and _is_generic_media(yt_q):
             yt_q = f"{topic_title} official trailer clips".strip()[:120]
 
     print(
@@ -2294,6 +2837,8 @@ async def generate_cloud_structured(
                         web_evidence_block=web_evidence_block,
                         article_block=article_block,
                         chat_mode=False,
+                        learning_preference=learning_preference,
+                        time_sensitive=time_sensitive,
                     )
                 )
             else:
@@ -2305,6 +2850,8 @@ async def generate_cloud_structured(
                         web_evidence_block=web_evidence_block,
                         article_block=article_block,
                         chat_mode=False,
+                        learning_preference=learning_preference,
+                        time_sensitive=time_sensitive,
                     ),
                     timeout=timeout,
                 )
@@ -2318,7 +2865,23 @@ async def generate_cloud_structured(
             plan2 = safe_wrap_json(raw2)
 
         if plan2 and (plan2.get("answer_markdown") or "").strip():
-            answer_md = (plan2.get("answer_markdown") or "").strip()
+            new_answer = (plan2.get("answer_markdown") or "").strip()
+
+            if time_sensitive:
+                # For factual or time-sensitive queries (e.g., specific
+                # winners, dates, event results), trust the web-based
+                # second pass entirely so the user sees a single,
+                # up-to-date answer instead of a mix of old + new.
+                answer_md = new_answer
+            elif draft_answer_md and len(new_answer) < max(len(draft_answer_md) * 0.7, 600):
+                # Non-time-sensitive: if the new answer is much shorter
+                # than the original draft, treat it as an add-on and
+                # append it so we preserve the richer initial
+                # explanation while still surfacing the latest snippet.
+                merged = draft_answer_md.rstrip() + "\n\n" + new_answer.lstrip()
+                answer_md = merged
+            else:
+                answer_md = new_answer
 
         # Soft updates from plan2
         if plan2:
@@ -2341,8 +2904,10 @@ async def generate_cloud_structured(
 
     # 4) Images
     if need_img and img_q:
-        # Prefer deriving multiple specific queries from curated titles
-        def _is_generic(q: str) -> bool:
+        # Prefer deriving multiple specific queries from curated titles so
+        # each image slot is tied to a different concrete item from the
+        # answer (e.g., different K-dramas) instead of a single generic topic.
+        def _is_generic_image(q: str) -> bool:
             s = (q or "").strip().lower()
             return not s or re.match(r"^(images?|pictures?|photos?)\b", s or "") is not None or len(s) < 8
 
@@ -2359,10 +2924,12 @@ async def generate_cloud_structured(
                 title_list = []
 
         img_results: List[Dict[str, str]] = []
-        if title_list and _is_generic(img_q):
-            # Build per-title queries; stop when we have enough images
+        if title_list:
+            # Build per-title queries; stop when we have enough distinct images.
+            # Use a mix of still cuts, scenes, and posters so the results
+            # are not limited to only promotional cast photos.
             queries = [
-                f"{t} poster stills promotional photos cast"[:120]
+                f"{t} still cuts scenes screenshots wallpaper poster"[:120]
                 for t in title_list[:5]
             ]
             seen_urls: set = set()
@@ -2379,9 +2946,9 @@ async def generate_cloud_structured(
                 if len(img_results) >= 4:
                     break
             # If still thin, fall back to the original img_q
-            if len(img_results) < 2:
+            if len(img_results) < 2 and not _is_generic_image(img_q):
                 base_q = re.sub(r"\b(photos?|images?)\b", "", img_q, flags=re.I).strip()
-                fallback_q = f"{base_q} wallpaper hd"[:120]
+                fallback_q = f"{base_q} still cuts scenes screenshots wallpaper"[:120]
                 more = await fast_images(fallback_q, num=6)
                 more = [it for it in more if _is_displayable_image_url(it.get("image_url", ""))]
                 seen_urls = {it.get("image_url") for it in img_results}
@@ -2391,7 +2958,7 @@ async def generate_cloud_structured(
                         img_results.append(it)
                         seen_urls.add(u)
         else:
-            # Single-query path (non-generic or no titles)
+            # Single-query path (no titles available)
             img_results = await fast_images(img_q, num=4)
             img_results = [it for it in img_results if _is_displayable_image_url(it.get("image_url", ""))]
             if len(img_results) < 2:
@@ -2439,22 +3006,30 @@ async def generate_cloud_structured(
         if not youtube:
             need_yt = False
 
-    # Optional: prepend a short line when user explicitly asked for media
+    # Optional: prepend a short line only when the *current* user message
+    # explicitly asked to show media (e.g., "show me some pictures of it").
     try:
-        if answer_md and (images or youtube):
-            if user_flags.get("want_youtube") or user_flags.get("want_images"):
-                media_parts: List[str] = []
-                if youtube:
-                    media_parts.append("videos")
-                if images:
-                    media_parts.append("images")
-                if media_parts:
-                    if len(media_parts) == 2:
-                        media_phrase = " and ".join(media_parts)
-                    else:
-                        media_phrase = media_parts[0]
-                    lead_in = f"Sure, here are some {media_phrase} I found based on your request.\n\n"
-                    answer_md = lead_in + answer_md
+        explicit_media = is_explicit_media_request(message)
+        if answer_md and explicit_media and (images or youtube):
+            media_parts: List[str] = []
+            if youtube:
+                media_parts.append("videos")
+            if images:
+                media_parts.append("images")
+            if media_parts:
+                media_phrase = " and ".join(media_parts) if len(media_parts) == 2 else media_parts[0]
+                lead_in = f"Sure, here are some {media_phrase} I found based on your request.\n\n"
+                answer_md = lead_in + answer_md
+
+        # If the user explicitly asked for media but none could be fetched,
+        # add a clear, friendly note so they know we tried.
+        if explicit_media and not images and not youtube:
+            apology = (
+                "I tried to find relevant images or videos for these K-dramas, "
+                "but I couldn't fetch any that I can safely display right now. "
+                "Here are some text recommendations instead.\n\n"
+            )
+            answer_md = apology + (answer_md or "")
     except Exception:
         pass
 
@@ -2552,6 +3127,11 @@ async def chat_cloud_plus(req: ChatRequest):
         article_title = article_title or (article_context or {}).get("title")
         article_url = article_url or (article_context or {}).get("url")
 
+    # Resolve learning preference: allow explicit override from request, else fetch from profiles.
+    learning_pref = _normalize_learning_pref(req.learning_preference)
+    if not learning_pref and req.user_id:
+        learning_pref = await fetch_learning_preference(req.user_id)
+
     payload = await generate_cloud_structured(
         req.message,
         req.history,
@@ -2560,6 +3140,7 @@ async def chat_cloud_plus(req: ChatRequest):
         article_context=article_context,
         session_id=req.session_id,
         max_history=4 if req.user_id else 2,
+        learning_preference=learning_pref,
     )
 
     # Persist response to Supabase 'responses' table if query_id provided
@@ -2611,12 +3192,17 @@ async def chat_cloud_plus(req: ChatRequest):
             print(f"⚠️ Failed to insert response into Supabase: {e}", flush=True)
 
     if req.session_id and req.user_id:
+        # Apply watermark BEFORE persisting so DB content matches what the client receives.
+        watermarked_answer = insert_watermark(payload.answer_markdown)
         await persist_assistant_message(
             session_id=req.session_id,
             user_id=req.user_id,
-            answer_md=payload.answer_markdown,
+            answer_md=watermarked_answer,
             payload=payload,
             model_used="llama2-cloudrag",
         )
+        return ChatResponse(answer=watermarked_answer, payload=payload)
 
-    return ChatResponse(answer=payload.answer_markdown, payload=payload)
+    # Guest/anonymous chats: still watermark the returned answer.
+    watermarked_answer = insert_watermark(payload.answer_markdown)
+    return ChatResponse(answer=watermarked_answer, payload=payload)

@@ -188,6 +188,7 @@ export default function Dashboard({
     emoji?: string;
   }[]>([]); // all chats the user has created, shown in the sidebar
   const [activeSessionId, setActiveSessionId] = useState<string | null>(null); // currently selected chat session
+  const activeSessionIdRef = useRef<string | null>(null);
   const [activeTab, setActiveTab] = useState<string>(
     initialTab ?? (location.pathname === "/discover" ? "discover" : (location.pathname === "/newchat" ? "newchat" : "newchat"))
   ); // Tracks which tab is active in the NavRail
@@ -210,6 +211,12 @@ export default function Dashboard({
   const [folderModalBusy, setFolderModalBusy] = useState(false);
   const [folderModalErr, setFolderModalErr] = useState<string | null>(null);
   const [folderModalForChatId, setFolderModalForChatId] = useState<string | null>(null);
+
+  // Keep a live ref of the active session so async flows can
+  // check which chat is currently visible, avoiding cross-session flicker.
+  useEffect(() => {
+    activeSessionIdRef.current = activeSessionId;
+  }, [activeSessionId]);
   
   // Chat list in folders
   const sessionIdsInFolders = useMemo(
@@ -398,8 +405,20 @@ export default function Dashboard({
     if (pendingPollSessionRef.current === activeSessionId) return;
     if (bootstrappingSessionIdRef.current && bootstrappingSessionIdRef.current === activeSessionId) return;
 
+    const sid = activeSessionId;
+    let cancelled = false;
+
     const fetchMessages = async () => {
-       const { data } = await supabase.from("chat_messages").select("*").eq("session_id", activeSessionId).order("created_at", { ascending: true });
+      const { data } = await supabase
+        .from("chat_messages")
+        .select("*")
+        .eq("session_id", sid)
+        .order("created_at", { ascending: true });
+
+      // If the user switched chats or this effect was cleaned up,
+      // ignore these results to prevent flickering between sessions.
+      if (cancelled || activeSessionIdRef.current !== sid) return;
+
       if (data) {
         setMessages(data.map((msg: DatabaseMessage) => ({
           id: msg.id, 
@@ -411,7 +430,11 @@ export default function Dashboard({
         })));
       }
     };
-    fetchMessages();
+
+    void fetchMessages();
+    return () => {
+      cancelled = true;
+    };
   }, [activeSessionId, isNewChat, session?.user?.id]);
 
   type DbFolderRow = {
@@ -623,6 +646,14 @@ export default function Dashboard({
   }, [activeSessionId, isNewChat, sessions]);
 
   const handleSelectSession = (sessionId: string) => {
+    // Clear any in-flight pending markers for this session so we don't
+    // briefly rehydrate stale pending prompts when switching.
+    try {
+      clearPendingForSession(sessionId);
+    } catch {
+      // ignore storage errors
+    }
+
     setActiveSessionId(sessionId);
     setMessages([]);
     setIsNewChat(false);
@@ -840,13 +871,19 @@ export default function Dashboard({
   // Reload messages from Supabase for the given session
   const refreshActiveSessionMessages = useCallback(async (sessionId?: string | null) => {
     try {
-      const sid = sessionId ?? activeSessionId;
-      if (!sid) return;
+      const sid = sessionId ?? activeSessionIdRef.current;
+      if (!sid) return null;
+
       const { data } = await supabase
         .from("chat_messages")
         .select("*")
         .eq("session_id", sid)
         .order("created_at", { ascending: true });
+
+      // If the user switched sessions while this request was in flight,
+      // ignore these results to avoid flashing the previous chat's bubbles.
+      if (!activeSessionIdRef.current || activeSessionIdRef.current !== sid) return null;
+
       if (data) {
         const mapped = data.map((msg: DatabaseMessage) => ({
           id: msg.id,
@@ -863,7 +900,7 @@ export default function Dashboard({
       console.warn("Failed to refresh chat messages after voice mode", e);
     }
     return null;
-  }, [activeSessionId, session.user.id]);
+  }, [session.user.id]);
 
   // SmartRec: poll until assistant reply arrives (backend inserts it asynchronously)
   useEffect(() => {
@@ -905,7 +942,7 @@ export default function Dashboard({
   // If we navigated/remounted while a request is still running, rehydrate the user's prompt
   // and show the loading animation until an assistant reply appears in chat_messages.
   useEffect(() => {
-    if (!activeSessionId || isNewChat) return;
+    if (!activeSessionId || isNewChat || isSending) return;
 
     let startedAt = 0;
     try {
@@ -914,6 +951,7 @@ export default function Dashboard({
     } catch {
       startedAt = 0;
     }
+    // If there's no valid pending marker for *this* session, do nothing.
     if (!startedAt || !Number.isFinite(startedAt)) return;
 
     pendingPollSessionRef.current = activeSessionId;
@@ -925,23 +963,13 @@ export default function Dashboard({
       return;
     }
 
-    // Ensure the user prompt is visible even if DB insert hasn't propagated yet.
-    try {
-      const p = sessionStorage.getItem(pendingPromptKey(activeSessionId)) || "";
-      if (p && (!messagesRef.current || messagesRef.current.length === 0)) {
-        setMessages([
-          {
-            id: `pending-${startedAt}`,
-            senderId: session.user.id,
-            content: p,
-            createdAt: new Date(startedAt).toISOString(),
-            displayName: profile?.username ?? "User",
-          },
-        ]);
-      }
-    } catch {
-      // ignore
-    }
+    // Note: we used to inject a synthetic "pending" user bubble here based
+    // on the stored prompt text. That combined with the optimistic update
+    // in handleSubmit could briefly show the same user query twice before
+    // one was replaced by the real history from Supabase. To avoid that
+    // duplicate-then-disappear effect, we now rely solely on the optimistic
+    // UI plus the eventual DB refresh, and keep the pending marker only for
+    // driving the polling loop below.
 
     setIsSending(true);
     let cancelled = false;
@@ -953,7 +981,7 @@ export default function Dashboard({
       attempts += 1;
       const sid = activeSessionId;
       const mapped = await refreshActiveSessionMessages(sid);
-      if (cancelled) return;
+      if (cancelled || !sid || sid !== activeSessionId) return;
 
       const last = mapped && mapped.length ? mapped[mapped.length - 1] : null;
       const done = last && last.senderId === LLAMA_ID && String(last.content || "").trim();
@@ -986,6 +1014,7 @@ export default function Dashboard({
   }, [
     activeSessionId,
     isNewChat,
+    isSending,
     refreshActiveSessionMessages,
     session.user.id,
     profile?.username,
@@ -1424,17 +1453,22 @@ export default function Dashboard({
       
       setIsSending(false);
       if (currentSessionId) clearPendingForSession(currentSessionId);
-      
 
       const streamId = `llama-${Date.now()}`;
-      setMessages(prev => [...prev, { 
-        id: streamId, 
-        senderId: LLAMA_ID, 
-        content: replyText, 
-        createdAt: new Date().toISOString(),
-        displayName: "AskVox",
-        meta,
-      }]);
+      // Only append the assistant reply if the user is still
+      // viewing this session. If they switched chats while the
+      // LLM was responding, we'll rely on DB persistence +
+      // refreshActiveSessionMessages when they return.
+      if (currentSessionId && activeSessionIdRef.current === currentSessionId) {
+        setMessages(prev => [...prev, { 
+          id: streamId, 
+          senderId: LLAMA_ID, 
+          content: replyText, 
+          createdAt: new Date().toISOString(),
+          displayName: "AskVox",
+          meta,
+        }]);
+      }
 
       // Persist assistant response so the session shows full history after reload/switch.
       // The backend may also mirror assistant messages; avoid duplicates by checking first.
