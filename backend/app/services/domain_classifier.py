@@ -8,7 +8,7 @@ import os
 import re
 from typing import Any
 
-# Google NLP is optional: app must still boot without it.
+
 try:
     from google.cloud import language_v2  # type: ignore
     from google.api_core.exceptions import GoogleAPIError  # type: ignore
@@ -18,7 +18,7 @@ except Exception:  # pragma: no cover
     GoogleAPIError = Exception  # type: ignore
     _GOOGLE_NLP_AVAILABLE = False
 
-# Lazy-loaded client
+
 _client = None
 
 def get_client():
@@ -26,11 +26,7 @@ def get_client():
     if not _GOOGLE_NLP_AVAILABLE:
         raise RuntimeError("google-cloud-language is not installed")
     if _client is None:
-        # Supported credential sources (highest priority first):
-        # - GOOGLE_CREDENTIALS_JSON_B64: base64(service account JSON)
-        # - GOOGLE_CREDENTIALS_JSON: raw service account JSON
-        # - GOOGLE_CREDENTIALS_PATH: path to JSON file (legacy)
-        # - GOOGLE_APPLICATION_CREDENTIALS: path to JSON file (ADC standard)
+
 
         json_b64 = os.getenv("GOOGLE_CREDENTIALS_JSON_B64")
         json_str = os.getenv("GOOGLE_CREDENTIALS_JSON")
@@ -129,97 +125,39 @@ GOOGLE_TO_ASKVOX = {
 CUSTOM_DOMAIN_KEYWORDS = {
     "Technology": ["ai", "machine learning", "coding", "programming", "software", "app", "website", "algorithm"],
     "Health & Wellness": ["exercise", "fitness", "diet", "nutrition", "meditation", "yoga", "wellness"],
-    "History and World Events": [
-        "war", "battle", "conflict", "treaty", "empire", "kingdom", "dynasty", "ruler", "king", "queen",
-        "emperor", "chief", "leader", "revolution", "independence", "colonial", "colony", "colonization",
-        "colonisation", "protectorate", "annexation", "occupation", "annexed", "conquest", "invasion",
-        "rebellion", "uprising", "movement", "reform", "republic", "settlement", "migration", "civilization",
-        "culture", "tradition", "ritual", "ceremony", "religion", "missionary", "missionaries", "trade",
-        "slave", "slavery", "slave trade", "precolonial", "postcolonial", "indigenous", "ethnic", "chiefdom",
-        "monarchy", "tribute", "raids", "fort", "port", "coast", "settlers", "society", "economy",
-        "agriculture", "church", "islam", "christian", "mosque", "temple", "language", "people", "tribe",
-        "tribal", "community", "population", "city", "capital", "border", "frontier", "constitution",
-        "election", "coup", "civil", "nationalist", "party", "federation", "colonialism", "expansion",
-        "territory", "province", "administration", "governance", "ancient", "medieval", "renaissance",
-        "industrial", "modern", "contemporary", "century", "decade", "era", "period", "age", "epoch",
-        "xhosa", "thembu", "maqoma", "ngqika", "nongqause", "phalo", "cattle-killing", "new world",
-        "exploration", "explorer", "voyage", "discovery", "colonists", "colonial rule", "imperialism",
-        "new france", "new spain", "new england", "thirteen colonies", "royal charter", "plantation",
-        "fur trade", "triangular trade", "atlantic world", "native american", "first nations", "inuit",
-        "metis", "tribal nation", "tribal sovereignty", "oral history", "longhouse", "totem", "reservation",
-        "treaty rights", "forced removal", "trail of tears", "assimilation", "boarding school",
-        "ancestral land", "american revolution", "founding fathers", "declaration of independence",
-        "constitutional convention", "civil war", "emancipation", "reconstruction", "abolition",
-        "segregation", "jim crow", "manifest destiny", "westward expansion", "homestead",
-        "frontier settlement", "great depression", "new deal", "civil rights movement", "cold war",
-        "confederation", "dominion", "fur company", "hudsons bay company", "french and indian war",
-        "residential schools", "treaty system", "colonial administration", "mesoamerica", "aztec", "maya",
-        "olmec", "viceroyalty", "spanish crown", "mexican independence", "reform war", "mexican revolution",
-        "land reform", "hacienda", "peonage", "plantation economy", "sugar plantation", "maroon",
-        "maroon communities", "creole", "creolization", "emancipation act", "indentured labor", "piracy",
-        "privateer", "revolutionary war", "statehood", "annexation treaty", "territorial acquisition",
-        "nation-building", "federalism", "self-governance", "decolonization", "post-independence",
-        "social movement", "european continent", "western europe", "eastern europe", "northern europe",
-        "southern europe", "balkan peninsula", "iberian peninsula", "scandinavian peninsula",
-        "apennine peninsula", "baltic region", "carpathian basin", "mediterranean basin",
-        "black sea sphere", "classical antiquity", "hellenic world", "roman republic", "roman citizenship",
-        "roman law code", "latinization", "hellenization", "city-state politics", "celts",
-        "germanic peoples", "slavic peoples", "baltic peoples", "norse society", "tribal confederations",
-        "clan-based society", "customary law", "feudal contract", "manorial economy", "serf obligations",
-        "vassal loyalty", "knightly orders", "ecclesiastical courts", "canon law", "papal authority",
-        "investiture controversy", "monastic orders", "scholastic thought", "medieval guild system",
-        "urban commune", "dynastic succession", "royal house", "noble estate", "aristocratic privilege",
-        "court society", "imperial estates", "hereditary rule", "latin christendom", "eastern orthodoxy",
-        "church councils", "iconoclasm", "great schism", "confessional divide", "state church",
-        "religious tolerance", "secular authority", "humanist scholarship", "classical revival",
-        "scientific revolution", "rational inquiry", "empirical method", "natural philosophy",
-        "political philosophy", "constitutionalism", "parliamentary tradition", "absolutist rule",
-        "popular sovereignty", "balance of power", "realpolitik", "continental diplomacy",
-        "enclosure movement", "factory discipline", "urban proletariat", "bourgeois culture",
-        "class consciousness", "labor agitation", "total mobilization", "mass conscription", "trench system",
-        "ideological extremism", "authoritarian regime", "totalitarian governance", "postwar settlement",
-        "continental integration", "supranational governance", "asian continent", "east asia", "south asia",
-        "southeast asia", "west asia", "central asia", "middle east", "indian subcontinent",
-        "east asian sphere", "silk road", "spice trade routes", "indus valley civilization",
-        "yellow river civilization", "yangtze civilization", "vedic period", "classical india",
-        "classical china", "mandate of heaven", "dynastic cycle", "imperial bureaucracy",
-        "civil service examination", "scholar-official", "caste system", "varna system", "jati",
-        "samurai class", "shogunate", "daimyo", "tributary system", "hinduism", "buddhism",
-        "confucianism", "daoism", "taoism", "shinto", "sikhism", "islamic caliphate", "ulama", "sufism",
-        "sultanate", "caliphate", "khaganate", "steppe empires", "nomadic confederation",
-        "tributary diplomacy", "european concessions", "treaty ports", "extraterritoriality",
-        "anti-colonial resistance", "non-aligned movement", "postcolonial asia", "developmental state",
-        "rapid industrialization", "authoritarian modernization", "regional integration",
-    ],
-    # Geography-related earth hazards (Google sometimes classifies as Earth Sciences)
-    "Geography and Travel": [
-        "volcano",
-        "volcanic",
-        "eruption",
-        "lava",
-        "earthquake",
-        "seismic",
-        "aftershock",
-        "fault line",
-        "tectonic",
-        "plate tectonics",
-        "tsunami",
-        "tsunmai",
-    ],
-    # Add more custom domains here
+    "History and World Events": (
+        "war, battle, conflict, treaty, empire, kingdom, dynasty, civilization, ruler, king, queen, emperor, tsar, sultan, "
+        "caliph, shah, pharaoh, caesar, consul, senate, revolution, independence, colonial, colonization, colonisation, annexation, occupation, conquest, invasion, rebellion, "
+        "uprising, reform, republic, monarchy, feudalism, aristocracy, oligarchy, theocracy, imperialism, abolition, emancipation, segregation, constitution, parliament, coup, civil war, "
+        "nationalism, federalism, sovereignty, decolonization, ancient, classical, medieval, renaissance, industrial revolution, modern era, contemporary history, century, decade, era, period, age, epoch, "
+        "slavery, serfdom, colonialism, total war, guerrilla warfare, naval blockade, military coup, peace settlement, mesopotamian civilization, sumerian civilization, akkadian empire, babylonian empire, assyrian empire, "
+        "ancient egyptian civilization, old kingdom, middle kingdom, new kingdom, indus valley civilization, vedic civilization, ancient greek civilization, hellenistic period, roman republic, roman empire, "
+        "han dynasty, qin dynasty, zhou dynasty, mauryan empire, gupta empire, persian empire, achaemenid empire, olmec civilization, maya civilization, aztec empire, inca empire, qin dynasty, han dynasty, tang dynasty, song dynasty, "
+        "yuan dynasty, ming dynasty, qing dynasty, mauryan dynasty, gupta dynasty, chola dynasty, mughal empire, delhi sultanate, rashidun caliphate, umayyad caliphate, abbasid caliphate, ottoman empire, safavid dynasty, mamluk sultanate, "
+        "carolingian dynasty, capetian dynasty, tudor dynasty, stuart dynasty, habsburg dynasty, romanov dynasty, bourbon dynasty, plantagenet dynasty, shogunate, tokugawa shogunate, samurai class, daimyo, mandate of heaven, dynastic cycle, "
+        "mali empire, songhai empire, ghana empire, zulu kingdom, american revolution, french revolution, haitian revolution, mexican revolution, world war i, world war ii, cold war, great depression, new deal, civil rights movement, non-aligned movement, "
+        "alexander the great, julius caesar, augustus caesar, charlemagne, genghis khan, kublai khan, napoleon bonaparte, queen victoria, tsar nicholas ii, emperor meiji, qin shi huang, ashoka the great, akbar the great, suleiman the magnificent, ramesses ii, cleopatra vii, "
+        "feudal contract, manorial system, serfdom, vassalage, scholasticism, canon law, papal authority, investiture controversy, absolute monarchy, constitutional monarchy, enlightenment, scientific revolution, totalitarianism, authoritarian regime, mass mobilization, industrialization"
+    ).split(", "),
+    "Geography and Travel": (
+        "volcano, volcanic, eruption, lava, earthquake, seismic, aftershock, fault line, tectonic, plate tectonics, "
+        "tsunami, epicenter, magnitude, richter scale, subduction zone, mid-ocean ridge, rift valley, continental drift, crust, mantle, "
+        "mountain, mountain range, plateau, plain, valley, canyon, delta, river basin, tributary, waterfall, glacier, ice cap, "
+        "desert, dune, oasis, coastline, peninsula, island, archipelago, strait, isthmus, fjord, bay, gulf, cliff, erosion, weathering, "
+        "sedimentation, alluvial plain, climate, weather pattern, monsoon, trade winds, jet stream, cyclone, hurricane, typhoon, drought, floodplain, "
+        "precipitation, humidity, temperature range, climate zone, tropical, arid climate, temperate climate, polar climate, savanna climate, mediterranean climate, "
+        "river system, watershed, aquifer, groundwater, estuary, lagoon, ocean current, tide, coral reef, atoll, rainforest, grassland, tundra, taiga, wetland, mangrove, "
+        "biodiversity, ecosystem, habitat, vegetation zone, urbanization, megacity, population density, migration pattern, demographic transition, birth rate, death rate, "
+        "urban sprawl, infrastructure, transport network, rural settlement, metropolitan area, land use, zoning, economic corridor, latitude, longitude, equator, hemisphere, "
+        "prime meridian, time zone, topography, elevation, altitude, relief, contour line, map projection, cartography, geographic coordinates, spatial distribution, resource distribution, "
+        "natural resource, deforestation, desertification, climate change, global warming, carbon cycle, greenhouse effect, sea level rise, sustainability, renewable resource, tourism, eco-tourism, "
+        "backpacking, itinerary, landmark, heritage site, travel destination, cultural landscape, national park, visa, border crossing, airport hub, travel route"
+    ).split(", "),
+    
 }
 
 def classify_domain(text: str, allowed_domains: set = None) -> str:
-    """
-    Classify query text into AskVox domain.
-    
-    Args:
-        text: Query text to classify
-        allowed_domains: Optional set of domains to restrict to (None = use DOMAIN_WHITELIST)
-    
-    Returns:
-        Domain name from ASKVOX_DOMAINS (never returns unmapped Google categories)
-    """
+
     text = text.strip()
     if not text:
         return "general"
