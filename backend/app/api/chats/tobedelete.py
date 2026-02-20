@@ -12,9 +12,6 @@ from datetime import datetime, timezone
 import asyncio
 from dotenv import load_dotenv
 from urllib.parse import urlparse
-from app.services.rag_service import retrieve_rag_context, is_rag_domain, is_rag_available
-from app.services.moderation_service import moderate_message
-from app.services.domain_classifier import classify_domain, validate_domain
 from app.api.watermark import insert_watermark
 
 load_dotenv()
@@ -260,16 +257,20 @@ def build_second_pass_prompt_chat(
     p = (
         "<|begin_of_text|>"
         "<|start_header_id|>system<|end_header_id|>\n"
-        "You are AskVox, a helpful assistant. Update and correct the ORIGINAL_ANSWER using the latest facts from the provided sources while keeping its overall voice and structure. "
+        "You are AskVox, a helpful assistant. Update and correct the original answer using the latest facts from the provided sources. "
         "Your internal knowledge may be outdated beyond 2023; when sources conflict with prior knowledge, trust the latest [SOURCES]. "
         "Do not mention training cutoffs or model limitations in the answer. "
-        "Write a complete, well-structured markdown response (NOT JSON). Start with a clear direct answer in 1–3 sentences, then add a bit of context, key details, and a few notable highlights where relevant. "
-        "Preserve the friendly, human-like tone, introductions, transitions, and tips from the original answer; do NOT turn a flowing explanation into a short, dry list. "
-        "Prefer concise paragraphs; use lists only when they improve clarity (for example, step-by-step instructions or short enumerations). If a line is 'Title - details', render as '**Title** — details'. Do not include any [SOURCES] section at the end.\n"
-        "Explain topics in a natural, tutor-like way with context, reasoning, and examples. "
-        "Use bullet points or numbered lists only when they genuinely improve clarity, and avoid stripping away helpful descriptive context from the original answer. "
+        "Write a complete, well-structured markdown response (NOT JSON). Start with a clear direct answer in 1–2 sentences, then add a bit of context, key details, and a few notable highlights where relevant. "
+        "Prefer concise paragraphs; use lists only when they improve clarity. If a line is 'Title - details', render as '**Title** — details'. Do not include any [SOURCES] section at the end.\n"
+        "Explain topics in a natural, human, tutor-like way. "
+        "Prefer clear paragraph-style explanations with context, reasoning, and examples. "
+        "Use bullet points or numbered lists only when they genuinely improve clarity "
+        "(such as rankings, comparisons, or step-by-step instructions). "
+        "When the request involves rankings, comparisons, or step-by-step instructions, respond with a numbered or bulleted list rather than plain paragraphs. "
         "For rankings or 'top N' queries, present a numbered list starting at 1 with ONE item per line, and include a short explanation for each item.\n"
-        "Use concise paragraphs and avoid giant wall-of-text sections.\n"
+        "Use concise paragraphs. "
+        "If a line is in the form 'Title - details', render it as '**Title** — details'. "
+        "Avoid giant wall-of-text paragraphs.\n"
         + (pref_instruction + "\n" if pref_instruction else "")
         + tone_lines +
         "<|eot_id|>"
@@ -896,16 +897,17 @@ def build_learning_preference_instruction(pref: Optional[str]) -> str:
     if p == "secondary":
         return (
             "LEARNING PREFERENCE: Secondary School Mode (ages ~13–17).\n"
-            "- Goal: build solid conceptual understanding for school-style questions using simple language.\n"
-            "- Always define key terms in very clear, everyday words before using them.\n"
-            "- Prefer short explanations rather than long paragraphs. Keep most explanations to a few short sentences.\n"
-            "- Use bullet points or numbered lists as the main structure for explanations, especially when breaking down steps or multi-part ideas.\n"
-            "- For each key idea, give a short heading or keyword, followed by a 1–2 sentence explanation in the same bullet.\n"
-            "- Include 1–2 concrete, real-world examples to reinforce major ideas, written in simple language.\n"
-            "- For scientific topics: list the steps of the process in order (input → process → outcome) using bullets.\n"
-            "- For historical topics: use a short bullet-point timeline (before → event → consequences) instead of long narrative paragraphs.\n"
-            "- For maths: show the working steps clearly in bullets or short lines, not just the final answer.\n"
-            "- Avoid dense, essay-style paragraphs; keep things bite-sized so a secondary student can skim and revise quickly.\n"
+            "- Goal: build solid conceptual understanding for school-style questions.\n"
+            "- Always define key terms in simple language before using them.\n"
+            "- Explain concepts step-by-step using short sections and clear headings.\n"
+            "- Use bullet points or numbered lists when explaining procedures or multi-part ideas.\n"
+            "- Include 1–2 concrete, real-world examples to reinforce each major idea.\n"
+            "- Keep it concise: aim for ~120–220 words unless the user explicitly asks for more detail.\n"
+            "- For scientific topics: describe the process logically in order (input → process → outcome).\n"
+            "- For historical topics: give a short timeline (before → event → consequences).\n"
+            "- For maths: show reasoning steps, not just the final answer.\n"
+            "- When the user is clearly asking to learn or practise a concept (for example, a homework-style question), you may end with a short reflective question and a gentle practice offer such as 'Would you like to try a short practice question on this?'.\n"
+            "- Skip reflective/practice closings for casual or non-academic requests (such as entertainment recommendations or opinions).\n"
         )
     if p == "tertiary":
         return (
@@ -929,28 +931,28 @@ def build_learning_preference_instruction(pref: Optional[str]) -> str:
             "LEARNING PREFERENCE: University / Tertiary Mode.\n"
             "- Goal: give academically rigorous, discipline-aware explanations appropriate for higher education.\n"
             "- Start with a concise, direct answer to the question in 1–2 sentences.\n"
-            "- Then develop a detailed, essay-style explanation organised into clear sections (for example, Background, Mechanism, Models/Theory, Evidence, Limitations).\n"
+            "- Then provide a structured analytic explanation with clear sections (e.g., Definition, Mechanism, Models/Theory, Examples, Limitations).\n"
             "- Use precise terminology relevant to the discipline and assume basic undergraduate background in that field.\n"
-            "- Prefer well-developed paragraphs for the main explanation. Each paragraph should explore an idea in depth, with clear reasoning and connections between sentences.\n"
-            "- Use lists only for short enumerations (for example, naming key factors, assumptions, or steps) or when a compact summary is genuinely clearer than paragraphs.\n"
             "- Explain mechanisms, models, or theoretical frameworks, including key equations or formal relations where appropriate.\n"
-            "- Discuss assumptions, limitations, edge cases, and competing perspectives when relevant, in paragraph form.\n"
+            "- Discuss assumptions, limitations, edge cases, and competing perspectives when relevant.\n"
             "- Where useful, connect the concept to empirical evidence, applications, or current debates.\n"
-            "- Keep the tone analytical and formal, avoiding chatty or overly simplified language.\n"
+            "- Keep the writing analytical and compact; avoid storytelling tone unless used briefly for intuition.\n"
             "- Do not fabricate citations, data, or named research papers.\n"
+            "- For clearly academic questions, you may end with a brief, natural invitation such as 'Would you like to examine a related advanced concept or research direction?'.\n"
+            "- For casual or entertainment‑oriented questions, give a practical, user‑friendly answer and skip research‑style closing lines.\n"
         )
-    # leisure: fall back to default AskVox system prompt with no extra instructions
+    # leisure: treated as the default AskVox style (no extra instruction needed)
     return ""
     
 
 # -----------------------
-# Moderation (delegate to shared moderation service)
+# Moderation (placeholder – no external service)
 # -----------------------
 async def moderation_check(text: str, user_id: Optional[str] = None, session_id: Optional[str] = None) -> Dict[str, Any]:
-    return await moderate_message(text, user_id=user_id, session_id=session_id)
+    return {"allowed": True, "label": "ok", "score": 0.0, "reason": ""}
 
 # -----------------------
-# Internal RAG 
+# Internal RAG (placeholder – disabled)
 # -----------------------
 async def rag_retrieve(query: str, k: int = 4) -> List[Dict[str, str]]:
     return []
@@ -958,7 +960,7 @@ async def rag_retrieve(query: str, k: int = 4) -> List[Dict[str, str]]:
 def build_rag_block(chunks: List[Dict[str, str]]) -> str:
     if not chunks:
         return ""
-    lines = ["[RAG_CONTEXT] Use this context if relevant:"]
+    lines = ["[RAG_CONTEXT] Use this context if relevant (do not mention this label):"]
     for i, ch in enumerate(chunks[:6], start=1):
         title = ch.get("title") or f"Chunk {i}"
         src = ch.get("source") or ""
@@ -1787,6 +1789,112 @@ async def fetch_recent_session_pairs(session_id: Optional[str], max_pairs: int =
     return pairs
 
 
+async def fetch_latest_response_text_by_query_id(query_id: Optional[str]) -> Tuple[str, str]:
+    """Fetch latest Supabase `responses` row for a given query_id.
+
+    Returns: (response_id, response_text)
+    """
+    qid = (query_id or "").strip()
+    if not (SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY and qid):
+        return "", ""
+    headers = {
+        "apikey": SUPABASE_SERVICE_ROLE_KEY,
+        "Authorization": f"Bearer {SUPABASE_SERVICE_ROLE_KEY}",
+        "Content-Type": "application/json",
+    }
+    url = (
+        f"{SUPABASE_URL}/rest/v1/responses"
+        f"?query_id=eq.{qid}&select=id,response_text,content,created_at&order=created_at.desc&limit=1"
+    )
+    try:
+        async with httpx.AsyncClient(timeout=10) as client:
+            r = await client.get(url, headers=headers)
+            if r.status_code >= 400:
+                return "", ""
+            rows = r.json() or []
+    except Exception:
+        return "", ""
+    if not rows:
+        return "", ""
+    row = rows[0] if isinstance(rows[0], dict) else {}
+    rid = str(row.get("id") or "").strip()
+    txt = (row.get("response_text") or row.get("content") or "").strip()
+    return rid, txt
+
+
+async def supabase_upsert_response_text(query_id: str, response_text: str, model_used: str = "llama2-cloudrag") -> bool:
+    """Insert or update Supabase `responses` for a query_id.
+
+    - If a row already exists for this query_id, PATCH the latest row.
+    - Otherwise, POST a new row (tries `response_text`, then falls back to `content`).
+    """
+    qid = (query_id or "").strip()
+    txt = (response_text or "").strip()
+    if not (SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY and qid and txt):
+        return False
+
+    headers = {
+        "apikey": SUPABASE_SERVICE_ROLE_KEY,
+        "Authorization": f"Bearer {SUPABASE_SERVICE_ROLE_KEY}",
+        "Content-Type": "application/json",
+        "Prefer": "return=representation",
+    }
+
+    existing_id, _existing_text = await fetch_latest_response_text_by_query_id(qid)
+
+    try:
+        async with httpx.AsyncClient(timeout=20) as client:
+            if existing_id:
+                patch_url = f"{SUPABASE_URL}/rest/v1/responses?id=eq.{existing_id}"
+                body = {"response_text": txt, "model_used": model_used}
+                r = await client.patch(patch_url, headers=headers, json=body)
+                if r.status_code < 400:
+                    print("✅ Updated response (response_text)", flush=True)
+                    return True
+                # fallback schema
+                body2 = {"content": txt, "model_used": model_used}
+                r2 = await client.patch(patch_url, headers=headers, json=body2)
+                if r2.status_code < 400:
+                    print("✅ Updated response (alt schema)", flush=True)
+                    return True
+                print(
+                    "⚠️ Failed to update response:",
+                    r.status_code,
+                    (r.text or "")[:300],
+                    "| alt",
+                    r2.status_code,
+                    (r2.text or "")[:300],
+                    flush=True,
+                )
+                return False
+
+            # Insert new row
+            post_url = f"{SUPABASE_URL}/rest/v1/responses"
+            resp_body = {"query_id": qid, "response_text": txt, "model_used": model_used}
+            r = await client.post(post_url, headers=headers, json=resp_body)
+            if r.status_code < 400:
+                print("✅ Inserted response (response_text)", flush=True)
+                return True
+            alt_body = {"query_id": qid, "content": txt, "model_used": model_used}
+            r2 = await client.post(post_url, headers=headers, json=alt_body)
+            if r2.status_code < 400:
+                print("✅ Inserted response (alt schema)", flush=True)
+                return True
+            print(
+                "⚠️ Failed to insert response:",
+                r.status_code,
+                (r.text or "")[:300],
+                "| alt",
+                r2.status_code,
+                (r2.text or "")[:300],
+                flush=True,
+            )
+            return False
+    except Exception as e:
+        print(f"⚠️ Failed to upsert response: {e}", flush=True)
+        return False
+
+
 async def generate_media_query_from_answer(
     answer_text: str,
     user_message: str,
@@ -1857,7 +1965,7 @@ async def generate_media_query_from_answer(
                 )
             except Exception:
                 pass
-            raw = await call_runpod_job_prompt(prompt)
+            raw = await call_runpod_job_prompt(prompt, max_wait_sec=RUNPOD_THIRD_PASS_MAX_WAIT_SEC, purpose="media_third_pass")
         else:
             timeout = httpx.Timeout(connect=10.0, read=120.0, write=10.0, pool=10.0)
             raw = await call_cloudrun(prompt, timeout=timeout)
@@ -1897,6 +2005,26 @@ def build_prompt(
     learning_preference: Optional[str] = None,
     time_sensitive: bool = False,
 ) -> str:
+    def _conciseness_rules(pref: Optional[str]) -> str:
+        p = _normalize_learning_pref(pref)
+        if not p:
+            return ""
+        if p == "secondary":
+            return (
+                "\nANSWER LENGTH (IMPORTANT):\n"
+                "- Keep the answer short and easy: ~120–220 words.\n"
+                "- Use 2–5 short paragraphs or a short list only if it helps.\n"
+                "- Do not add extra background unless asked.\n"
+            )
+        if p == "leisure":
+            return (
+                "\nANSWER LENGTH (IMPORTANT):\n"
+                "- Keep it concise and readable: ~140–260 words.\n"
+                "- Prefer 2–5 short paragraphs; avoid long essays.\n"
+            )
+        # Tertiary/university can be fuller; no extra constraint here.
+        return ""
+
     def _truncate(text: str, limit: int) -> str:
         if not text:
             return ""
@@ -1931,6 +2059,7 @@ def build_prompt(
         )
 
         pref_instruction = build_learning_preference_instruction(learning_preference).strip()
+        concise_rules = _conciseness_rules(learning_preference)
 
         p = (
             "<|begin_of_text|>"
@@ -1945,6 +2074,9 @@ def build_prompt(
             "Use concise paragraphs. "
             "If a line is in the form 'Title - details', render it as '**Title** — details'. "
             "Avoid giant wall-of-text paragraphs.\n"
+            + (pref_instruction + "\n" if pref_instruction else "")
+            + (concise_rules + "\n" if concise_rules else "")
+            + tone_lines +
             "<|eot_id|>"
         )
 
@@ -1953,10 +2085,6 @@ def build_prompt(
         seen = set()
         for h in history:
             if not h.content or not h.content.strip():
-                continue
-            # If the caller already included the current user message in history,
-            # avoid duplicating it (we append safe_message at the end).
-            if h.role == "user" and h.content.strip() == safe_message.strip():
                 continue
             key = (h.role, h.content.strip())
             if key in seen:
@@ -1993,45 +2121,12 @@ def build_prompt(
         return p
 
     # Structured mode with JSON instruction and optional context blocks
-    norm_pref = _normalize_learning_pref(learning_preference)
-    pref_instruction = build_learning_preference_instruction(norm_pref).strip()
-
-    tone_lines = ""
-    if AV_EMOJI_STYLE != "off":
-        tone_lines += (
-            "Adopt a warm, friendly, tutor-like tone. You may add a single light emoji in an opening or closing when helpful "
-            "(e.g., 😊 or 🤖). Keep emoji usage minimal and skip them for formal, code, or JSON-only answers.\n"
-        )
-    if AV_FRIENDLY_OPENERS:
-        tone_lines += (
-            "If the question is casual or learning-focused, you may begin with a brief friendly greeting. Vary the phrasing across answers, "
-            "do not repeat the same greeting, and sometimes omit it entirely. For direct academic questions, begin with the explanation.\n"
-        )
-    tone_lines += (
-        "Optionally include one short closing line inviting follow-up (for example, asking if more detail or another example is needed). "
-        "Avoid boilerplate and skip closings for very formal or long answers.\n"
-    )
-
-    try:
-        print(
-            "JSON_PROMPT_LEARNING_PREF:",
-            {
-                "raw_pref": learning_preference,
-                "normalized": norm_pref,
-                "applied": bool(pref_instruction),
-            },
-            flush=True,
-        )
-    except Exception:
-        pass
-
-    second_pass_ctx = bool(safe_article or safe_rag or safe_evidence)
-
     p = (
         "<|begin_of_text|>"
         "<|start_header_id|>system<|end_header_id|>\n"
     )
     p += MODEL_JSON_INSTRUCTION
+    p += _conciseness_rules(learning_preference)
     if time_sensitive:
         # For fact/time-sensitive questions (e.g., specific dates, winners,
         # statistics, prices), prioritise *current* web facts over any
@@ -2044,18 +2139,6 @@ def build_prompt(
             "- Do NOT mention that you used web sources, evidence blocks, or that you updated an earlier answer.\n"
             "- Write a *detailed* answer: start with the direct fact in 1–2 clear sentences, then add several sentences of concise context, background, or significance (not just a short one‑liner).\n"
         )
-    elif second_pass_ctx:
-        # When revising or enriching an earlier internal draft using fresh
-        # evidence or article/RAG context, treat this as a full rewrite:
-        # rephrase and elaborate the answer using the new information instead
-        # of just appending a short add-on.
-        p += (
-            "\nREVISION / ELABORATION RULES (IMPORTANT):\n"
-            "- Assume you produced an earlier generic draft answer internally. Now you have fresher context and evidence.\n"
-            "- Rewrite the answer from scratch in your own words, integrating the new information so the final answer is self-contained.\n"
-            "- Do NOT simply append a short correction; instead, rephrase and elaborate the explanation using the updated facts.\n"
-            "- Avoid repeating the same sentences or paragraphs; aim for a clear, unified explanation that feels like one coherent answer.\n"
-        )
     if safe_article:
         p += "\nUse the provided ARTICLE_CONTEXT as the primary source for the user's question.\n"
         p += f"\n{safe_article}\n"
@@ -2063,12 +2146,6 @@ def build_prompt(
         p += f"\n{safe_rag}\n"
     if safe_evidence:
         p += f"\n{safe_evidence}\n"
-
-    if second_pass_ctx and pref_instruction:
-        p += "\nLEARNING PREFERENCE INSTRUCTION:\n" + pref_instruction + "\n"
-    if second_pass_ctx and tone_lines:
-        p += "\nTONE AND STYLE GUIDANCE:\n" + tone_lines + "\n"
-
     p += "<|eot_id|>"
 
     # Filter out empty or duplicate history entries (keep last 2 exchanges)
@@ -2196,7 +2273,12 @@ async def call_cloudrun(prompt: str, timeout: httpx.Timeout) -> str:
         raise HTTPException(status_code=502, detail="Cloud Run response missing answer field")
     return raw
 
-async def call_runpod_job_prompt(prompt: str) -> str:
+async def call_runpod_job_prompt(
+    prompt: str,
+    *,
+    max_wait_sec: Optional[float] = None,
+    purpose: str = "",
+) -> str:
     """
     Submit a job to RunPod `/run` and poll `/status/{id}` until COMPLETED.
     Expects `RUNPOD_API_KEY` and `RUNPOD_RUN_ENDPOINT` in env.
@@ -2210,16 +2292,11 @@ async def call_runpod_job_prompt(prompt: str) -> str:
     payload = {"input": {"prompt": prompt, "stop": ["<|eot_id|>"]}}
 
     try:
-        # Debug: show what prompt is being sent to RunPod
-        text = prompt or ""
+        # Debug: show a preview of the prompt sent to RunPod
         print(f"🚀 Submitting RunPod job: {RUNPOD_RUN_ENDPOINT}", flush=True)
-        print(f"   Prompt length: {len(text)} chars", flush=True)
-        print("—— Prompt Preview (first 1200 chars) ——", flush=True)
-        if len(text) > 1200:
-            print(text[:1200] + "...", flush=True)
-        else:
-            print(text, flush=True)
-        print("—— End Prompt Preview ——", flush=True)
+        print("—— Prompt Preview (first 900 chars) ——", flush=True)
+        print((prompt or "")[:900], flush=True)
+        print("—— End Preview ——", flush=True)
         async with httpx.AsyncClient(timeout=httpx.Timeout(connect=10.0, read=30.0, write=10.0, pool=10.0)) as client:
             run_resp = await client.post(RUNPOD_RUN_ENDPOINT, json=payload, headers=headers)
     except httpx.RequestError as e:
@@ -2250,8 +2327,9 @@ async def call_runpod_job_prompt(prompt: str) -> str:
             status_base = RUNPOD_RUN_ENDPOINT.rstrip("/") + "/status"
 
     t0 = time.perf_counter()
+    max_wait = float(max_wait_sec) if (max_wait_sec is not None and max_wait_sec > 0) else float(RUNPOD_MAX_WAIT_SEC)
     last_status = ""
-    while (time.perf_counter() - t0) < RUNPOD_MAX_WAIT_SEC:
+    while (time.perf_counter() - t0) < max_wait:
         url = f"{status_base}/{job_id}"
         if not last_status:
             print(f"⏳ Polling RunPod status: {url}", flush=True)
@@ -2299,7 +2377,11 @@ async def call_runpod_job_prompt(prompt: str) -> str:
 
         await asyncio.sleep(RUNPOD_POLL_INTERVAL_SEC)
 
-    print(f"⏰ RunPod job timed out (last_status={last_status})", flush=True)
+    print(
+        f"⏰ RunPod job timed out (last_status={last_status})",
+        {"purpose": purpose or None, "max_wait_sec": max_wait},
+        flush=True,
+    )
     raise HTTPException(status_code=504, detail=f"RunPod job timed out (last_status={last_status})")
 
 async def fetch_session_article_context(session_id: str) -> Dict[str, Any]:
@@ -2461,7 +2543,7 @@ async def generate_cloud_structured(
     article_url: Optional[str] = None,
     article_context: Optional[Dict[str, Any]] = None,
     session_id: Optional[str] = None,
-    user_id: Optional[str] = None,
+    query_id: Optional[str] = None,
     max_history: int = 3,
     learning_preference: Optional[str] = None,
 ) -> AssistantPayload:
@@ -2469,8 +2551,8 @@ async def generate_cloud_structured(
     if not (LLAMA_CLOUDRUN_URL or RUNPOD_RUN_ENDPOINT):
         raise HTTPException(status_code=500, detail="No model endpoint configured: set LLAMA_CLOUDRUN_URL or RUNPOD_RUN_ENDPOINT in .env")
 
-    # Moderation via shared service (includes user/session context when available)
-    mod = await moderation_check(message, user_id=user_id, session_id=session_id)
+    # Moderation placeholder
+    mod = await moderation_check(message)
     if not mod.get("allowed", True):
         return AssistantPayload(
             answer_markdown="I can’t help with that request. If you want, rephrase it in a safe, respectful way and I’ll try again.",
@@ -2517,8 +2599,6 @@ async def generate_cloud_structured(
         pass
 
     # Build context base from Supabase pairs when follow-up is generic
-    # and also prepare prior Q&A for prompt context so the model can
-    # add *new* information instead of repeating itself.
     def _is_generic_followup(s: str) -> bool:
         t = (s or "").strip()
         if not t:
@@ -2540,7 +2620,6 @@ async def generate_cloud_structured(
         return False
 
     context_query_base = None
-    supabase_pairs_for_prompt: List[Tuple[str, str]] = []
     if _is_generic_followup(message) and session_id:
         pairs = await fetch_recent_session_pairs(session_id, max_pairs=2)
         try:
@@ -2551,11 +2630,6 @@ async def generate_cloud_structured(
             )
         except Exception:
             pass
-        # Keep these recent pairs so we can feed them back into the
-        # model prompt (as history) for generic follow-ups like
-        # "show me more information".
-        supabase_pairs_for_prompt = pairs or []
-
         # Prefer a title extracted from last response; else last query text
         last_resp = next((p[1] for p in pairs if (p[1] or "").strip()), "")
         last_query = next((p[0] for p in pairs if (p[0] or "").strip()), "")
@@ -2599,27 +2673,12 @@ async def generate_cloud_structured(
             pass
 
 
-    # Construct additional history entries from Supabase recent pairs so
-    # the model can see the last full Q&A when the user asks things like
-    # "show me more information". This encourages elaboration on top of
-    # the previous answer rather than repeating it.
-    supabase_history: List[HistoryItem] = []
-    if supabase_pairs_for_prompt:
-        for q, r in supabase_pairs_for_prompt:
-            if q and q.strip():
-                supabase_history.append(HistoryItem(role="user", content=q))
-            if r and r.strip():
-                supabase_history.append(HistoryItem(role="assistant", content=r))
-
-    prompt_history: List[HistoryItem] = list(trimmed_history or []) + supabase_history
-
-
     # ✅ Draft answer first (no tools yet)
     if RUNPOD_RUN_ENDPOINT:
         raw = await call_runpod_job_prompt(
             build_prompt(
                 message,
-                prompt_history,
+                trimmed_history,
                 rag_block=rag_block,
                 article_block=article_block,
                 chat_mode=chat_flag,
@@ -2630,7 +2689,7 @@ async def generate_cloud_structured(
         raw = await call_cloudrun(
             build_prompt(
                 message,
-                prompt_history,
+                trimmed_history,
                 rag_block=rag_block,
                 article_block=article_block,
                 chat_mode=chat_flag,
@@ -2703,6 +2762,7 @@ async def generate_cloud_structured(
                     original_answer=answer_md,
                     web_evidence_block=sanity_block,
                     article_block=article_block,
+                    learning_preference=learning_preference,
                 )
                 refined_raw = ""
                 try:
@@ -2876,7 +2936,7 @@ async def generate_cloud_structured(
         web_q = make_fallback_query(base_topic or (article_title or message), max_len=120)
 
     if need_img and not img_q:
-        img_q = f"{base_topic} photos or images"[:120]
+        img_q = f"{base_topic} photos or pictures"[:120]
     if need_yt and not yt_q:
         yt_q = f"{base_topic} highlights or videos"[:120]
 
@@ -3051,11 +3111,21 @@ async def generate_cloud_structured(
         if plan2 and (plan2.get("answer_markdown") or "").strip():
             new_answer = (plan2.get("answer_markdown") or "").strip()
 
-            # Always treat the web-based second pass as a single,
-            # coherent revision of the answer rather than stitching
-            # it together with the initial draft.
-            # This avoids producing two full answers back-to-back.
-            answer_md = new_answer
+            if time_sensitive:
+                # For factual or time-sensitive queries (e.g., specific
+                # winners, dates, event results), trust the web-based
+                # second pass entirely so the user sees a single,
+                # up-to-date answer instead of a mix of old + new.
+                answer_md = new_answer
+            elif draft_answer_md and len(new_answer) < max(len(draft_answer_md) * 0.7, 600):
+                # Non-time-sensitive: if the new answer is much shorter
+                # than the original draft, treat it as an add-on and
+                # append it so we preserve the richer initial
+                # explanation while still surfacing the latest snippet.
+                merged = draft_answer_md.rstrip() + "\n\n" + new_answer.lstrip()
+                answer_md = merged
+            else:
+                answer_md = new_answer
 
         # Soft updates from plan2
         if plan2:
@@ -3077,13 +3147,9 @@ async def generate_cloud_structured(
             yt_q = make_fallback_query(message, max_len=120)
 
     # -----------------------
-    # 3rd pass: media query summarizer
-    # - First turn leisure/secondary: enrich media queries from answer.
-    # - Explicit media follow-ups ("show me pictures/videos"): also run
-    #   the summarizer so we don't search for "show me images" literally.
+    # 3rd pass: media query summarizer (leisure/secondary first-turn only)
     # -----------------------
     norm_pref = _normalize_learning_pref(learning_preference)
-    explicit_media_followup = is_explicit_media_request(message)
 
     # IMPORTANT: second pass can flip media flags off; for first-turn leisure/secondary,
     # keep media enabled so we can fetch images + videos and run the summarizer.
@@ -3092,10 +3158,9 @@ async def generate_cloud_structured(
         need_yt = True
 
     use_third_media_pass = (
-        (
-            (is_first_turn and norm_pref in {"secondary", "leisure"} and not is_smalltalk_or_identity(message))
-            or explicit_media_followup
-        )
+        is_first_turn
+        and norm_pref in {"secondary", "leisure"}
+        and not is_smalltalk_or_identity(message)
         and (need_img or need_yt)
         and bool(answer_md and answer_md.strip())
     )
@@ -3111,6 +3176,7 @@ async def generate_cloud_structured(
                 "need_yt": need_yt,
                 "has_answer": bool(answer_md),
                 "answer_len": len(answer_md or ""),
+                "query_id": query_id,
                 "enabled": bool(use_third_media_pass),
             },
             flush=True,
@@ -3119,7 +3185,53 @@ async def generate_cloud_structured(
         pass
 
     if use_third_media_pass:
-        media_pass_text = (answer_md or "").strip()
+        # Debug: fetch response_text from Supabase (responses table) by query_id.
+        # If this is the first turn, it may be empty until we insert it.
+        supa_id_before, supa_text_before = await fetch_latest_response_text_by_query_id(query_id)
+        try:
+            print(
+                "MEDIA_THIRD_PASS_SUPABASE_RESPONSE_TEXT_BEFORE:",
+                {
+                    "query_id": query_id,
+                    "row_id": supa_id_before or None,
+                    "has_text": bool(supa_text_before),
+                    "preview": (supa_text_before.replace("\n", " ")[:520] if supa_text_before else ""),
+                    "len": len(supa_text_before or ""),
+                },
+                flush=True,
+            )
+        except Exception:
+            pass
+
+        # Ensure Supabase has the final answer before we do the 3rd model call.
+        try:
+            if query_id and answer_md and not (supa_text_before or "").strip():
+                await supabase_upsert_response_text(query_id=query_id, response_text=answer_md, model_used="llama2-cloudrag")
+        except Exception:
+            pass
+
+        supa_id_after, supa_text_after = await fetch_latest_response_text_by_query_id(query_id)
+        try:
+            print(
+                "MEDIA_THIRD_PASS_SUPABASE_RESPONSE_TEXT_AFTER:",
+                {
+                    "query_id": query_id,
+                    "row_id": supa_id_after or None,
+                    "has_text": bool(supa_text_after),
+                    "preview": (supa_text_after.replace("\n", " ")[:520] if supa_text_after else ""),
+                    "len": len(supa_text_after or ""),
+                },
+                flush=True,
+            )
+        except Exception:
+            pass
+
+        media_pass_text = (supa_text_after or supa_text_before or answer_md or "").strip()
+        if (supa_text_after or supa_text_before):
+            print("MEDIA_THIRD_PASS_INPUT_SOURCE: supabase.responses.response_text", flush=True)
+        else:
+            print("MEDIA_THIRD_PASS_INPUT_SOURCE: in_memory_answer_md", flush=True)
+
         media_q = await generate_media_query_from_answer(media_pass_text, message, norm_pref)
         if media_q:
             # Use the SAME clean base query for both image and YouTube searches.
@@ -3165,7 +3277,7 @@ async def generate_cloud_structured(
             # Use a mix of still cuts, scenes, and posters so the results
             # are not limited to only promotional cast photos.
             queries = [
-                f"{t} relavent images, photos or pictures"[:120]
+                f"{t} still cuts scenes screenshots wallpaper poster"[:120]
                 for t in title_list[:5]
             ]
             seen_urls: set = set()
@@ -3184,7 +3296,7 @@ async def generate_cloud_structured(
             # If still thin, fall back to the original img_q
             if len(img_results) < 2 and not _is_generic_image(img_q):
                 base_q = re.sub(r"\b(photos?|images?)\b", "", img_q, flags=re.I).strip()
-                fallback_q = f"{base_q} relavent images and photos"[:120]
+                fallback_q = f"{base_q} still cuts scenes screenshots wallpaper"[:120]
                 more = await fast_images(fallback_q, num=6)
                 more = [it for it in more if _is_displayable_image_url(it.get("image_url", ""))]
                 seen_urls = {it.get("image_url") for it in img_results}
@@ -3199,7 +3311,7 @@ async def generate_cloud_structured(
             img_results = [it for it in img_results if _is_displayable_image_url(it.get("image_url", ""))]
             if len(img_results) < 2:
                 base_q = re.sub(r"\b(photos?|images?)\b", "", img_q, flags=re.I).strip()
-                fallback_q = f"{base_q} relavent images and photos"[:120]
+                fallback_q = f"{base_q} wallpaper hd"[:120]
                 more = await fast_images(fallback_q, num=6)
                 more = [it for it in more if _is_displayable_image_url(it.get("image_url", ""))]
                 seen_urls = {it.get("image_url") for it in img_results}
@@ -3261,7 +3373,7 @@ async def generate_cloud_structured(
         # add a clear, friendly note so they know we tried.
         if explicit_media and not images and not youtube:
             apology = (
-                "I tried to find relevant images or videos, "
+                "I tried to find relevant images or videos for these K-dramas, "
                 "but I couldn't fetch any that I can safely display right now. "
                 "Here are some text recommendations instead.\n\n"
             )
@@ -3302,6 +3414,15 @@ async def generate_cloud_structured(
             sources = list(merged.values())
     except Exception:
         # Never fail the request because of promotion logic
+        pass
+
+    # Persist final answer to Supabase `responses` (unwatermarked) when query_id is available.
+    # This used to happen in the endpoint, but we do it here so the 3rd pass can
+    # fetch `responses.response_text` within the same request.
+    try:
+        if query_id and answer_md:
+            await supabase_upsert_response_text(query_id=query_id, response_text=answer_md, model_used="llama2-cloudrag")
+    except Exception:
         pass
 
     return AssistantPayload(
@@ -3375,58 +3496,10 @@ async def chat_cloud_plus(req: ChatRequest):
         article_url=article_url,
         article_context=article_context,
         session_id=req.session_id,
-        user_id=req.user_id,
+        query_id=req.query_id,
         max_history=4 if req.user_id else 2,
         learning_preference=learning_pref,
     )
-
-    # Persist response to Supabase 'responses' table if query_id provided
-    if SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY and req.query_id:
-        headers = {
-            "apikey": SUPABASE_SERVICE_ROLE_KEY,
-            "Authorization": f"Bearer {SUPABASE_SERVICE_ROLE_KEY}",
-            "Content-Type": "application/json",
-            "Prefer": "return=representation",
-        }
-        try:
-            async with httpx.AsyncClient(timeout=20) as client:
-                resp_body = {
-                    "query_id": req.query_id,
-                    "response_text": payload.answer_markdown,
-                    "model_used": "llama2-cloudrag",
-                }
-                r = await client.post(
-                    f"{SUPABASE_URL}/rest/v1/responses",
-                    headers=headers,
-                    json=resp_body,
-                )
-                if r.status_code >= 400:
-                    alt_body = {
-                        "query_id": req.query_id,
-                        "content": payload.answer_markdown,
-                        "model_used": "llama2-cloudrag",
-                    }
-                    r2 = await client.post(
-                        f"{SUPABASE_URL}/rest/v1/responses",
-                        headers=headers,
-                        json=alt_body,
-                    )
-                    if r2.status_code >= 400:
-                        print(
-                            "⚠️ Failed to insert response into Supabase:",
-                            r.status_code,
-                            r.text[:300],
-                            "| alt",
-                            r2.status_code,
-                            r2.text[:300],
-                            flush=True,
-                        )
-                    else:
-                        print("✅ Inserted response (alt schema)", flush=True)
-                else:
-                    print("✅ Inserted response", flush=True)
-        except Exception as e:
-            print(f"⚠️ Failed to insert response into Supabase: {e}", flush=True)
 
     if req.session_id and req.user_id:
         # Apply watermark BEFORE persisting so DB content matches what the client receives.
