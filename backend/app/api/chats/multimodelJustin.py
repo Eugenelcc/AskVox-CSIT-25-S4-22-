@@ -620,6 +620,13 @@ _LEARNING_REQUEST_RE = re.compile(
     re.I,
 )
 
+_EXAM_OR_MATERIAL_RE = re.compile(
+    r"\b(exam|examination|test|midterm|final|assessment|quiz|past\s*year|sample\s*paper|trial\s*paper|mock\s*exam|mock\s*test|"
+    r"past\s*papers?|exam\s*paper|exam\s*questions?|revision\s*questions?)\b|"
+    r"\b(pdf|pdfs|notes|lecture\s*notes|lecture\s*slides?|slides?|tutorial\s*sheet|assignment|handout|handouts|materials?)\b",
+    re.I,
+)
+
 def _has_web_providers() -> bool:
     return bool((GOOGLE_API_KEY and GOOGLE_CSE_ID) or TAVILY_API_KEY)
 
@@ -634,6 +641,18 @@ def wants_learning_resources(message: str) -> bool:
     if not msg:
         return False
     return bool(_LEARNING_REQUEST_RE.search(msg))
+
+def is_exam_or_material_request(message: str) -> bool:
+    """Detect exam-style or study-material requests.
+
+    For prompts asking for exam questions, past papers, PDFs, lecture notes,
+    etc., we prefer to rely on the model's own academic knowledge instead of
+    forcing web sources or a second-pass web refinement.
+    """
+    msg = (message or "").strip()
+    if not msg:
+        return False
+    return bool(_EXAM_OR_MATERIAL_RE.search(msg))
 
 def infer_need_web_sources(
     message: str,
@@ -658,6 +677,13 @@ def infer_need_web_sources(
     if is_smalltalk_or_identity(message):
         return False, "smalltalk_or_identity"
 
+    # Exam-style or study-material prompts (e.g., "exam questions", "PDF",
+    # "lecture notes") should generally rely on the model's academic
+    # knowledge, not web evidence. Keep the strong first-pass answer and
+    # skip web tools/second-pass for these.
+    if is_exam_or_material_request(message):
+        return False, "exam_or_material"
+
     # Explicit user intent always wins.
     if user_flags.get("want_web"):
         return True, "explicit_web_intent"
@@ -671,6 +697,7 @@ def infer_need_web_sources(
     # through web for non-smalltalk, non-media questions so that
     # up-to-date answers (especially 2025/2026) always see fresh
     # evidence. Media-only requests are already short-circuited above.
+    # Exam-style or material requests are exempt (handled above).
     if FORCE_WEB_SOURCES:
         return True, "forced_env"
 
