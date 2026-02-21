@@ -15,6 +15,7 @@ from .otp_verifications import OTPVerification
 from .password_reset_otps import PasswordResetOTP
 from .quizzes import Quiz, Question, AnswerOption, QuizAttempt
 from .news import NewsCategory, NewsArticle, NewsSource
+from .newsdata import NewsCache
 from .documents import Document, DocumentAnalysis
 from .user_usage import UserUsage
 from .recommendations import Recommendation
@@ -46,6 +47,7 @@ __all__ = [
 	"NewsCategory",
 	"NewsArticle",
 	"NewsSource",
+	"NewsCache",
 	"Document",
 	"DocumentAnalysis",
 	"UserUsage",

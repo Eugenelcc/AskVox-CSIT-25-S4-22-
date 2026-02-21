@@ -2,6 +2,44 @@
 
 /* src/index.css */
 
+/* --- 🌍 BASE / MOBILE ESSENTIALS --- */
+
+html,
+body,
+#root {
+  height: 100%;
+}
+
+:root {
+  --av-nav-h: 0px;
+  --av-chatbar-offset: calc(12px + env(safe-area-inset-bottom) + var(--av-nav-h));
+}
+
+body {
+  min-height: 100dvh;
+  overflow-x: hidden;
+  -webkit-text-size-adjust: 100%;
+}
+
+/* Reduce iOS tap highlight + improve touch responsiveness */
+* {
+  -webkit-tap-highlight-color: transparent;
+}
+
+/* Shared layout variables (inherited by children). */
+.uv-root {
+  --av-nav-h: 0px;
+  --av-chatbar-offset: 88px;
+}
+
+@media (max-width: 768px) {
+  /* On mobile, side rail collapses and navigation becomes bottom bar. */
+  .uv-root {
+    --content-offset: 0px !important;
+    --av-chatbar-offset: calc(12px + env(safe-area-inset-bottom) + var(--av-nav-h));
+  }
+}
+
 /* --- 📱 GLOBAL RESPONSIVE RULES --- */
 
 /* 1. For the outer container (Main Wrapper) */

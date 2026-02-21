@@ -58,6 +58,24 @@
       opacity 160ms ease,
       visibility 0ms;
   }
+
+  /* -------------------- 📱 Mobile: full-screen sidebar -------------------- */
+  @media (max-width: 768px) {
+    .av-sidebar {
+      top: 0;
+      left: 0;
+      width: 100vw;
+      height: 100dvh;
+      border-radius: 0;
+      padding: 14px;
+
+      transform: translateX(-100%);
+    }
+
+    .av-sidebar.is-open {
+      transform: translateX(0);
+    }
+  }
   
   /* ---------- HEADER ---------- */
   .av-sidebar__header {
@@ -202,12 +220,14 @@
   }
   
   .av-folderCard__top {
-    display: grid;
-    grid-template-columns: 18px 1fr auto auto; /* icon | name | menu | collapse */
-    gap: 10px;
-    align-items: center;
-    padding: 10px 12px;
-  }
+  display: grid;
+  grid-template-columns: 1fr auto auto; /* pill | menu | collapse */
+  gap: 10px;
+  align-items: center;
+  padding: 10px 12px;
+}
+
+  
   
   .av-folderCard__name {
     color: var(--av-white);
@@ -225,6 +245,39 @@
     font-size: 12px;
     letter-spacing: 0.02em;
   }
+/* folder pill background */
+.av-folderPill{
+  width: 100%;
+  display:flex;
+  align-items:center;
+  gap:10px;
+  padding: 10px 12px;
+  border-radius: 11px;
+  background: #1c1c1c;
+  cursor: pointer;
+}
+
+
+/* folder name inside pill */
+.av-folderPill__name{
+  color: rgba(255,255,255,0.92);
+  font-family: "ABeeZee", system-ui, sans-serif;
+  font-size: 14px;
+  letter-spacing: 0.02em;
+}
+
+/* chats inside folder as pills (optional) */
+.av-folderItemPill{
+  padding: 6px 10px;
+  border-radius: 10px;
+  cursor: pointer;
+  background: transparent;
+}
+
+/* chat background when colored */
+.av-chatItem.is-colored{
+  color: rgba(255,255,255,0.92);
+}
   
   /* ---------- CHATS LIST ---------- */
   .av-chatList {
@@ -232,8 +285,16 @@
     overflow-y: auto;
     padding-right: 6px;
     max-height: 560px;
+    /* hide scrollbar visuals */
+    scrollbar-width: none;           /* Firefox */
+    -ms-overflow-style: none;        /* IE 10+ */
   }
   
+  .av-chatList::-webkit-scrollbar {  /* Chrome/Safari */
+    width: 0px;
+    height: 0px;
+  }
+
   .av-chatRow {
     display: grid;
     grid-template-columns: 1fr auto;
@@ -306,6 +367,15 @@
   .av-menuItem:hover {
     background: rgba(255,255,255,0.06);
   }
+
+  /* danger action */
+  .av-menuItem--danger {
+    color: #ff6b6b;
+  }
+
+  .av-menuItem--danger:hover {
+    background: rgba(255, 107, 107, 0.12);
+  }
   
   .av-menuDivider {
     height: 2px;
@@ -339,3 +409,158 @@
     z-index: 210;
   }
   
+  /* ---------- CUSTOMIZE POPOVER ---------- */
+.av-customize{
+  position: fixed;          /* ✅ viewport-based */
+  width: 245px;
+  background: #2C2B2B;
+  border-radius: 16px;
+  border: 1px solid rgba(255,255,255,0.10);
+  box-shadow: 0 10px 30px rgba(0,0,0,0.55);
+  padding: 12px;
+  z-index: 9999;            /* ✅ ensure on top */
+}
+
+
+.av-customize__header{
+  display:flex;
+  align-items:center;
+  justify-content:space-between;
+  gap: 10px;
+  margin-bottom: 8px;
+}
+
+.av-customize__title{
+  font-family: "ABeeZee", system-ui, sans-serif;
+  font-size: 12px;
+  letter-spacing: 0.02em;
+  color: rgba(255,255,255,0.92);
+}
+
+.av-customize__close{
+  width: 28px;
+  height: 28px;
+  border-radius: 10px;
+  border: 1px solid rgba(255,255,255,0.10);
+  background: rgba(0,0,0,0.18);
+  color: rgba(255,255,255,0.9);
+  cursor: pointer;
+}
+
+.av-customize__close:hover{
+  background: rgba(255,255,255,0.06);
+}
+
+.av-customize__section{
+  margin-top: 8px;
+}
+
+.av-customize__label{
+  font-family: "ABeeZee", system-ui, sans-serif;
+  font-size: 11px;
+  color: rgba(255,255,255,0.92);
+  margin-bottom: 8px;
+}
+
+.av-customize__colors{
+  display:flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.av-customize__dot{
+  width: 22px;
+  height: 21px;
+  border-radius: 999px;
+  border: 1px solid rgba(255,255,255,0.10);
+  cursor: pointer;
+}
+
+.av-customize__dot.is-selected{
+  outline: 2px solid rgba(255,255,255,0.85);
+  outline-offset: 1px;
+}
+
+.av-customize__dot--none{
+  background: transparent !important;
+  color: rgba(255,255,255,0.8);
+  display:grid;
+  place-items:center;
+  font-size: 12px;
+}
+
+.av-customize__divider{
+  height: 2px;
+  background: rgba(112,112,112,0.72);
+  margin: 12px 0;
+  border-radius: 999px;
+}
+
+.av-customize__emojis{
+  display:grid;
+  grid-template-columns: repeat(6, 1fr);
+  gap: 8px;
+}
+
+.av-customize__emoji{
+  width: 28px;
+  height: 26px;
+  border-radius: 10px;
+  border: 1px solid rgba(255,255,255,0.10);
+  background: rgba(0,0,0,0.15);
+  cursor: pointer;
+  display:grid;
+  place-items:center;
+  font-size: 16px;
+}
+
+.av-customize__emoji.is-selected{
+  outline: 2px solid rgba(255,255,255,0.85);
+  outline-offset: 1px;
+}
+
+.av-customize__emoji--none{
+  font-size: 12px;
+  color: rgba(255,255,255,0.85);
+}
+
+.av-customize__footer{
+  display:flex;
+  justify-content:flex-end;
+  margin-top: 10px;
+}
+
+.av-customize__save{
+  width: 95px;
+  height: 26px;
+  border-radius: 16px;
+  border: 1px solid #754B1C;
+  background: #434343;
+  color: rgba(255,255,255,0.92);
+  font-family: "ABeeZee", system-ui, sans-serif;
+  font-size: 14px;
+  cursor: pointer;
+}
+
+.av-customize__save:disabled{
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+
+.av-customize__dot:hover,
+.av-customize__emoji:hover{
+  transform: translateY(-1px);
+  transition: transform 120ms ease;
+}
+
+/* draggable header */
+.av-customize__header--drag{
+  cursor: grab;
+  user-select: none;
+}
+
+.av-customize__header--drag:active{
+  cursor: grabbing;
+}
+
+

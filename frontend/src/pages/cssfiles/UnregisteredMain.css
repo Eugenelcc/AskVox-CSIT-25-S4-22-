@@ -1,15 +1,34 @@
+
+@keyframes uv-toast-dropdown {
+  from {
+    opacity: 0;
+    transform: translateY(-10px) scale(0.98);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
 .uv-root {
   position: relative;
-  min-height: 100vh;
+  min-height: 100dvh;
   color: #f5f5f5;
-  overflow: hidden;
+  overflow-x: hidden;
+  overflow-y: auto;
+}
+
+/* Guest-only layout variables */
+.uv-root--guest {
+  --content-offset: 0px;
+  /* Used to place the greeting caption above the fixed chat bar */
+  --av-chatbar-h: 72px;
 }
 
 /* orb sits here */
 .uv-hero {
   position: relative;
   width: 100%;
-  min-height: calc(100vh - 220px); /* adnust for top bar & chatbar */
+  min-height: calc(100dvh - 220px); /* adjust for top bar & chatbar */
 
   display: flex;
   flex-direction: column;
@@ -36,7 +55,7 @@
   top: 75px;          
   left: 0;
   right: 0;
-  bottom: 110px;       
+    font-size: clamp(20px, 2vw, 28px) !important;
   overflow-y: auto;   
   width: 100%;
   scroll-behavior: smooth;
@@ -86,4 +105,121 @@
   -webkit-background-clip: text;
   -webkit-text-fill-color: transparent;
   background-clip: text;
+}
+
+/* Container that holds the (fixed) ChatBar and optional caption */
+.uv-root--guest .uv-input-container {
+  position: relative;
+  bottom: 0;
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  flex-direction: column;
+  padding-bottom: 20px;
+}
+
+/* Greeting caption: keep it ABOVE the fixed ChatBar */
+.uv-root--guest .av-chatbar-caption {
+  position: fixed;
+  left: var(--content-offset, 0px);
+  right: 0;
+  bottom: calc(var(--av-chatbar-offset, 88px) + var(--av-chatbar-h) + 14px);
+  z-index: 130;
+  display: flex;
+  justify-content: center;
+  pointer-events: none;
+}
+
+/* Voice mode captions (bottom-left user + bottom-center assistant) */
+.uv-root--guest .av-voice-captions {
+  position: fixed;
+  left: var(--content-offset, 0px);
+  right: 0;
+  bottom: calc(var(--av-chatbar-offset, 88px) + var(--av-chatbar-h) + 14px);
+  z-index: 130;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 2fr) minmax(0, 1fr);
+  align-items: end;
+  gap: 16px;
+  padding: 0 48px;
+  pointer-events: none;
+}
+
+.uv-root--guest .av-voice-captions__user {
+  grid-column: 2;
+  justify-self: center;
+  max-width: 100%;
+}
+
+.uv-root--guest .av-voice-captions__assistant {
+  grid-column: 2;
+  justify-self: center;
+  max-width: 100%;
+}
+
+.uv-root--guest .av-voice-captions__spacer {
+  grid-column: 3;
+  justify-self: end;
+}
+
+.uv-root--guest .av-voice-captions .orb-caption {
+  white-space: normal;
+  overflow-wrap: anywhere;
+}
+
+.uv-root--guest .av-voice-captions > * {
+  pointer-events: auto;
+}
+
+/* Fixed-height, scrollable caption area (keeps layout concise) */
+.uv-root--guest .av-voice-captions__scroll {
+  height: 140px;
+  max-height: 140px;
+  overflow-y: auto;
+  width: 100%;
+  pointer-events: auto;
+  padding: 0 6px;
+
+  /* Use normal block flow so overflow scrolling works reliably */
+  display: block;
+  overscroll-behavior: contain;
+  -webkit-overflow-scrolling: touch;
+  touch-action: pan-y;
+
+  /* "Invisible" scroll container (no background/border); hide scrollbars */
+  scrollbar-width: none; /* Firefox */
+  -ms-overflow-style: none; /* IE/Edge legacy */
+}
+
+.uv-root--guest .av-voice-captions__scroll::-webkit-scrollbar {
+  width: 0;
+  height: 0;
+}
+
+.uv-root--guest .av-voice-caption-item {
+  width: 100%;
+}
+
+.uv-root--guest .av-voice-caption-label {
+  font-family: "ABeeZee", system-ui, -apple-system, BlinkMacSystemFont,
+    "Segoe UI", sans-serif;
+  font-size: 14px;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  text-align: left;
+  margin: 0 0 2px 0;
+}
+
+.uv-root--guest .av-voice-caption-text {
+  padding-left: 14px;
+}
+
+.uv-root--guest .av-chatbar-caption > * {
+  pointer-events: auto;
+}
+
+@media (max-width: 520px) {
+  .uv-root--guest {
+    --av-chatbar-h: 68px;
+  }
 }

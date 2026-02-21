@@ -111,7 +111,7 @@
 /* Inputs (big) */
 .input {
   width: 596px;
-  height: 55px;
+  height: 56px;
   border-radius: 32px;
   background: #1c1c1c;
   border: 1px solid #a25600;
@@ -178,6 +178,8 @@
 .inputSmall::placeholder {
   color: rgba(255, 255, 255, 0.45);
 }
+
+/* Accepted brands pill removed; brand icon now overlays card number input. */
 
 /* Saved note */
 .savedNote {
@@ -254,6 +256,23 @@
 .payBtnDisabled {
   opacity: 0.55;
   cursor: not-allowed;
+}
+
+/* Tertiary small button for switching cards */
+.altSwitchBtn {
+  margin-top: 10px;
+  height: 36px;
+  padding: 0 14px;
+  border-radius: 999px;
+  border: 1px solid rgba(255, 255, 255, 0.18);
+  background: #2a2a2a;
+  color: #ddd;
+  font-size: 14px;
+  cursor: pointer;
+}
+
+.altSwitchBtn:hover {
+  background: #353535;
 }
 
 /* Responsive: stack cards */

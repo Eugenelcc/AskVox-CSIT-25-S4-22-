@@ -4,7 +4,7 @@ from typing import List, Literal
 
 import httpx
 from dotenv import load_dotenv
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel
 
 
@@ -25,6 +25,9 @@ if not GEMINI_API_KEY:
 
 
 router = APIRouter(prefix="/geminichats", tags=["geminichat"])  # keep route stable for frontend
+
+from app.api.watermark import insert_watermark
+from app.services.rate_limit import enforce_chat_rate_limit
 
 Role = Literal["user", "assistant"]
 
@@ -58,6 +61,8 @@ async def gemini_generate(message: str, history: List[HistoryItem]) -> str:
     # Build Gemini payload
     system_text = (
         "You are AskVox, a safe educational AI tutor. "
+        "When the user greets you (e.g., 'hi', 'hello') or starts a new conversation, begin with: "
+        "\"Hi, I'm AskVox, your personal AI tutor.\" and then ask what they'd like help with. "
         "Explain clearly and be factual. "
         "Respond in plain text suitable for Text-to-Speech. "
         "Do NOT use Markdown, asterisks, emojis, code fences, tables, or bullets. "
@@ -117,7 +122,8 @@ async def gemini_generate(message: str, history: List[HistoryItem]) -> str:
 
 
 @router.post("/", response_model=ChatResponse)
-async def chat(req: ChatRequest):
+async def chat(req: ChatRequest, request: Request):
+    await enforce_chat_rate_limit(request, req.user_id)
     # Log prompt and attempt to ensure history is present. If client didn't send
     # history but provided a session_id, reconstruct from Supabase chat_messages.
     try:
@@ -166,6 +172,8 @@ async def chat(req: ChatRequest):
         pass
 
     answer = await gemini_generate(req.message, final_history)
+    # Apply watermark early so any mirrored chat_messages content matches the API response.
+    watermarked_answer = insert_watermark(answer)
     # Persist response + assistant chat_message to Supabase if linkage provided
     if SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY:
         headers = {
@@ -175,7 +183,7 @@ async def chat(req: ChatRequest):
             "Prefer": "return=representation",
         }
         async with httpx.AsyncClient() as client:
-            # Insert into responses (backend-only)
+            # Insert into responses (backend-only) with schema fallback + status checks
             if req.query_id:
                 try:
                     payload = {
@@ -183,26 +191,58 @@ async def chat(req: ChatRequest):
                         "response_text": answer,
                         "model_used": f"gemini:{GEMINI_MODEL}",
                     }
-                    await client.post(f"{SUPABASE_URL}/rest/v1/responses", headers=headers, json=payload)
+                    r = await client.post(
+                        f"{SUPABASE_URL}/rest/v1/responses",
+                        headers=headers,
+                        json=payload,
+                    )
+                    if r.status_code >= 400:
+                        # Fallback to alt schema using 'content'
+                        alt_payload = {
+                            "query_id": req.query_id,
+                            "content": answer,
+                            "model_used": f"gemini:{GEMINI_MODEL}",
+                        }
+                        r2 = await client.post(
+                            f"{SUPABASE_URL}/rest/v1/responses",
+                            headers=headers,
+                            json=alt_payload,
+                        )
+                        if r2.status_code >= 400:
+                            print(
+                                f"⚠️ Failed to insert response into Supabase: primary {r.status_code} {r.text[:300]} | alt {r2.status_code} {r2.text[:300]}"
+                            )
+                        else:
+                            print("✅ Inserted response (alt schema)")
+                    else:
+                        print("✅ Inserted response")
                 except Exception as e:
                     print(f"⚠️ Failed to insert response into Supabase: {e}")
 
-            # Optionally mirror assistant message in chat_messages
+            # Optionally mirror assistant message in chat_messages (log failures)
             if req.session_id:
                 try:
                     payload = {
                         "session_id": req.session_id,
                         "user_id": req.user_id,
                         "role": "assistant",
-                        "content": answer,
+                        "content": watermarked_answer,
                         "display_name": "AskVox",
                     }
 
-                    await client.post(f"{SUPABASE_URL}/rest/v1/chat_messages", headers=headers, json=payload)
+                    rc = await client.post(
+                        f"{SUPABASE_URL}/rest/v1/chat_messages",
+                        headers=headers,
+                        json=payload,
+                    )
+                    if rc.status_code >= 400:
+                        print(
+                            f"⚠️ Failed to insert assistant chat_message: {rc.status_code} {rc.text[:300]}"
+                        )
                 except Exception as e:
                     print(f"⚠️ Failed to insert assistant chat_message: {e}")
 
-    return ChatResponse(answer=answer)
+    return ChatResponse(answer=watermarked_answer)
 
 
 #app.include_router(stt_ws_router)

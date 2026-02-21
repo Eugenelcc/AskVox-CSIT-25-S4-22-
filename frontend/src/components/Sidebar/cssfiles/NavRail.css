@@ -190,3 +190,62 @@
 .av-rail__profileBtn:hover .av-rail__profileRing {
   border-color: rgba(255, 149, 28, 0.65);
 }
+
+/* -------------------- 📱 Mobile: bottom nav -------------------- */
+@media (max-width: 768px) {
+  .av-rail {
+    top: auto;
+    bottom: 0;
+    left: 0;
+    right: 0;
+    width: 100vw;
+    height: 72px;
+    border-radius: 0;
+    box-shadow: 0 -10px 28px rgba(0, 0, 0, 0.55);
+    background: rgba(0, 0, 0, 0.72);
+    border-top: 1px solid rgba(255, 149, 28, 0.18);
+
+    display: flex;
+    align-items: center;
+    justify-content: space-around;
+    padding: 8px 10px calc(8px + env(safe-area-inset-bottom));
+  }
+
+  .av-rail__logoBtn {
+    display: none;
+  }
+
+  .av-rail__item {
+    position: static;
+    width: auto;
+    gap: 4px;
+  }
+
+  .av-rail__iconWrap {
+    width: 44px;
+    height: 44px;
+  }
+
+  .av-rail__icon {
+    width: 24px;
+    height: 24px;
+  }
+
+  .av-rail__label {
+    font-size: 11px;
+    line-height: 1;
+  }
+
+  .av-rail__profileBtn {
+    position: static;
+    width: 44px;
+    height: 44px;
+  }
+
+  .av-rail__profileGear {
+    width: 22px;
+    height: 22px;
+    right: -2px;
+    bottom: -2px;
+  }
+}

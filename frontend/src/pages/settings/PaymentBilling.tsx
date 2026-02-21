@@ -1,19 +1,24 @@
 import { useEffect, useMemo, useState } from "react";
+import { useNavigate } from "react-router-dom";
 import type { Session } from "@supabase/supabase-js";
 import { supabase } from "../../supabaseClient";
 import styles from "./billing.module.css";
 import { DollarSign, Pencil, X, CreditCard as CardIcon } from "lucide-react";
+import StripeCardForm from "./StripeCardForm";
 
 type CardRow = {
   user_id: string;
-  card_number: string; // stored as digits in current schema
-  card_holder_name: string;
-  expiry_date: string; // MM/YY
-  card_type?: string | null; // visa/mastercard/amex
+  stripe_customer_id?: string | null;
+  stripe_payment_method_id?: string | null;
+  card_brand: string; // e.g., visa/mastercard/amex
+  last4: string;
+  exp_month: number;
+  exp_year: number;
 };
 
 type SubscriptionRow = {
   plan_type?: string | null;
+  billing_period?: string | null;
   start_date?: string | null;
   end_date?: string | null;
   is_active?: boolean | null;
@@ -28,6 +33,7 @@ type PaymentRow = {
 };
 
 export default function PaymentBilling({ session }: { session: Session }) {
+  const navigate = useNavigate();
   const userId = session.user.id;
   const [card, setCard] = useState<CardRow | null>(null);
   const [sub, setSub] = useState<SubscriptionRow | null>(null);
@@ -35,16 +41,15 @@ export default function PaymentBilling({ session }: { session: Session }) {
   const [loading, setLoading] = useState(true);
   const [err, setErr] = useState<string | null>(null);
   const [busyCancel, setBusyCancel] = useState(false);
+  const [showCancel, setShowCancel] = useState(false);
+  const [cancelMsg, setCancelMsg] = useState<string | null>(null);
   const [saveSuccess, setSaveSuccess] = useState(false);
+  const [removeBusy, setRemoveBusy] = useState(false);
+  const [removeMsg, setRemoveMsg] = useState<string | null>(null);
 
   // Edit modal state
   const [showEdit, setShowEdit] = useState(false);
-  const [cNumber, setCNumber] = useState("");
-  const [cName, setCName] = useState("");
-  const [cExp, setCExp] = useState("");
-  const [cCvv, setCCvv] = useState("");
-  const [saving, setSaving] = useState(false);
-  const [formErr, setFormErr] = useState<string | null>(null);
+  // Legacy manual card fields removed; Stripe Elements handles input securely.
 
   useEffect(() => {
     let mounted = true;
@@ -53,10 +58,14 @@ export default function PaymentBilling({ session }: { session: Session }) {
       setErr(null);
       try {
         const [cardRes, subRes, histRes] = await Promise.all([
-          supabase.from("user_payment_cards").select("*").eq("user_id", userId).single(),
+          supabase
+            .from("user_payment_cards")
+            .select("user_id,stripe_customer_id,stripe_payment_method_id,card_brand,last4,exp_month,exp_year")
+            .eq("user_id", userId)
+            .maybeSingle(),
           supabase
             .from("subscriptions")
-            .select("plan_type,start_date,end_date,is_active")
+            .select("plan_type,billing_period,start_date,end_date,is_active")
             .eq("user_id", userId)
             .order("end_date", { ascending: false })
             .limit(1)
@@ -115,15 +124,15 @@ export default function PaymentBilling({ session }: { session: Session }) {
     return null;
   }
 
-  const last4 = useMemo(() => {
-    const digits = card?.card_number || "";
-    return digits ? digits.slice(-4) : "";
-  }, [card]);
+  const last4 = useMemo(() => card?.last4 || "", [card]);
 
   const planLabel = useMemo(() => {
     if (!sub?.is_active) return "No active subscription";
-    const t = sub.plan_type || "monthly";
-    return t === "yearly" ? "AskVox Premium Plan (Yearly)" : "AskVox Premium Plan";
+    const plan = (sub.plan_type || "paid").toLowerCase();
+    const period = (sub.billing_period || "monthly").toLowerCase();
+    const suffix = period === "yearly" ? " (Yearly)" : "";
+    if (plan === "education") return `AskVox Educational Plan${suffix}`;
+    return `AskVox Premium Plan${suffix}`;
   }, [sub]);
 
   const brandText = (ct?: string | null) => {
@@ -145,19 +154,37 @@ export default function PaymentBilling({ session }: { session: Session }) {
     }
   }, [sub]);
 
-  const handleCancel = async () => {
+  const handleCancel = () => {
     if (!sub?.is_active) return;
-    if (!confirm("Cancel your subscription? You'll keep access until the current period ends.")) return;
+    setShowCancel(true);
+    setCancelMsg(null);
+  };
+
+  const confirmCancel = async () => {
+    if (!sub?.is_active) { setShowCancel(false); return; }
     setBusyCancel(true);
     setErr(null);
+    setCancelMsg(null);
     try {
-      const nowIso = new Date().toISOString();
-      const { error } = await supabase
-        .from("subscriptions")
-        .update({ is_active: false, end_date: nowIso })
-        .eq("user_id", userId);
-      if (error) throw error;
-      setSub((s) => (s ? { ...s, is_active: false, end_date: nowIso } : s));
+      const sess = (await supabase.auth.getSession()).data.session;
+      const token = sess?.access_token as string | undefined;
+      if (!token) throw new Error("Not authenticated");
+
+      const resp = await fetch(`${import.meta.env.VITE_API_URL}/billing/subscription`, {
+        method: "DELETE",
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      if (!resp.ok) throw new Error(await resp.text());
+
+      // Locally clear subscription state
+      setSub((s) => (s ? { ...s, is_active: false } : s));
+      setShowCancel(false);
+      // Redirect to normal registered page
+      try {
+        window.location.assign("/reguserhome");
+      } catch {
+        navigate("/reguserhome");
+      }
     } catch (e: any) {
       setErr(e?.message || "Failed to cancel subscription");
     } finally {
@@ -165,125 +192,22 @@ export default function PaymentBilling({ session }: { session: Session }) {
     }
   };
 
-  // -------- helpers copied from payment.tsx (trimmed) --------
-  type Brand = "visa" | "mastercard" | "amex" | "unknown";
-  const onlyDigits = (s: string) => s.replace(/\D/g, "");
-  function detectBrand(digits: string): Brand {
-    if (/^4/.test(digits)) return "visa";
-    if (/^(5[1-5])/.test(digits) || /^(222[1-9]|22[3-9]\d|2[3-6]\d{2}|27[01]\d|2720)/.test(digits)) return "mastercard";
-    if (/^(34|37)/.test(digits)) return "amex";
-    return "unknown";
-  }
-  function luhnCheck(digits: string): boolean {
-    let sum = 0; let dbl = false;
-    for (let i = digits.length - 1; i >= 0; i--) {
-      let d = digits.charCodeAt(i) - 48; if (d < 0 || d > 9) return false;
-      if (dbl) { d *= 2; if (d > 9) d -= 9; }
-      sum += d; dbl = !dbl;
-    }
-    return sum % 10 === 0;
-  }
-  function formatCardNumber(digits: string, brand: Brand): string {
-    if (brand === "amex") {
-      const a = digits.slice(0, 4), b = digits.slice(4, 10), c = digits.slice(10, 15);
-      return [a, b, c].filter(Boolean).join(" ");
-    }
-    return digits.replace(/(.{4})/g, "$1 ").trim();
-  }
-  function formatExpiry(input: string): string {
-    const d = onlyDigits(input).slice(0, 4);
-    if (d.length <= 2) return d;
-    return `${d.slice(0,2)}/${d.slice(2)}`;
-  }
-  function parseExpiry(exp: string): { mm: number; yy: number } | null {
-    const m = exp.match(/^(\d{2})\/(\d{2})$/); if (!m) return null;
-    const mm = Number(m[1]); const yy = Number(m[2]);
-    if (!Number.isFinite(mm) || !Number.isFinite(yy)) return null; return { mm, yy };
-  }
-  function isExpired(exp: { mm: number; yy: number }): boolean {
-    const { mm, yy } = exp; if (mm < 1 || mm > 12) return true;
-    const fullYear = 2000 + yy; const now = new Date();
-    const cy = now.getFullYear(); const cm = now.getMonth() + 1;
-    if (fullYear < cy) return true; if (fullYear === cy && mm < cm) return true; return false;
-  }
-  // -----------------------------------------------------------
+  // Stripe handles validation; manual helpers removed.
 
-  // Pre-fill modal when opening
+  // Open edit modal
   const openEdit = () => {
-    const digits = card?.card_number || "";
-    const brand = detectBrand(digits);
-    const maxLen = brand === "amex" ? 15 : 16;
-    const limited = digits.slice(0, maxLen);
-    setCNumber(formatCardNumber(limited, brand));
-    setCName(card?.card_holder_name || "");
-    setCExp(card?.expiry_date || "");
-    setCCvv(""); // do not prefill cvv
-    setFormErr(null);
+    setErr(null);
+    setRemoveMsg(null);
     setShowEdit(true);
   };
 
-  const brand = useMemo(() => detectBrand(onlyDigits(cNumber)), [cNumber]);
-  const neededCvv = brand === "amex" ? 4 : 3;
-  const cardDigits = useMemo(() => onlyDigits(cNumber).slice(0, brand === "amex" ? 15 : 16), [cNumber, brand]);
-  const cardDisplay = useMemo(() => formatCardNumber(cardDigits, brand), [cardDigits, brand]);
-
-  const formValid = useMemo(() => {
-    if (brand === "unknown") return false;
-    const lenOk = (brand === "amex" && cardDigits.length === 15) || (brand !== "amex" && cardDigits.length === 16);
-    if (!lenOk) return false;
-    if (!luhnCheck(cardDigits)) return false;
-    if ((cName || "").trim().length < 2) return false;
-    const p = parseExpiry(cExp); if (!p) return false; if (p.mm < 1 || p.mm > 12) return false; if (isExpired(p)) return false;
-    if (onlyDigits(cCvv).length !== neededCvv) return false;
-    return true;
-  }, [brand, cardDigits, cName, cExp, cCvv, neededCvv]);
-
-  const disabledReason = useMemo(() => {
-    if (brand === "unknown") return "Card type not supported (Visa / MasterCard / Amex)";
-    const lenOk = (brand === "amex" && cardDigits.length === 15) || (brand !== "amex" && cardDigits.length === 16);
-    if (!lenOk) return brand === "amex" ? "Amex card number must be 15 digits" : "Card number must be 16 digits";
-    if (!luhnCheck(cardDigits)) return "Card number is invalid";
-    if ((cName || "").trim().length < 2) return "Card holder name is required";
-    const p = parseExpiry(cExp); if (!p) return "Use MM/YY format";
-    if (p.mm < 1 || p.mm > 12) return "Month must be 01–12";
-    if (isExpired(p)) return "Card is expired";
-    if (onlyDigits(cCvv).length !== neededCvv) return `CVV must be ${neededCvv} digits`;
-    return "";
-  }, [brand, cardDigits, cName, cExp, cCvv, neededCvv]);
-
-  const saveCard = async () => {
-    setFormErr(null);
-    if (!formValid) { setFormErr("Please complete all fields correctly."); return; }
-    setSaving(true);
-    try {
-      const sess = (await supabase.auth.getSession()).data.session;
-      const token = sess?.access_token as string | undefined;
-      if (!token) throw new Error("Not authenticated");
-
-      const resp = await fetch("http://localhost:8000/billing/card", {
-        method: "POST",
-        headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
-        body: JSON.stringify({
-          card_number: cardDigits,
-          card_holder_name: cName.trim(),
-          expiry_date: cExp.trim(),
-          card_type: brand,
-          cvv: onlyDigits(cCvv),
-        }),
-      });
-      if (!resp.ok) throw new Error(await resp.text());
-      const out = await resp.json();
-      const updated = (out?.card || null) as any;
-      if (updated) setCard(updated as CardRow);
-      setShowEdit(false);
-      setSaveSuccess(true);
-      window.setTimeout(() => setSaveSuccess(false), 4000);
-    } catch (e: any) {
-      setFormErr(e?.message || "Failed to update card");
-    } finally {
-      setSaving(false);
-    }
+  const closeEdit = () => {
+    setShowEdit(false);
+    setRemoveMsg(null);
+    setErr(null);
   };
+
+  // Legacy manual save flow removed; StripeCardForm handles submission.
 
   return (
     <div className={styles.wrap}>
@@ -301,20 +225,20 @@ export default function PaymentBilling({ session }: { session: Session }) {
             <div className={styles.planLeft}>
               <div className={styles.planTitle}>{planLabel}</div>
               {renewText && <div className={styles.planRenew}>{renewText}</div>}
-              {card && (
+              {sub?.is_active && card && (
                 <div className={styles.planCardMeta}>
-                  <span className={styles.cardBadgeIcon}><BrandIcon brand={(card.card_type as any) || "visa"} /></span>
-                  <span className={styles.cardMask}>{brandText(card.card_type)} •••• {last4}</span>
+                  <span className={styles.cardBadgeIcon}><BrandIcon brand={(card.card_brand as any) || "visa"} /></span>
+                  <span className={styles.cardMask}>{brandText(card.card_brand)} •••• {last4}</span>
                 </div>
               )}
             </div>
             <div className={styles.planRight}>
               {sub?.is_active ? (
                 <button className={styles.btnSecondary} onClick={handleCancel} disabled={busyCancel}>
-                  {busyCancel ? "Processing…" : "Cancel Subscription"}
+                  Cancel Subscription
                 </button>
               ) : (
-                <a className={styles.btnSecondary} href="/payment">Upgrade</a>
+                <a className={styles.btnSecondary} href="/upgrade">Upgrade</a>
               )}
             </div>
           </section>
@@ -324,22 +248,28 @@ export default function PaymentBilling({ session }: { session: Session }) {
             <div className={styles.sectionTitle}>Payment Method:</div>
             <div className={styles.methodRow}>
               <div className={styles.methodLeft}>
-                <span className={styles.cardBadgeIcon}><BrandIcon brand={(card?.card_type as any) || "visa"} /></span>
+                {card && (
+                  <span className={styles.cardBadgeIcon}><BrandIcon brand={card.card_brand as any} /></span>
+                )}
                 {card ? (
                   <>
                     <div className={styles.methodText}>
-                      {brandText(card.card_type)} •••• {last4}
+                      {brandText(card.card_brand)} •••• {last4}
                     </div>
-                    <div className={styles.methodSub}>Expires {card.expiry_date || "--/--"}</div>
+                    <div className={styles.methodSub}>Expires {card ? `${String(card.exp_month).padStart(2, "0")}/${String(card.exp_year).slice(-2)}` : "--/--"}</div>
                   </>
                 ) : (
                   <div className={styles.methodText}>Nil — add a card</div>
                 )}
               </div>
               <div className={styles.methodRight}>
-                <button className={styles.editBtn} onClick={openEdit} title="Update card">
-                  <Pencil size={18} />
-                </button>
+                  {card ? (
+                  <button className={styles.editBtn} onClick={openEdit} title="Update card" aria-label="Edit card">
+                    <Pencil size={18} />
+                  </button>
+                ) : (
+                  <button className={styles.btnPrimary} onClick={openEdit} title="Add Card">Add Card</button>
+                )}
               </div>
             </div>
             {saveSuccess && (
@@ -348,8 +278,11 @@ export default function PaymentBilling({ session }: { session: Session }) {
                 <span className={styles.successText}>Payment Method updated successfully</span>
               </div>
             )}
+          </section>
 
-            <div className={styles.sectionTitle} style={{ marginTop: 24 }}>Payment History:</div>
+          {/* Payment History */}
+          <section className={styles.methodCard}>
+            <div className={styles.sectionTitle}>Payment History:</div>
             {history.length === 0 ? (
               <div className={styles.empty}>No payments yet.</div>
             ) : (
@@ -369,12 +302,18 @@ export default function PaymentBilling({ session }: { session: Session }) {
           </section>
 
           {err && <div className={styles.error}>{err}</div>}
+          {cancelMsg && (
+            <div className={styles.successInline} style={{ marginTop: 10 }}>
+              <span className={styles.successDot} />
+              <span className={styles.successText}>{cancelMsg}</span>
+            </div>
+          )}
 
           {/* Edit Card Modal */}
           {showEdit && (
-            <div className={styles.modalOverlay} role="dialog" aria-modal="true" aria-label="Edit payment method" onClick={() => setShowEdit(false)}>
+            <div className={styles.modalOverlay} role="dialog" aria-modal="true" aria-label="Edit payment method" onClick={closeEdit}>
               <div className={styles.modal} onClick={(e) => e.stopPropagation()}>
-                <button className={styles.modalClose} onClick={() => setShowEdit(false)} aria-label="Close">
+                <button className={styles.modalClose} onClick={closeEdit} aria-label="Close">
                   <X size={18} />
                 </button>
 
@@ -385,76 +324,89 @@ export default function PaymentBilling({ session }: { session: Session }) {
 
                 <div className={styles.modalSection}>
                   <div className={styles.sectionLabel}>Current Payment Method :</div>
-                  <div className={styles.currentCardBox}>
-                    <span className={styles.cardBadgeIcon}><BrandIcon brand={(card?.card_type as any) || "visa"} /></span>
-                    <span className={styles.cardMask}>{brandText(card?.card_type)} •••• {last4}</span>
-                    <span className={styles.methodSub}>Expires {card?.expiry_date || "--/--"}</span>
-                  </div>
+                  {card ? (
+                    <div className={styles.currentCardBox}>
+                      <span className={styles.cardBadgeIcon}><BrandIcon brand={card.card_brand as any} /></span>
+                      <span className={styles.cardMask}>{brandText(card.card_brand)} •••• {last4}</span>
+                      <span className={styles.methodSub}>Expires {card ? `${String(card.exp_month).padStart(2, "0")}/${String(card.exp_year).slice(-2)}` : "--/--"}</span>
+                      <span className={styles.rightPush} />
+                      <button
+                        className={styles.btnDanger}
+                        disabled={removeBusy}
+                        onClick={async () => {
+                          setRemoveBusy(true); setErr(null); setRemoveMsg(null);
+                          try {
+                            const sess = (await supabase.auth.getSession()).data.session;
+                            const token = sess?.access_token as string | undefined;
+                            if (!token) throw new Error("Not authenticated");
+                            const resp = await fetch(`${import.meta.env.VITE_API_URL}/billing/card`, {
+                              method: "DELETE",
+                              headers: { Authorization: `Bearer ${token}` },
+                            });
+                            if (!resp.ok) throw new Error(await resp.text());
+                            // update UI: clear card
+                            setCard(null);
+                            setRemoveMsg("Card removed. You can add a new one below.");
+                          } catch (e: any) {
+                            setErr(e?.message || "Failed to remove card");
+                          } finally {
+                            setRemoveBusy(false);
+                          }
+                        }}
+                      >
+                        {removeBusy ? "Removing…" : "Remove Card"}
+                      </button>
+                    </div>
+                  ) : (
+                    <div className={styles.currentCardBox}>
+                      <span className={styles.cardMask}>Nil — no card on file</span>
+                    </div>
+                  )}
+                  {!card && removeMsg && (
+                    <div className={styles.successInline} style={{ marginTop: 10 }}>
+                      <span className={styles.successDot} />
+                      <span className={styles.successText}>{removeMsg}</span>
+                    </div>
+                  )}
                 </div>
 
                 <div className={styles.modalSection}>
-                  <div className={styles.sectionLabel}>Update Payment Method: :</div>
+                  <div className={styles.sectionLabel}>Update Payment Method :</div>
 
-                  <label className={styles.fieldLabel}>Card Number</label>
-                  <input
-                    className={styles.input}
-                    value={cardDisplay}
-                    onChange={(e) => {
-                      const d = onlyDigits(e.target.value);
-                      const b = detectBrand(d);
-                      const ml = b === "amex" ? 15 : 16;
-                      setCNumber(formatCardNumber(d.slice(0, ml), b));
+                  {/* Stripe secure card form (recommended) */}
+                  <StripeCardForm
+                    onSaved={(updated) => {
+                      if (updated) setCard(updated);
+                      closeEdit();
+                      setSaveSuccess(true);
+                      window.setTimeout(() => setSaveSuccess(false), 4000);
                     }}
-                    placeholder="5264 **** **** 1267"
-                    inputMode="numeric"
-                    autoComplete="cc-number"
                   />
+                </div>
+              </div>
+            </div>
+          )}
 
-                  <label className={styles.fieldLabel}>Card Holder Name</label>
-                  <input
-                    className={styles.input}
-                    value={cName}
-                    onChange={(e) => setCName(e.target.value)}
-                    placeholder="Enter your Full name..."
-                    autoComplete="cc-name"
-                  />
-
-                  <div className={styles.inputRow}>
-                    <div className={styles.inputCol}>
-                      <label className={styles.fieldLabel}>Expiry Date: *</label>
-                      <input
-                        className={styles.input}
-                        value={cExp}
-                        onChange={(e) => setCExp(formatExpiry(e.target.value))}
-                        placeholder="mm / yy"
-                        inputMode="numeric"
-                        autoComplete="cc-exp"
-                      />
-                    </div>
-                    <div className={styles.inputCol}>
-                      <label className={styles.fieldLabel}>CVV/CVV2: *</label>
-                      <input
-                        className={styles.input}
-                        type="password"
-                        value={cCvv}
-                        onChange={(e) => setCCvv(onlyDigits(e.target.value).slice(0, neededCvv))}
-                        placeholder={neededCvv === 4 ? "xxxx" : "xxx"}
-                        inputMode="numeric"
-                        autoComplete="cc-csc"
-                      />
-                    </div>
-                  </div>
-
-                  {formErr && <div className={styles.error}>{formErr}</div>}
-
+          {/* Cancel Subscription Modal */}
+          {showCancel && (
+            <div className={styles.modalOverlay} role="dialog" aria-modal="true" aria-label="Cancel subscription" onClick={() => !busyCancel && setShowCancel(false)}>
+              <div className={`${styles.modalNarrow}`} onClick={(e) => e.stopPropagation()}>
+                <button className={styles.modalClose} onClick={() => !busyCancel && setShowCancel(false)} aria-label="Close">
+                  <X size={18} />
+                </button>
+                <div className={styles.modalHeaderRow}>
+                  <div className={styles.headerIcon}><DollarSign size={18} /></div>
+                  <div className={styles.modalTitle}>Cancel Subscription</div>
+                </div>
+                <div className={styles.modalSection}>
+                  <div className={styles.sectionLabel}>Are you sure?</div>
+                  <p style={{ opacity: 0.9, lineHeight: 1.6 }}>This will cancel your {sub?.plan_type === 'education' ? 'Educational' : 'Paid'} subscription. You may lose premium access immediately.</p>
+                  {err && <div className={styles.error} style={{ marginTop: 8 }}>{err}</div>}
                   <div className={styles.modalActions}>
-                    <button className={styles.btnPrimary} disabled={!formValid || saving} onClick={saveCard}>
-                      {saving ? "Saving…" : "Save & Update Payment Method"}
+                    <button className={styles.btnPrimary} onClick={confirmCancel} disabled={busyCancel}>
+                      {busyCancel ? "Cancelling…" : "Cancel Subscription"}
                     </button>
                   </div>
-                  {!formValid && !saving && (
-                    <div className={styles.error} style={{ marginTop: 10 }}>{disabledReason || "Please complete all fields correctly."}</div>
-                  )}
                 </div>
               </div>
             </div>

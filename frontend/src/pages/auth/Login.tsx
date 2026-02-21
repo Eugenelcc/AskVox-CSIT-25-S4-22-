@@ -1,6 +1,6 @@
-import { useState, type FormEvent } from "react";
+import { useMemo, useState, type FormEvent } from "react";
 import { supabase } from "../../supabaseClient";
-import { Link, useNavigate } from "react-router-dom";
+import { Link, useLocation, useNavigate } from "react-router-dom";
 import Background from "../../components/background/background";
 import AskVoxLogo from "../../components/TopBars/AskVox.png";
 import styles from "../cssfiles/Login.module.css";
@@ -8,7 +8,7 @@ import styles from "../cssfiles/Login.module.css";
 import GoogleLogo from "./Google.png";
 import { Eye, EyeOff } from "lucide-react";
 
-type UserRole = "registered" | "paid";
+//type UserRole = "registered" | "paid";
 
 export default function Login() {
   const [email, setEmail] = useState("");
@@ -21,10 +21,53 @@ export default function Login() {
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
 
   const navigate = useNavigate();
+  const location = useLocation();
 
-  const routeByRole = (role: UserRole) => {
-    if (role === "paid") navigate("/paid");
-    else navigate("/reguserhome");
+  // Display error coming from OAuth callback (e.g., account not found)
+  const oauthErrorMsg = useMemo(() => {
+    const p = new URLSearchParams(location.search);
+    const err = p.get("err");
+    if (err === "account_not_found") {
+      return "Account does not exist for the selected Google account. Please sign up first.";
+    }
+    if (err === "complete_signup_first") {
+      return "Please complete sign up with Google first, then sign in.";
+    }
+    return null;
+  }, [location.search]);
+
+  const displayErrorMsg = errorMsg ?? oauthErrorMsg;
+
+  const routeByRole = async () => {
+    try {
+      const { data } = await supabase.auth.getSession();
+      const userId = data.session?.user?.id;
+      if (!userId) {
+        navigate("/newchat");
+        return;
+      }
+
+      const { data: prof } = await supabase
+        .from("profiles")
+        .select("role")
+        .eq("id", userId)
+        .maybeSingle();
+
+      const roleValue = (prof as Record<string, unknown> | null)?.role;
+      const role = (typeof roleValue === "string" ? roleValue : "").trim().toLowerCase();
+      if (role === "platform_admin") {
+        navigate("/platformadmin/dashboard");
+        return;
+      }
+      if (role === "educational_user") {
+        navigate("/educationInstitutional");
+        return;
+      }
+
+      navigate("/newchat");
+    } catch {
+      navigate("/newchat");
+    }
   };
 
   const handleLogin = async (e: FormEvent) => {
@@ -38,7 +81,7 @@ export default function Login() {
 
     setLoading(true);
 
-    const { data, error } = await supabase.auth.signInWithPassword({
+    const {  error } = await supabase.auth.signInWithPassword({
       email,
       password,
     });
@@ -50,25 +93,23 @@ export default function Login() {
     }
 
     // ✅ Role (placeholder) – later fetch from profiles table / metadata
-    const role: UserRole =
-      (data.user?.user_metadata?.role as UserRole) || "registered";
+    // const role: UserRole =
+    //   (data.user?.user_metadata?.role as UserRole) || "registered";
 
     // Remember me: Supabase persists session by default.
     setLoading(false);
-    routeByRole(role);
+    await routeByRole();
   };
 
   const handleGoogleLogin = async () => {
     setErrorMsg(null);
-
     const { error } = await supabase.auth.signInWithOAuth({
       provider: "google",
       options: {
-        // after google login, you can land on registered first
-        redirectTo: `${window.location.origin}/reguserhome`,
+        redirectTo: `${window.location.origin}/auth/oauth-callback?intent=login`,
+        queryParams: { prompt: "select_account" },
       },
     });
-
     if (error) setErrorMsg(error.message);
   };
 
@@ -168,7 +209,7 @@ export default function Login() {
               </Link>
             </div>
 
-            {errorMsg && <p className={styles.errorText}>{errorMsg}</p>}
+            {displayErrorMsg && <p className={styles.errorText}>{displayErrorMsg}</p>}
 
             <button
               type="submit"

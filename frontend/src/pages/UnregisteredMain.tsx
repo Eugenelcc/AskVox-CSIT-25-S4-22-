@@ -1,10 +1,10 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState, lazy, Suspense } from "react";
 // ✅ 1. Import Session Type
 import type { Session } from "@supabase/supabase-js";
 
 import Background from "../components/background/background";
 import ChatBar from "../components/chat/ChatBar";
-import BlackHole from "../components/background/Blackhole";
+const BlackHole = lazy(() => import("../components/background/Blackhole"));
 import UnregisteredTopBar from "../components/TopBars/unregisteredtopbar";
 import ChatMessages from "../components/chat/UnregisteredChatMessages";
 import { useWakeWordBackend } from "../hooks/useWakeWordBackend.ts";
@@ -15,16 +15,34 @@ import "./cssfiles/UnregisteredMain.css";
 
 const USER_ID = 874902 as const;
 const LLAMA_ID = 212020 as const;
+const API_BASE_URL = import.meta.env.VITE_API_URL || "http://localhost:8000";
+
+type VoiceCaptionItem = {
+  id: string;
+  role: "user" | "assistant";
+  text: string;
+};
 
 // ✅ 2. Update Component to accept 'session' prop
-const UnregisteredMain = ({ session }: { session: Session | null }) => {
+const UnregisteredMain = ({
+  session,
+  micEnabled,
+  setMicEnabled,
+}: {
+  session: Session | null;
+  micEnabled: boolean;
+  setMicEnabled: (next: boolean | ((prev: boolean) => boolean)) => void;
+}) => {
+  
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [isSending, setIsSending] = useState(false);
+  const [toast, setToast] = useState<string | null>(null);
   const [guestSessionId, setGuestSessionId] = useState<string | null>(null);
   const [isVoiceMode, setIsVoiceMode] = useState(false);
   const [isRecording, setIsRecording] = useState(false);
   const [isTranscribing, setIsTranscribing] = useState(false);
   const [isTtsPlaying, setIsTtsPlaying] = useState(false);
+  const [voiceCaptionFeed, setVoiceCaptionFeed] = useState<VoiceCaptionItem[]>([]);
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
   const audioChunksRef = useRef<BlobPart[]>([]);
   const audioPlayRef = useRef<HTMLAudioElement | null>(null);
@@ -37,9 +55,67 @@ const UnregisteredMain = ({ session }: { session: Session | null }) => {
   const ttsSanitizeRef = useRef<((t: string) => string) | null>(null);
   const voiceGuestSessionIdRef = useRef<string | null>(null);
 
+  const voiceCaptionScrollRef = useRef<HTMLDivElement | null>(null);
+  const voiceCaptionStickToBottomRef = useRef(true);
+  const toastTimerRef = useRef<number | null>(null);
+
+  const showRegisterPrompt = (featureLabel: string) => {
+    const feature = (featureLabel || "This feature").trim();
+    const msg = `${feature} is not available. Please register.`;
+    setToast(msg);
+    if (toastTimerRef.current) {
+      window.clearTimeout(toastTimerRef.current);
+      toastTimerRef.current = null;
+    }
+    toastTimerRef.current = window.setTimeout(() => {
+      setToast(null);
+      toastTimerRef.current = null;
+    }, 2500);
+  };
+
+  useEffect(() => {
+    return () => {
+      if (toastTimerRef.current) {
+        window.clearTimeout(toastTimerRef.current);
+        toastTimerRef.current = null;
+      }
+    };
+  }, []);
+
+  const onVoiceCaptionScroll = () => {
+    const el = voiceCaptionScrollRef.current;
+    if (!el) return;
+    voiceCaptionStickToBottomRef.current =
+      el.scrollTop + el.clientHeight >= el.scrollHeight - 6;
+  };
+
+  useEffect(() => {
+    const el = voiceCaptionScrollRef.current;
+    if (!el) return;
+    if (!voiceCaptionStickToBottomRef.current) return;
+    try {
+      el.scrollTop = el.scrollHeight;
+    } catch {}
+  }, [voiceCaptionFeed.length]);
+
+  const classifyDomainBestEffort = async (text: string): Promise<string> => {
+    try {
+      const resp = await fetch(`${API_BASE_URL}/domain/classify`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ text }),
+      });
+      if (!resp.ok) return "general";
+      const data = (await resp.json()) as { domain?: string };
+      return typeof data.domain === "string" && data.domain.trim() ? data.domain : "general";
+    } catch {
+      return "general";
+    }
+  };
+
   const postLog = (text: string, kind: string) => {
     try {
-      fetch('http://localhost:8000/voice/log', {
+      fetch(`${API_BASE_URL}/voice/log`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ text, kind }),
@@ -120,13 +196,14 @@ const UnregisteredMain = ({ session }: { session: Session | null }) => {
     // Insert into queries (capture query_id to link response)
     const queryId = globalThis.crypto?.randomUUID?.() ?? `${Date.now()}-${Math.random()}`;
     try {
+      const detectedDomain = await classifyDomainBestEffort(trimmed);
       await supabase.from('queries').insert({
         id: queryId,
         session_id: currentSessionId,
         user_id: null,
         input_mode: 'text',
         transcribed_text: trimmed,
-        detected_domain: 'general'
+        detected_domain: detectedDomain,
       });
     } catch {}
 
@@ -152,7 +229,7 @@ const UnregisteredMain = ({ session }: { session: Session | null }) => {
     // 3. Call the backend
     try {
       const streamId = `llama-${Date.now()}`;
-      const resp = await fetch("http://localhost:8000/llamachats/cloud", {
+      const resp = await fetch(`${API_BASE_URL}/llamachats-multi/cloud_plus`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -205,6 +282,29 @@ const UnregisteredMain = ({ session }: { session: Session | null }) => {
         prev.map((m) => (m.id === streamId ? { ...m, content: replyText } : m))
       );
       // --- NEW LOGIC END ---
+
+      // Persist assistant response (best-effort) so the guest session shows full history.
+      try {
+        const { data: existing } = await supabase
+          .from('chat_messages')
+          .select('id')
+          .eq('session_id', currentSessionId)
+          .eq('role', 'assistant')
+          .eq('content', replyText)
+          .order('created_at', { ascending: false })
+          .limit(1);
+        if (!existing || existing.length === 0) {
+          await supabase.from('chat_messages').insert({
+            session_id: currentSessionId,
+            user_id: null,
+            role: 'assistant',
+            content: replyText,
+            display_name: 'AskVox',
+          });
+        }
+      } catch (e) {
+        console.warn('Failed to persist assistant chat_message (guest)', e);
+      }
 
 
       if (!replyText) {
@@ -260,7 +360,7 @@ const UnregisteredMain = ({ session }: { session: Session | null }) => {
       // Mark TTS active BEFORE stopping recorder to avoid re-arm race in onstop
       ttsActiveRef.current = true;
       setIsTtsPlaying(true);
-      const res = await fetch("http://localhost:8000/tts/google", {
+      const res = await fetch(`${API_BASE_URL}/tts/google`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ text: safeText, language_code: "en-US" }),
@@ -355,12 +455,15 @@ const UnregisteredMain = ({ session }: { session: Session | null }) => {
           setIsTranscribing(true);
           const formData = new FormData();
           formData.append("file", audioBlob, "utterance.webm");
-          const sttRes = await fetch("http://localhost:8000/stt/", { method: "POST", body: formData });
+          const sttRes = await fetch(`${API_BASE_URL}/gstt/transcribe`, { method: "POST", body: formData });
           if (!sttRes.ok) { return; }
           const sttData = await sttRes.json();
           const transcript: string = sttData.text ?? "";
           if (transcript) postLog(transcript, 'stt');
           if (transcript) {
+            const capId = globalThis.crypto?.randomUUID?.() ?? `cap-${Date.now()}-${Math.random()}`;
+            // Stage: replace "listening" with the user's transcript
+            setVoiceCaptionFeed([{ id: capId, role: "user" as const, text: transcript }]);
             const tnorm = transcript.toLowerCase();
             if (
               tnorm.includes("stop listening") ||
@@ -401,17 +504,19 @@ const UnregisteredMain = ({ session }: { session: Session | null }) => {
             const queryId = globalThis.crypto?.randomUUID?.() ?? `${Date.now()}-${Math.random()}`;
             if (currentSessionId) {
               try {
+                const detectedDomainVoice = await classifyDomainBestEffort(transcript);
                 await supabase.from('queries').insert({
                   id: queryId,
                   session_id: currentSessionId,
                   user_id: null,
                   input_mode: 'voice',
                   transcribed_text: transcript,
-                  detected_domain: 'general',
+                  detected_domain: detectedDomainVoice,
                 });
               } catch {}
             }
-            const sealionRes = await fetch("http://localhost:8000/geminichats/", {
+            const sealionRes = await fetch(`${API_BASE_URL}/llamachats-multi/cloud_plus`, {
+             // /llamachats-multi/cloud_plus
               method: "POST",
               headers: { "Content-Type": "application/json" },
               body: JSON.stringify({
@@ -424,9 +529,26 @@ const UnregisteredMain = ({ session }: { session: Session | null }) => {
             const sealionData = await sealionRes.json();
             const replyText = sealionData.answer || sealionData.response || sealionData.reply || "";
             if (replyText) {
+              const capId = globalThis.crypto?.randomUUID?.() ?? `cap-${Date.now()}-${Math.random()}`;
+              // Stage: replace the user's transcript with the assistant response
+              setVoiceCaptionFeed([{ id: capId, role: "assistant" as const, text: "" }]);
               const botMsgId = globalThis.crypto?.randomUUID?.() ?? `vbot-${Date.now()}-${Math.random()}`;
-              setMessages(prev => [...prev, { id: botMsgId, senderId: LLAMA_ID, content: replyText, createdAt: new Date().toISOString() }]);
+              setMessages(prev => [...prev, { id: botMsgId, senderId: LLAMA_ID, content: "", createdAt: new Date().toISOString() }]);
+
+              // Start TTS immediately and type out the response in parallel.
               void speakWithGoogleTTS(replyText);
+              void (async () => {
+                const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
+                const step = 4;
+                for (let i = 0; i <= replyText.length; i += step) {
+                  const partial = replyText.slice(0, i);
+                  setMessages(prev => prev.map(m => (m.id === botMsgId ? { ...m, content: partial } : m)));
+                  setVoiceCaptionFeed([{ id: capId, role: "assistant" as const, text: partial }]);
+                  await sleep(12);
+                }
+                setMessages(prev => prev.map(m => (m.id === botMsgId ? { ...m, content: replyText } : m)));
+                setVoiceCaptionFeed([{ id: capId, role: "assistant" as const, text: replyText }]);
+              })();
             } else {
               if (voiceModeRef.current) { setTimeout(() => { if (voiceModeRef.current) void startVoiceRecording(); }, 250); }
             }
@@ -491,9 +613,13 @@ const UnregisteredMain = ({ session }: { session: Session | null }) => {
   };
 
   const enterVoiceMode = () => {
+    if (!micEnabled) return;
     setIsVoiceMode(true);
     voiceModeRef.current = true;
     voiceGuestSessionIdRef.current = null;
+    // Stage: show listening prompt immediately
+    const capId = globalThis.crypto?.randomUUID?.() ?? `cap-${Date.now()}-${Math.random()}`;
+    setVoiceCaptionFeed([{ id: capId, role: "assistant" as const, text: "AskVox is listening" }]);
     // In voice mode, hide chat input, show BlackHole, start with TTS confirmation
     void speakWithGoogleTTS("AskVox is listening", true);
   };
@@ -503,6 +629,7 @@ const UnregisteredMain = ({ session }: { session: Session | null }) => {
     setIsVoiceMode(false);
     voiceGuestSessionIdRef.current = null;
     setIsTtsPlaying(false);
+    setVoiceCaptionFeed([]);
     try { (window as any).speechSynthesis?.cancel?.(); } catch {}
     try {
       if (mediaRecorderRef.current && mediaRecorderRef.current.state !== "inactive") {
@@ -523,35 +650,107 @@ const UnregisteredMain = ({ session }: { session: Session | null }) => {
     voiceAudioCtxRef.current = null;
   };
 
+  useEffect(() => {
+    // Hard-stop any active mic flows when toggled off.
+    if (!micEnabled && voiceModeRef.current) {
+      exitVoiceMode();
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [micEnabled]);
+
   // Wake detection: when wake triggers, enter voice mode; disable during voice mode
   useWakeWordBackend({
-    enabled: !isVoiceMode,
+    enabled: micEnabled && !isVoiceMode,
     onWake: enterVoiceMode,
+    chunkDurationMs: 250,
+    silenceDurationMs: 900,
+    silenceThreshold: 0.0025,
+    maxSegmentMs: 5000,
   });
 
   const hasMessages = messages.length > 0;
   const isBlackHoleActive = isVoiceMode && (isRecording || isTranscribing || isTtsPlaying);
 
   return (
-    <div className="uv-root">
+    <div className="uv-root uv-root--guest">
       <Background />
       
       {/* ✅ 3. Pass the session to the TopBar */}
-      <UnregisteredTopBar session={session} />
+      <UnregisteredTopBar
+        session={session}
+        micEnabled={micEnabled}
+        onToggleMic={() => setMicEnabled((v) => !v)}
+      />
 
       <main className="uv-main">
         {(!hasMessages || isVoiceMode) && (
           <section className="uv-hero">
-            <BlackHole isActivated={isBlackHoleActive} />
-            {!isVoiceMode && !hasMessages && (
-              <h3 className="orb-caption">
-                Say <span className="visual-askvox">"Hey AskVox"</span> to begin or type below.
-              </h3>
-            )}
+            <Suspense fallback={null}>
+              <BlackHole isActivated={isBlackHoleActive} />
+            </Suspense>
             {isVoiceMode && (
-              <h4 className="orb-caption" style={{ fontSize: 22, opacity: 0.75, marginTop: 16 }}>
-                {isRecording || isTranscribing ? "Listening…" : ""}
-              </h4>
+              <>
+                <div className="av-voice-captions">
+                  <div className="av-voice-captions__user">
+                    {/* left column kept for layout; captions are rendered in the center feed */}
+                  </div>
+
+                  <div className="av-voice-captions__assistant">
+                    <div
+                      ref={voiceCaptionScrollRef}
+                      className="av-voice-captions__scroll"
+                      onScroll={onVoiceCaptionScroll}
+                    >
+                      {(() => {
+                        const listening =
+                          !voiceCaptionFeed.length &&
+                          (isRecording || isTranscribing)
+                            ? "Listening…"
+                            : "";
+                        const items: VoiceCaptionItem[] = voiceCaptionFeed.length
+                          ? voiceCaptionFeed
+                          : (listening ? [{ id: "listening", role: "assistant" as const, text: listening }] : []);
+                        return items.map((c) => {
+                          const baseOpacity = c.role === "assistant" ? 0.8 : 0.6;
+                          const isListeningLine = c.id === "listening" || c.text === "AskVox is listening" || c.text === "Listening…";
+                          const label = c.role === "user" ? "User Voice" : "Assistant response";
+                          const cleanedText = isListeningLine
+                            ? c.text
+                            : ((ttsSanitizeRef.current?.(c.text)) ?? c.text);
+                          return (
+                            <div
+                              key={c.id}
+                              className="av-voice-caption-item"
+                              style={{ opacity: baseOpacity }}
+                            >
+                              {isListeningLine ? (
+                                <h4
+                                  className="orb-caption"
+                                  style={{ fontSize: 22, textAlign: "center" }}
+                                >
+                                  {cleanedText}
+                                </h4>
+                              ) : (
+                                <>
+                                  <div className="av-voice-caption-label visual-askvox">{label}</div>
+                                  <div
+                                    className="orb-caption av-voice-caption-text"
+                                    style={{ fontSize: 22, textAlign: "left" }}
+                                  >
+                                    {cleanedText}
+                                  </div>
+                                </>
+                              )}
+                            </div>
+                          );
+                        });
+                      })()}
+                    </div>
+                  </div>
+
+                  <div className="av-voice-captions__spacer" />
+                </div>
+              </>
             )}
           </section>
         )}
@@ -565,7 +764,56 @@ const UnregisteredMain = ({ session }: { session: Session | null }) => {
         )}
       </main>
 
-      {!isVoiceMode && (<ChatBar onSubmit={handleSubmit} disabled={isSending} />)}
+      {!isVoiceMode && (
+        <div className="uv-input-container">
+          {!hasMessages && (
+            <div className="av-chatbar-caption">
+              <h3 className="orb-caption">
+                Say <span className="visual-askvox">"Hey Ask Vox"</span> to begin or type below.
+              </h3>
+            </div>
+          )}
+          <ChatBar
+            onSubmit={handleSubmit}
+            disabled={isSending}
+            micEnabled={micEnabled}
+            onAttachClick={() => showRegisterPrompt("Upload attachment")}
+            onQuizClick={() => showRegisterPrompt("Quiz")}
+          />
+        </div>
+      )}
+
+      {toast && (
+        <div
+          key={toast}
+          role="status"
+          aria-live="polite"
+          aria-atomic="true"
+          style={{
+            position: "fixed",
+            top: 18,
+            left: "50%",
+            transform: "translateX(-50%)",
+            width: "min(560px, calc(100vw - 36px))",
+            zIndex: 1000,
+          }}
+        >
+          <div
+            style={{
+              background: "#2a2a2a",
+              border: "1px solid rgba(255,149,28,.35)",
+              color: "#ff951c",
+              padding: "12px 16px",
+              borderRadius: 12,
+              boxShadow: "0 6px 18px rgba(0,0,0,.45)",
+              textAlign: "center",
+              animation: "uv-toast-dropdown 240ms cubic-bezier(0.2, 0.8, 0.2, 1)",
+            }}
+          >
+            <div style={{ fontSize: 16, lineHeight: 1.3 }}>{toast}</div>
+          </div>
+        </div>
+      )}
     </div>
   );
 };

@@ -1,0 +1,8 @@
+frontend/.env
+/frontend/.env.*
+
+# Track the frontend code. If you want to ignore only build outputs, do that explicitly.
+!/frontend/
+
+.env
+backend/askvox-ml-87ab4868b284.json

@@ -20,6 +20,7 @@
   /* row alignment */
   .av-chat-row {
     display: flex;
+    position: relative;
   }
   
   .av-chat-row-user {
@@ -72,7 +73,7 @@
 
 
 .av-md p {
-  margin: 0 0 4px;  
+  margin: 0;  
 }
 
 
@@ -88,6 +89,9 @@
   margin: 2px 0; 
 }
 
+.av-md ul { list-style-type: disc; list-style-position: outside; }
+.av-md ol { list-style-type: decimal; list-style-position: outside; }
+
 .av-md li {
   margin-bottom: 2px; 
   line-height: 1.45; 
@@ -101,3 +105,360 @@
 .av-md li:last-child {
   margin-bottom: 0;
 }
+
+/* ✅ ChatMessages.css (adds your “knowledge web integration” layout + modal)
+   This is aligned to your Figma-like specs, but implemented responsively. */
+
+   .av-sources-bar {
+    margin-top: 14px;
+    display: flex;
+    justify-content: flex-start;
+  }
+  
+  .av-sources-pill {
+    font-family: 'ABeeZee';
+    font-size: 16px;
+    color: rgba(240, 240, 240, 0.73);
+    background: rgba(31, 30, 30, 0.71);
+    border: 1px solid rgba(255, 255, 255, 0.10);
+    border-radius: 999px;
+    padding: 8px 14px;
+    cursor: pointer;
+  }
+  
+  .av-media-row {
+    margin-top: 12px;
+    display: flex;
+    gap: 10px;
+    flex-wrap: wrap;
+  }
+  
+  .av-image-card {
+    width: 180px;
+    height: 120px;
+    border-radius: 12px;
+    overflow: hidden;
+    background: #111010;
+    border: 1px solid rgba(255, 255, 255, 0.12);
+    display: block;
+  }
+  
+  .av-image-card img {
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+    display: block;
+  }
+  
+  .av-video-col {
+    margin-top: 12px;
+    display: flex;
+    flex-direction: column;
+    gap: 14px;
+  }
+  
+  .av-youtube-card {
+    background: #111010;
+    border-radius: 16px;
+    border: 1px solid rgba(255, 255, 255, 0.10);
+    padding: 12px;
+    max-width: 720px;
+  }
+  
+  .av-youtube-title {
+    font-family: 'ABeeZee';
+    color: #fff;
+    font-size: 16px;
+    margin-bottom: 10px;
+    opacity: 0.92;
+  }
+  
+  .av-youtube-frame {
+    width: 100%;
+    aspect-ratio: 16 / 9;
+    border: 0;
+    border-radius: 12px;
+  }
+  
+  /* Right-side sources modal popup (your Rectangle 80 vibe) */
+  .av-sources-modal {
+    position: fixed;
+    top: 99px;
+    right: 24px;
+    width: 513px;
+    height: calc(100vh - 140px);
+    background: #1C1C1C;
+    border: 1px solid #FF951C;
+    border-radius: 28px;
+    z-index: 9999;
+    padding: 18px 18px 14px 18px;
+    overflow: hidden;
+    box-sizing: border-box;
+  }
+
+  /* -------------------- 📱 Mobile overrides -------------------- */
+  @media (max-width: 768px) {
+    .av-chat-window {
+      width: calc(100% - 20px);
+      padding-top: 10px;
+    }
+
+    .av-chat-scroll {
+      gap: 18px;
+      padding-bottom: 16px;
+    }
+
+    .av-chat-bubble {
+      padding: 14px 14px;
+      border-radius: 22px;
+      font-size: 14px;
+    }
+
+    .av-image-card {
+      width: calc(50% - 6px);
+      height: auto;
+      aspect-ratio: 3 / 2;
+    }
+
+    .av-youtube-card {
+      padding: 10px;
+      border-radius: 14px;
+    }
+
+    .av-sources-modal {
+      top: 12px;
+      left: 12px;
+      right: 12px;
+      width: auto;
+      height: calc(100dvh - 24px);
+      border-radius: 18px;
+    }
+
+    .av-sources-title {
+      font-size: 22px;
+      margin: 4px 0 10px 4px;
+    }
+  }
+  
+  .av-sources-title {
+    font-family: 'ABeeZee';
+    font-size: 32px;
+    color: #FF951C;
+    margin: 6px 0 12px 6px;
+  }
+  
+  .av-sources-close {
+    position: absolute;
+    top: 18px;
+    right: 18px;
+    width: 34px;
+    height: 34px;
+    border-radius: 10px;
+    border: 1px solid rgba(255,255,255,0.10);
+    background: rgba(0,0,0,0.25);
+    color: #fff;
+    cursor: pointer;
+  }
+  
+  .av-sources-list {
+    margin-top: 10px;
+    height: calc(100% - 70px);
+    overflow: auto;
+    padding-right: 8px;
+  }
+  
+  .av-source-item {
+    display: block;
+    text-decoration: none;
+    padding: 10px 8px;
+    border-radius: 16px;
+  }
+  
+  .av-source-item:hover {
+    background: rgba(255, 149, 28, 0.08);
+  }
+  
+  .av-source-name {
+    font-family: 'ABeeZee';
+    font-size: 16px;
+    color: #fff;
+    letter-spacing: 0.02em;
+    margin-bottom: 6px;
+  }
+  
+  .av-source-url {
+    font-family: 'ABeeZee';
+    font-size: 13px;
+    color: rgba(240,240,240,0.60);
+    margin-bottom: 8px;
+    word-break: break-all;
+  }
+  
+  .av-source-snippet {
+    font-family: 'ABeeZee';
+    font-size: 14px;
+    color: rgba(255,255,255,0.88);
+    line-height: 19px;
+  }
+  
+  .av-source-divider {
+    margin-top: 14px;
+    height: 1px;
+    background: rgba(255,255,255,0.10);
+  }
+
+.av-message-container {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  max-width: 100%;
+}
+
+.av-report-button-wrapper-below {
+  margin-top: -12px;
+  margin-left: 24px;
+  position: relative;
+}
+
+/* Report Message Menu */
+.av-message-menu-btn {
+  background: none;
+  border: none;
+  color: #fff;
+  font-size: 26px;
+  font-weight: 900;
+  cursor: pointer;
+  padding: 4px 8px;
+  opacity: 1;
+  transition: opacity 0.2s;
+  text-shadow: 0 0 1px rgba(255,255,255,0.5);
+}
+
+.av-message-menu-btn:hover {
+  opacity: 1;
+}
+
+.av-report-modal {
+  position: absolute;
+  bottom: 30px;
+  left: 0;
+  background: #2a2a2a;
+  border: 1px solid #444;
+  border-radius: 12px;
+  padding: 16px;
+  min-width: 280px;
+  box-shadow: 0 4px 12px rgba(0,0,0,0.3);
+  z-index: 10;
+}
+
+.av-report-title {
+  font-size: 14px;
+  font-weight: 600;
+  color: #fff;
+  margin-bottom: 8px;
+}
+
+.av-report-subtitle {
+  font-size: 12px;
+  color: #999;
+  margin-bottom: 12px;
+}
+
+.av-report-options {
+  display: flex;
+  flex-direction: row;
+  flex-wrap: wrap;
+  gap: 12px;
+  margin-bottom: 12px;
+}
+
+.av-report-checkbox {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  cursor: pointer;
+  font-size: 13px;
+  color: #ddd;
+}
+
+.av-report-checkbox input[type="checkbox"] {
+  cursor: pointer;
+  accent-color: #ff951c;
+}
+
+.av-report-submit {
+  width: 100%;
+  padding: 8px;
+  background: #ff951c;
+  border: none;
+  border-radius: 6px;
+  color: #000;
+  font-weight: 600;
+  font-size: 13px;
+  cursor: pointer;
+  transition: opacity 0.2s;
+}
+
+.av-report-submit:hover:not(:disabled) {
+  opacity: 0.9;
+}
+
+.av-report-submit:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.av-report-success-modal {
+  position: absolute;
+  bottom: 30px;
+  left: 0;
+  background: #2a2a2a;
+  border: 1px solid #444;
+  border-radius: 12px;
+  padding: 24px;
+  min-width: 300px;
+  box-shadow: 0 4px 12px rgba(0,0,0,0.3);
+  z-index: 10;
+  text-align: center;
+}
+
+.av-report-close {
+  position: absolute;
+  top: 8px;
+  right: 8px;
+  background: none;
+  border: none;
+  color: #ff951c;
+  font-size: 20px;
+  cursor: pointer;
+  padding: 4px 8px;
+  line-height: 1;
+}
+
+.av-report-checkmark {
+  width: 60px;
+  height: 60px;
+  margin: 0 auto 16px;
+  border: 3px solid #ff951c;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 32px;
+  color: #ff951c;
+  font-weight: bold;
+}
+
+.av-report-success-title {
+  font-size: 16px;
+  font-weight: 600;
+  color: #fff;
+  margin-bottom: 12px;
+}
+
+.av-report-success-text {
+  font-size: 13px;
+  color: #999;
+  line-height: 1.5;
+}
+  

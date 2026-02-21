@@ -5,10 +5,18 @@ import "./ChatBar.css";
 interface ChatBarProps {
   onSubmit?: (text: string) => void;
   onAttachClick?: () => void;
-  
   onMicClick?: () => void;
   onQuizClick?: () => void;
   disabled?: boolean;
+  micEnabled?: boolean;
+  wakeWord?: string;
+  attachedFile?: {
+    file: File;
+    type: 'image' | 'pdf' | 'docx' | 'txt' | 'other';
+    previewUrl?: string;
+    extractedText?: string;
+  } | null;
+  onClearAttachment?: () => void;
 }
 
 const MAX_TEXTAREA_HEIGHT = 160;
@@ -19,6 +27,10 @@ const ChatBar: FC<ChatBarProps> = ({
   onMicClick,
   onQuizClick,
   disabled,
+  micEnabled = true,
+  wakeWord,
+  attachedFile,
+  onClearAttachment,
 }) => {
   const [value, setValue] = useState("");
   const textareaRef = useRef<HTMLTextAreaElement | null>(null);
@@ -75,6 +87,13 @@ const ChatBar: FC<ChatBarProps> = ({
     autoResize();
   }, [value]);
 
+  useEffect(() => {
+    if (!micEnabled && isRecording) {
+      stopRecording();
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [micEnabled]);
+
   //  start/stop recording 
   const startRecording = async () => {
     try {
@@ -102,8 +121,7 @@ const ChatBar: FC<ChatBarProps> = ({
           const formData = new FormData();
           formData.append("file", audioBlob, "recording.webm");
 
-          //const res = await fetch("http://localhost:8000/gstt/transcribe", {   //Google STT endpoint
-          const res = await fetch("http://localhost:8000/stt/", {   //Assembly STT endpoint
+          const res = await fetch(`${import.meta.env.VITE_API_URL}/gstt/transcribe`, {   //Google STT endpoint  /stt/ -> Assembly
             method: "POST",
             body: formData,
           });
@@ -154,7 +172,7 @@ const ChatBar: FC<ChatBarProps> = ({
   };
 
   const handleMicClickInternal = () => {
-    if (disabled) return;
+    if (disabled || !micEnabled) return;
 
     
     onMicClick?.();
@@ -170,59 +188,105 @@ const ChatBar: FC<ChatBarProps> = ({
 
   return (
     <div className="av-chatbar-wrapper">
-      <form className="av-chatbar" onSubmit={handleSubmit}>
-        <button
-          type="button"
-          className="av-icon-button"
-          onClick={onAttachClick}
-          disabled={disabled}
-          aria-label="Attach"
-        >
-          <Paperclip className="av-icon" />
-        </button>
+      <form className={`av-chatbar ${attachedFile ? 'has-attachment' : ''}`} onSubmit={handleSubmit}>
+        {attachedFile && (
+          <div className={`av-file-preview-inline ${attachedFile.type === 'image' ? 'image' : 'document'}`}>
+            {attachedFile.type === 'image' ? (
+              <>
+                <img
+                  src={attachedFile.previewUrl}
+                  alt={attachedFile.file.name}
+                  className="av-file-preview-image"
+                />
+                <button
+                  type="button"
+                  className="av-file-close-inline"
+                  onClick={onClearAttachment}
+                  aria-label="Remove attachment"
+                >
+                  ✕
+                </button>
+              </>
+            ) : (
+              <>
+                <div className={`av-file-icon ${attachedFile.type}`}>
+                  📄
+                </div>
+                <div className="av-file-info">
+                  <div className="av-file-name">
+                    {attachedFile.file.name}
+                  </div>
+                  <div className="av-file-type">
+                    {attachedFile.type.toUpperCase()}
+                  </div>
+                </div>
+                <button
+                  type="button"
+                  className="av-file-close-inline"
+                  onClick={onClearAttachment}
+                  aria-label="Remove attachment"
+                >
+                  ✕
+                </button>
+              </>
+            )}
+          </div>
+        )}
 
-        <textarea
-          ref={textareaRef}
-          className="av-input"
-          placeholder='Enter text here or say "Hey AskVox"...'
-          value={value}
-          onChange={(e) => setValue(e.target.value)}
-          onKeyDown={handleKeyDown}
-          disabled={disabled}
-          rows={1}
-        />
-
-        <div className="av-toolbar-right">
-          <button
-            type="button"
-            className={`av-icon-button ${
-              isMicActive ? "av-mic-pulsing" : ""
-            }`}
-            onClick={handleMicClickInternal}
-            disabled={disabled}
-            aria-label={isMicActive ? "Stop voice input" : "Voice input"}
-          >
-            <Mic className="av-icon" />
-          </button>
-
+        <div className="av-input-row">
           <button
             type="button"
             className="av-icon-button"
-            onClick={onQuizClick}
+            onClick={onAttachClick}
             disabled={disabled}
-            aria-label="Quiz"
+            aria-label="Attach"
           >
-            <BookOpen className="av-icon" />
+            <Paperclip className="av-icon" />
           </button>
 
-          <button
-            type="submit"
-            className="av-send-button"
-            disabled={disabled || !value.trim()}
-            aria-label="Send"
-          >
-            <Send className="av-icon" />
-          </button>
+          <textarea
+            ref={textareaRef}
+            className="av-input"
+            placeholder={`Enter text here or say "${wakeWord ?? 'Hey AskVox'}"...`}
+            value={value}
+            onChange={(e) => setValue(e.target.value)}
+            onKeyDown={handleKeyDown}
+            aria-disabled={disabled}
+            rows={1}
+          />
+
+          <div className="av-toolbar-right">
+            <button
+              type="button"
+              className={`av-icon-button ${
+                isMicActive ? "av-mic-pulsing" : ""
+              }`}
+              onClick={handleMicClickInternal}
+              disabled={disabled || !micEnabled}
+              aria-label={!micEnabled ? "Microphone disabled" : (isMicActive ? "Stop voice input" : "Voice input")}
+            >
+              <Mic className="av-icon" />
+            </button>
+
+            <button
+              type="button"
+              className="av-icon-button"
+              onClick={onQuizClick}
+              disabled={disabled}
+              aria-label="Quiz"
+            >
+              <BookOpen className="av-icon" />
+            </button>
+
+            <button
+              type="submit"
+              className="av-send-button"
+              disabled={disabled || !value.trim()}
+              aria-label="Send"
+            >
+              <Send className="av-icon" />
+            </button>
+          </div>
         </div>
       </form>
     </div>

@@ -1,0 +1,123 @@
+.admin-wrap{position:relative;color:#f0f0f0;padding:24px;max-width:1600px;margin:0 auto}
+.admin-wrap button{cursor:pointer}
+.admin-layout{display:grid;grid-template-columns:100px 1fr;gap:16px}
+.admin-sidebar{position:relative}
+.admin-rail{position:relative;height:100%;}
+.admin-rail__logoBtn{position:absolute;left:16px;top:24px;background:transparent;border:0;padding:0;cursor:pointer}
+.admin-rail__logo{width:54px;height:54px}
+.admin-rail__item{position:absolute;left:12px;background:transparent;border:0;color:#b86e19;display:flex;align-items:center;gap:8px;cursor:pointer}
+.admin-rail__icon{width:40px;height:40px;background-size:contain;background-repeat:no-repeat}
+.admin-rail__label{font-size:14px}
+.admin-rail__settings{position:absolute;left:22px;bottom:24px;background:transparent;border:0;color:#f0f0f0;cursor:pointer}
+.admin-rail__settingsIcon{display:inline-flex;align-items:center;justify-content:center;width:40px;height:40px}
+.admin-label{margin-top:6px;}
+
+/* Larger settings button for platform admin (no avatar) */
+.admin-settings{position:absolute;left:22px;bottom:24px;display:flex;align-items:center;justify-content:center;width:60px;height:60px;background:#2a2a2a;border:1px solid rgba(255,149,28,.35);border-radius:50%;box-shadow:0 0 12px rgba(255,149,28,.25);cursor:pointer}
+.admin-settings:hover{box-shadow:0 0 16px rgba(255,149,28,.45)}
+.admin-top{display:flex;justify-content:space-between;align-items:center}
+.admin-title{margin:0;font-size:32px;color:#d1d1d1}
+.logout-btn{background:#1c1c1c;border:1px solid #ff951c;color:#f0f0f0;padding:10px 18px;border-radius:16px;box-shadow:1px 1px 12.8px #ff951c;cursor:pointer}
+
+/* Fixed logout placement for Platform Admin settings page to match
+	registered topbar spacing while reusing the admin button design. */
+.admin-settings-logout{position:fixed;top:20px;right:32px;z-index:60}
+
+.admin-cards{display:grid;grid-template-columns:repeat(3,1fr);gap:18px;margin-top:18px}
+.metric-card{background:linear-gradient(180deg,#333 0%,#141313 33%,#191919 62.5%);border-radius:46px;padding:22px;border:1px solid rgba(255,255,255,.04);text-align:left}
+.metric-title{color:#d3d3d3;font-size:20px}
+.metric-value{color:#e2dfdf;font-size:64px;line-height:1;margin-top:16px}
+
+.metric-meta{margin-top:10px;font-size:14px;opacity:.85}
+.trend{font-weight:600}
+.trend-up{color:rgba(120, 220, 140, .95)}
+.trend-down{color:rgba(255, 110, 110, .95)}
+.trend-flat{color:rgba(229, 179, 18, .95)}
+
+.metric-card--healthy{border-color:rgba(120, 220, 140, .18)}
+.metric-card--watch{border-color:rgba(229, 179, 18, .20)}
+.metric-card--urgent{border-color:rgba(255, 110, 110, .22)}
+
+.metric-card--clickable{background:linear-gradient(180deg,#353535 0%,#141313 33%,#191919 62.5%)}
+.metric-card--clickable:hover{border-color:rgba(255,149,28,.35);box-shadow:0 0 18px rgba(255,149,28,.12)}
+.metric-card--clickable:active{transform:translateY(1px)}
+
+.metric-subgrid{margin-top:10px;display:grid;grid-template-columns:1fr 1fr;gap:6px 12px;opacity:.9}
+.metric-subline{font-size:14px;color:#d3d3d3}
+.metric-subkey{color:#ff951c;font-weight:700}
+.metric-cta{margin-top:10px;color:#ff951c;font-weight:700;font-size:14px}
+
+.admin-lower{display:grid;grid-template-columns:2fr 1fr;gap:18px;margin-top:18px}
+.chart-card{background:linear-gradient(180deg,#333 0%,#141313 33%,#191919 62.5%);border-radius:46px;padding:22px;min-height:320px}
+.chart-subtitle{margin-top:8px;color:#a9a9a9;font-size:14px}
+.bars{position:relative;display:flex;align-items:flex-end;gap:12px;height:360px;margin-top:12px;border:1px solid #3b3939;border-radius:12px;padding:16px}
+.avg-line{position:absolute;left:16px;right:16px;height:1px;background:rgba(229,179,18,.55);pointer-events:none}
+.avg-label{position:absolute;left:18px;font-size:12px;color:rgba(229,179,18,.95);pointer-events:none}
+.bar-container{display:flex;flex-direction:column;align-items:center;gap:4px;flex:1}
+.bar-label{color:#ff951c;font-size:16px;font-weight:600;min-height:20px;text-align:center}
+.bar{width:100%;background:linear-gradient(180deg,#bf721b 0%,#3a0a66 76.92%);border-radius:8px;max-width:52px;margin:0 auto}
+.bar-compare{margin-top:6px;font-size:12px;opacity:.75;color:#d3d3d3;min-height:16px}
+.week{display:flex;gap:12px;color:#686666;margin-top:8px;padding:0 16px}
+.week span{flex:1;text-align:center}
+
+.admin-right-col{display:flex;flex-direction:column;gap:18px}
+.pending-actions{min-height:auto}
+.pending-list{margin-top:12px;display:flex;flex-direction:column;gap:10px}
+.pending-item{display:flex;align-items:center;gap:10px;width:100%;background:transparent;border:1px solid rgba(255,255,255,.06);border-radius:14px;padding:10px 12px;color:#f0f0f0}
+.pending-item:hover{border-color:rgba(255,149,28,.35)}
+.pending-item--disabled{opacity:.55;cursor:default}
+.pending-dot{width:10px;height:10px;border-radius:999px;flex:0 0 auto}
+.pending-amber{background:rgba(229,179,18,.95)}
+.pending-text{flex:1;text-align:left;font-size:14px;color:#d3d3d3}
+.pending-go{color:#ff951c;font-weight:700}
+
+.donut-wrap{display:flex;justify-content:center;align-items:center;height:260px}
+.donut{width:220px;height:220px;border-radius:50%;position:relative}
+.donut-hole{position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);width:120px;height:120px;background:#111;border-radius:50%}
+.legend{margin-top:8px;color:#d3d3d3;display:flex;flex-direction:column;gap:10px}
+.legend-dot{display:inline-block;width:18px;height:18px;border-radius:4px;margin-right:8px}
+.legend-mis{background:#ff951c}
+.legend-harm{background:#6a2da8}
+.legend-out{background:#e5b312}
+
+.legend-item{display:flex;align-items:center;gap:8px;width:100%;background:transparent;border:1px solid rgba(255,255,255,.06);border-radius:14px;padding:10px 12px;color:#d3d3d3;text-align:left}
+.legend-item:hover{border-color:rgba(255,149,28,.35)}
+.legend-text{font-size:14px}
+
+.admin-footer{margin-top:24px}
+.review-btn{background:#ff951c;border:0;color:#000;padding:12px 16px;border-radius:999px;font-weight:600;cursor:pointer}
+
+/* Compact dashboard mode: keeps everything above-the-fold on typical laptops */
+.admin-dashboard--compact{padding:18px;max-width:1400px}
+.admin-dashboard--compact .admin-title{font-size:28px}
+.admin-dashboard--compact .logout-btn{padding:8px 14px;border-radius:14px}
+
+.admin-dashboard--compact .admin-cards{gap:14px;margin-top:14px}
+.admin-dashboard--compact .metric-card{padding:18px;border-radius:34px}
+.admin-dashboard--compact .metric-title{font-size:18px}
+.admin-dashboard--compact .metric-value{font-size:52px;margin-top:12px}
+.admin-dashboard--compact .metric-meta{font-size:13px;margin-top:8px}
+.admin-dashboard--compact .metric-subgrid{margin-top:8px}
+.admin-dashboard--compact .metric-cta{margin-top:8px}
+
+.admin-dashboard--compact .admin-lower{gap:14px;margin-top:14px}
+.admin-dashboard--compact .chart-card{padding:18px;border-radius:34px;min-height:280px}
+.admin-dashboard--compact .chart-subtitle{font-size:13px}
+
+.admin-dashboard--compact .bars{height:300px;padding:12px;gap:10px}
+.admin-dashboard--compact .bar-label{font-size:14px}
+.admin-dashboard--compact .bar{max-width:44px;border-radius:7px}
+.admin-dashboard--compact .bar-compare{font-size:11px}
+.admin-dashboard--compact .week{margin-top:6px}
+
+.admin-dashboard--compact .donut-wrap{height:220px}
+.admin-dashboard--compact .donut{width:190px;height:190px}
+.admin-dashboard--compact .donut-hole{width:104px;height:104px}
+
+.admin-dashboard--compact .pending-list{gap:8px}
+.admin-dashboard--compact .pending-item{padding:8px 10px;border-radius:12px}
+.admin-dashboard--compact .pending-text{font-size:13px}
+
+.admin-dashboard--compact .legend{gap:8px}
+.admin-dashboard--compact .legend-item{padding:8px 10px;border-radius:12px}
+.admin-dashboard--compact .legend-text{font-size:13px}

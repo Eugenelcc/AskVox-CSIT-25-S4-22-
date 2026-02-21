@@ -1,3 +1,4 @@
+// src/components/Sidebar/Chat_Sidebar.tsx
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import "./cssfiles/SidebarUngistered.css";
 
@@ -16,21 +17,27 @@ import {
   PanelLeftClose,
 } from "lucide-react";
 
-
-import newChatPng from "./newchat.png";
+import newChatPng from "./iconsFile/newchat.png";
+import CustomizePopover from "./CustomizePopover";
 
 interface ChatSession {
   id: string;
   title: string;
+  color?: string;
+  emoji?: string;
 }
 
 interface ChatFolder {
   id: string;
   name: string;
-  items: { id: string; title: string }[];
+  color?: string;
+  emoji?: string;
+  items: { id: string; title: string; color?: string; emoji?: string }[];
 }
 
 interface SidebarProps {
+  paid?: boolean;
+
   sessions: ChatSession[];
   activeId: string | null;
   onSelectSession: (id: string) => void;
@@ -40,20 +47,35 @@ interface SidebarProps {
 
   folders?: ChatFolder[];
 
-  // optional hooks (wire to supabase later)
   onRenameFolder?: (folderId: string) => void;
   onDeleteFolder?: (folderId: string) => void;
   onMoveOutOfFolder?: (folderId: string) => void;
   onCreateFolder?: () => void;
 
-  // create folder and immediately attach current chat
   onCreateFolderAndMoveChat?: (chatId: string) => void;
 
   onRenameChat?: (chatId: string) => void;
   onMoveChatToFolder?: (chatId: string, folderId: string) => void;
+  onDeleteChat?: (chatId: string) => void;
+
+  onSaveFolderStyle?: (folderId: string, style: { color?: string; emoji?: string }) => void;
+  onSaveChatStyle?: (chatId: string, style: { color?: string; emoji?: string }) => void;
 }
 
+type DraftStyle =
+  | null
+  | { kind: "folder"; id: string; color?: string; emoji?: string }
+  | { kind: "chat"; id: string; color?: string; emoji?: string };
+
+// ✅ customize state does NOT store x/y
+type CustomizeState =
+  | null
+  | { kind: "folder"; id: string; current?: { color?: string; emoji?: string } }
+  | { kind: "chat"; id: string; current?: { color?: string; emoji?: string } };
+
 export default function Sidebar({
+  paid = false,
+
   sessions,
   activeId,
   onSelectSession,
@@ -71,19 +93,23 @@ export default function Sidebar({
 
   onRenameChat,
   onMoveChatToFolder,
+  onDeleteChat,
+
+  onSaveFolderStyle,
+  onSaveChatStyle,
 }: SidebarProps) {
   const [query, setQuery] = useState("");
 
-  // folders section collapse
   const [foldersOpen, setFoldersOpen] = useState(true);
-
-  // collapse 
+  const [myChatsOpen, setMyChatsOpen] = useState(true);
   const [openFolderIds, setOpenFolderIds] = useState<Record<string, boolean>>({});
 
-  // menus
   const [folderMenu, setFolderMenu] = useState<{ id: string; x: number; y: number } | null>(null);
   const [chatMenu, setChatMenu] = useState<{ id: string; x: number; y: number } | null>(null);
   const [moveSubmenu, setMoveSubmenu] = useState<{ chatId: string; x: number; y: number } | null>(null);
+
+  const [customize, setCustomize] = useState<CustomizeState>(null);
+  const [draftStyle, setDraftStyle] = useState<DraftStyle>(null);
 
   const menuRootRef = useRef<HTMLDivElement | null>(null);
 
@@ -111,7 +137,6 @@ export default function Sidebar({
       .filter(Boolean) as ChatFolder[];
   }, [folders, query]);
 
-  // close menus on outside click / escape
   useEffect(() => {
     const onDown = (e: MouseEvent) => {
       if (!menuRootRef.current) return;
@@ -119,12 +144,16 @@ export default function Sidebar({
       setFolderMenu(null);
       setChatMenu(null);
       setMoveSubmenu(null);
+      setCustomize(null);
+      setDraftStyle(null);
     };
     const onKey = (e: KeyboardEvent) => {
       if (e.key === "Escape") {
         setFolderMenu(null);
         setChatMenu(null);
         setMoveSubmenu(null);
+        setCustomize(null);
+        setDraftStyle(null);
       }
     };
     document.addEventListener("mousedown", onDown);
@@ -138,29 +167,46 @@ export default function Sidebar({
   const openMenuAt = (setter: (v: any) => void, id: string, e: React.MouseEvent) => {
     e.stopPropagation();
     const rect = (e.currentTarget as HTMLElement).getBoundingClientRect();
-    setter({ id, x: rect.right + 8, y: rect.top - 6 });
+    const container = menuRootRef.current?.getBoundingClientRect();
+    const baseLeft = container ? rect.right - container.left : rect.right;
+    const baseTop = container ? rect.top - container.top : rect.top;
+    setter({ id, x: baseLeft - 2, y: baseTop + 2 });
   };
 
   const openMoveSubmenuAt = (chatId: string, e: React.MouseEvent) => {
     e.stopPropagation();
     const rect = (e.currentTarget as HTMLElement).getBoundingClientRect();
-    setMoveSubmenu({ chatId, x: rect.right + 8, y: rect.top - 6 });
+    const container = menuRootRef.current?.getBoundingClientRect();
+    const baseLeft = container ? rect.right - container.left : rect.right;
+    const baseTop = container ? rect.top - container.top : rect.top;
+    setMoveSubmenu({ chatId, x: baseLeft + 4, y: baseTop + 2 });
+  };
+
+  // ✅ FIXED: no x/y here (popover positions itself)
+  const openCustomizeAt = (
+    kind: "folder" | "chat",
+    id: string,
+    current: { color?: string; emoji?: string } | undefined
+  ) => {
+    setCustomize({ kind, id, current });
+    setDraftStyle({ kind, id, color: current?.color, emoji: current?.emoji });
+
+    setFolderMenu(null);
+    setChatMenu(null);
+    setMoveSubmenu(null);
   };
 
   return (
     <aside className={`av-sidebar ${isOpen ? "is-open" : ""}`}>
       <div ref={menuRootRef}>
-        {/* Header */}
         <div className="av-sidebar__header">
           <div className="av-sidebar__title">Chats</div>
 
           <div className="av-sidebar__headerActions">
-            {/* New Chat  */}
             <button className="av-iconBtn" onClick={onNewChat} title="New chat" type="button">
               <img className="av-newchatImg" src={newChatPng} alt="New chat" />
             </button>
 
-            {/* Collapse */}
             <button className="av-iconBtn" onClick={onClose} title="Close sidebar" type="button">
               <PanelLeftClose size={18} />
             </button>
@@ -169,7 +215,6 @@ export default function Sidebar({
 
         <div className="av-divider" />
 
-        {/* Search */}
         <div className="av-search">
           <Search size={18} />
           <input
@@ -182,36 +227,48 @@ export default function Sidebar({
 
         <div className="av-divider" />
 
-        {/* Chat Folders header */}
         <div className="av-sectionHeader">
           <div className="av-sectionHeader__left" onClick={() => setFoldersOpen((v) => !v)}>
             {foldersOpen ? <ChevronUp size={22} /> : <ChevronDown size={22} />}
             <div className="av-sectionHeader__title">Chat Folders</div>
           </div>
 
-          <button
-            className="av-plusBtn"
-            type="button"
-            title="Add folder"
-            onClick={() => onCreateFolder?.()}
-          >
+          <button className="av-plusBtn" type="button" title="Add folder" onClick={() => onCreateFolder?.()}>
             +
           </button>
         </div>
 
-        {/* Folders */}
         {foldersOpen && (
           <div className="av-folderList">
             {filteredFolders.map((folder) => {
               const expanded = openFolderIds[folder.id] ?? true;
 
+              const previewForFolder =
+                draftStyle?.kind === "folder" && draftStyle.id === folder.id ? draftStyle : null;
+              const effectiveFolderColor = previewForFolder?.color ?? folder.color;
+              const effectiveFolderEmoji = previewForFolder?.emoji ?? folder.emoji;
+
+              const folderPreviewStyle =
+                paid && effectiveFolderColor ? { background: effectiveFolderColor } : undefined;
+              const folderEmojiPreview = paid ? effectiveFolderEmoji : undefined;
+
               return (
                 <div key={folder.id} className="av-folderCard">
                   <div className="av-folderCard__top">
-                    <FolderIcon size={18} />
-                    <div className="av-folderCard__name">{folder.name}</div>
+                    <div
+                      className="av-folderPill"
+                      style={folderPreviewStyle}
+                      onClick={() => toggleFolderItems(folder.id)}
+                      role="button"
+                      tabIndex={0}
+                    >
+                      <FolderIcon size={18} />
+                      <div className="av-folderPill__name">
+                        {folderEmojiPreview ? `${folderEmojiPreview} ` : ""}
+                        {folder.name}
+                      </div>
+                    </div>
 
-                    {/* 3 dots */}
                     <button
                       className="av-iconBtn"
                       style={{ width: 30, height: 30, borderRadius: 10 }}
@@ -220,13 +277,14 @@ export default function Sidebar({
                       onClick={(e) => {
                         setChatMenu(null);
                         setMoveSubmenu(null);
+                        setCustomize(null);
+                        setDraftStyle(null);
                         openMenuAt(setFolderMenu as any, folder.id, e);
                       }}
                     >
                       <MoreHorizontal size={16} />
                     </button>
 
-                    {/* collapse folder items */}
                     <button
                       className="av-iconBtn"
                       style={{ width: 30, height: 30, borderRadius: 10 }}
@@ -241,11 +299,7 @@ export default function Sidebar({
                   {expanded && (
                     <div className="av-folderCard__items">
                       {folder.items.map((it) => (
-                        <div
-                          key={it.id}
-                          style={{ cursor: "pointer" }}
-                          onClick={() => onSelectSession(it.id)}
-                        >
+                        <div key={it.id} style={{ cursor: "pointer" }} onClick={() => onSelectSession(it.id)}>
                           {it.title}
                         </div>
                       ))}
@@ -259,45 +313,62 @@ export default function Sidebar({
 
         <div className="av-divider" style={{ marginTop: 14 }} />
 
-        {/* My Chats */}
         <div className="av-sectionHeader" style={{ marginTop: 6 }}>
-          <div className="av-sectionHeader__left">
-            <ChevronUp size={22} />
+          <div
+            className="av-sectionHeader__left"
+            onClick={() => setMyChatsOpen((v) => !v)}
+            role="button"
+            tabIndex={0}
+          >
+            {myChatsOpen ? <ChevronUp size={22} /> : <ChevronDown size={22} />}
             <div className="av-sectionHeader__title">My Chats</div>
           </div>
         </div>
 
+        {myChatsOpen && (
         <div className="av-chatList">
-          {filteredSessions.map((s) => (
-            <div key={s.id} className="av-chatRow">
-              <button
-                type="button"
-                className={`av-chatItem ${activeId === s.id ? "is-active" : ""}`}
-                onClick={() => onSelectSession(s.id)}
-                title={s.title}
-              >
-                {s.title}
-              </button>
+          {filteredSessions.map((s) => {
+            const previewForChat = draftStyle?.kind === "chat" && draftStyle.id === s.id ? draftStyle : null;
+            const effectiveChatColor = previewForChat?.color ?? s.color;
+            const effectiveChatEmoji = previewForChat?.emoji ?? s.emoji;
 
-              {/* the 3 dots */}
-              <button
-                className="av-iconBtn"
-                style={{ width: 30, height: 30, borderRadius: 10 }}
-                type="button"
-                title="Chat options"
-                onClick={(e) => {
-                  setFolderMenu(null);
-                  setMoveSubmenu(null);
-                  openMenuAt(setChatMenu as any, s.id, e);
-                }}
-              >
-                <MoreHorizontal size={16} />
-              </button>
-            </div>
-          ))}
+            return (
+              <div key={s.id} className="av-chatRow">
+                <button
+                  type="button"
+                  className={`av-chatItem ${activeId === s.id ? "is-active" : ""} ${
+                    paid && effectiveChatColor ? "is-colored" : ""
+                  }`}
+                  style={paid && effectiveChatColor ? { background: effectiveChatColor } : undefined}
+                  onClick={() => onSelectSession(s.id)}
+                  title={s.title}
+                >
+                  {paid && effectiveChatEmoji ? `${effectiveChatEmoji} ` : ""}
+                  {s.title}
+                </button>
+
+                <button
+                  className="av-iconBtn"
+                  style={{ width: 30, height: 30, borderRadius: 10 }}
+                  type="button"
+                  title="Chat options"
+                  onClick={(e) => {
+                    setFolderMenu(null);
+                    setMoveSubmenu(null);
+                    setCustomize(null);
+                    setDraftStyle(null);
+                    openMenuAt(setChatMenu as any, s.id, e);
+                  }}
+                >
+                  <MoreHorizontal size={16} />
+                </button>
+              </div>
+            );
+          })}
         </div>
+        )}
 
-        {/* ---------- Folder Menu ---------- */}
+        {/* Folder Menu */}
         {folderMenu && (
           <div className="av-menu" style={{ left: folderMenu.x, top: folderMenu.y }}>
             <button
@@ -315,12 +386,26 @@ export default function Sidebar({
 
             <div className="av-menuDivider" />
 
-            {/*  customise is locked cus it is only available for paid */}
-            <button className="av-menuItem is-locked" type="button" title="Paid feature">
-              <Palette size={14} />
-              <span>Customise Folder</span>
-              <Lock size={14} className="av-menuRight" />
-            </button>
+            {paid ? (
+              <button
+                className="av-menuItem"
+                type="button"
+                onClick={() => {
+                  const f = folders.find((x) => x.id === folderMenu.id);
+                  openCustomizeAt("folder", folderMenu.id, { color: f?.color, emoji: f?.emoji });
+                }}
+              >
+                <Palette size={14} />
+                <span>Customise Folder</span>
+                <span />
+              </button>
+            ) : (
+              <button className="av-menuItem is-locked" type="button" title="Paid feature">
+                <Palette size={14} />
+                <span>Customise Folder</span>
+                <Lock size={14} className="av-menuRight" />
+              </button>
+            )}
 
             <div className="av-menuDivider" />
 
@@ -354,7 +439,7 @@ export default function Sidebar({
           </div>
         )}
 
-        {/* ---------- Chat Menu ---------- */}
+        {/* Chat Menu */}
         {chatMenu && (
           <div className="av-menu av-menu--chat" style={{ left: chatMenu.x, top: chatMenu.y }}>
             <button
@@ -372,28 +457,54 @@ export default function Sidebar({
 
             <div className="av-menuDivider" />
 
-            {/* customise is locked cus it is only available for paid */}
-            <button className="av-menuItem is-locked" type="button" title="Paid feature">
-              <Palette size={14} />
-              <span>Customise Chat</span>
-              <Lock size={14} className="av-menuRight" />
+            {paid ? (
+              <button
+                className="av-menuItem"
+                type="button"
+                onClick={() => {
+                  const c = sessions.find((x) => x.id === chatMenu.id);
+                  openCustomizeAt("chat", chatMenu.id, { color: c?.color, emoji: c?.emoji });
+                }}
+              >
+                <Palette size={14} />
+                <span>Customise Chat</span>
+                <span />
+              </button>
+            ) : (
+              <button className="av-menuItem is-locked" type="button" title="Paid feature">
+                <Palette size={14} />
+                <span>Customise Chat</span>
+                <Lock size={14} className="av-menuRight" />
+              </button>
+            )}
+
+            <div className="av-menuDivider" />
+
+            <button className="av-menuItem" onClick={(e) => openMoveSubmenuAt(chatMenu.id, e)} type="button">
+              <ArrowRightLeft size={14} />
+              <span>Move to a Folder</span>
+              <ArrowRight size={14} className="av-menuRight" />
             </button>
 
             <div className="av-menuDivider" />
 
             <button
-              className="av-menuItem"
-              onClick={(e) => openMoveSubmenuAt(chatMenu.id, e)}
+              className="av-menuItem av-menuItem--danger"
               type="button"
+              onClick={() => {
+                onDeleteChat?.(chatMenu.id);
+                setMoveSubmenu(null);
+                setChatMenu(null);
+              }}
             >
-              <ArrowRightLeft size={14} />
-              <span>Move to a Folder</span>
-              <ArrowRight size={14} className="av-menuRight" />
+              <Trash2 size={14} />
+              <span>Delete Chat</span>
+              <span />
             </button>
           </div>
         )}
 
-        {/* ---------- Move-to Submenu ---------- */}
+        {/* Move-to Submenu */}
         {moveSubmenu && (
           <div className="av-submenu" style={{ left: moveSubmenu.x, top: moveSubmenu.y }}>
             <button
@@ -429,6 +540,35 @@ export default function Sidebar({
               </button>
             ))}
           </div>
+        )}
+
+        {/* Customize Popover */}
+        {customize && (
+          <CustomizePopover
+            title={customize.kind === "folder" ? "Customise Folder" : "Customise Chat"}
+            defaultColor={customize.current?.color}
+            defaultEmoji={customize.current?.emoji}
+            onClose={() => {
+              setCustomize(null);
+              setDraftStyle(null);
+            }}
+            onChange={(payload) => {
+              setDraftStyle((prev) => {
+                if (!prev) return { kind: customize.kind, id: customize.id, ...payload } as any;
+                if (prev.kind !== customize.kind || prev.id !== customize.id) {
+                  return { kind: customize.kind, id: customize.id, ...payload } as any;
+                }
+                return { ...prev, ...payload } as any;
+              });
+            }}
+            onSave={(payload) => {
+              if (customize.kind === "folder") onSaveFolderStyle?.(customize.id, payload);
+              else onSaveChatStyle?.(customize.id, payload);
+
+              setCustomize(null);
+              setDraftStyle(null);
+            }}
+          />
         )}
       </div>
     </aside>

@@ -5,6 +5,7 @@ import { X } from "lucide-react";
 import AskVoxLogo from "../../components/TopBars/AskVox.png";
 import AskVoxStarBackground from "../../components/background/background";
 import styles from "./SubscriptionPlan.module.css";
+import { supabase } from "../../supabaseClient";
 
 type Plan = "free" | "paid" | "edu";
 type BillingCycle = "monthly" | "yearly";
@@ -26,7 +27,7 @@ export default function Upgrade() {
 
   const goBack = () => navigate("/reguserhome");
 
-  const onSelectPlan = (plan: Plan) => {
+  const onSelectPlan = async (plan: Plan) => {
     if (plan === currentPlan) return;
 
     if (plan === "paid") {
@@ -35,7 +36,25 @@ export default function Upgrade() {
     }
 
     if (plan === "edu") {
-      navigate("/institute-verification", { state: { cycle } });
+      try {
+        const sess = (await supabase.auth.getSession()).data.session;
+        const token = sess?.access_token as string | undefined;
+        if (!token) throw new Error("Not authenticated");
+
+        const resp = await fetch(`${import.meta.env.VITE_API_URL}/billing/education-status`, {
+          method: "GET",
+          headers: { Authorization: `Bearer ${token}` },
+        });
+        if (!resp.ok) throw new Error(await resp.text());
+        const out = await resp.json();
+        if (out?.approved) {
+          navigate("/payment", { state: { cycle, subscriptionType: "education" } });
+        } else {
+          navigate("/institute-verification", { state: { cycle } });
+        }
+      } catch {
+        navigate("/institute-verification", { state: { cycle } });
+      }
       return;
     }
 
@@ -111,7 +130,7 @@ export default function Upgrade() {
 
               <div className={styles.priceRow}>
                 <span className={styles.priceValue}>$0</span>
-                <span className={styles.priceMeta}>SGD{pricing.suffix}</span>
+                <span className={styles.priceMeta}>USD{pricing.suffix}</span>
               </div>
 
               <ul className={styles.features}>
@@ -138,7 +157,7 @@ export default function Upgrade() {
 
               <div className={styles.priceRow}>
                 <span className={styles.priceValue}>${pricing.paid}</span>
-                <span className={styles.priceMeta}>SGD{pricing.suffix}</span>
+                <span className={styles.priceMeta}>USD{pricing.suffix}</span>
               </div>
 
               <ul className={styles.features}>
@@ -167,7 +186,7 @@ export default function Upgrade() {
 
               <div className={styles.priceRow}>
                 <span className={styles.priceValue}>${pricing.edu}</span>
-                <span className={styles.priceMeta}>SGD{pricing.suffix}</span>
+                <span className={styles.priceMeta}>USD{pricing.suffix}</span>
               </div>
 
               <div className={styles.eduText}>

@@ -202,6 +202,8 @@ async def generate_local(message: str, history: List[HistoryItem]) -> str:
     # ⭐ Stronger system prompt with formatting rules
     SYSTEM_PROMPT = (
         "You are AskVox, a safe educational AI tutor.\n"
+        "When the user greets you (e.g., 'hi', 'hello') or starts a new conversation, begin with: "
+        "\"Hi, I'm AskVox, your personal AI tutor.\" and then ask what they'd like help with.\n"
         f"{FORMAT_INSTRUCTION}"
     )
 
@@ -246,7 +248,7 @@ async def chat_cloud(req: ChatRequest):
             "Prefer": "return=representation",
         }
         async with httpx.AsyncClient() as client:
-            # Insert into responses (backend-only)
+            # Insert into responses (backend-only) with schema fallback + status checks
             if req.query_id:
                 try:
                     payload = {
@@ -254,11 +256,34 @@ async def chat_cloud(req: ChatRequest):
                         "response_text": answer,
                         "model_used": "llama2-cloud",
                     }
-                    await client.post(f"{SUPABASE_URL}/rest/v1/responses", headers=headers, json=payload)
+                    r = await client.post(
+                        f"{SUPABASE_URL}/rest/v1/responses",
+                        headers=headers,
+                        json=payload,
+                    )
+                    if r.status_code >= 400:
+                        alt_payload = {
+                            "query_id": req.query_id,
+                            "content": answer,
+                            "model_used": "llama2-cloud",
+                        }
+                        r2 = await client.post(
+                            f"{SUPABASE_URL}/rest/v1/responses",
+                            headers=headers,
+                            json=alt_payload,
+                        )
+                        if r2.status_code >= 400:
+                            print(
+                                f"⚠️ Failed to insert response into Supabase: primary {r.status_code} {r.text[:300]} | alt {r2.status_code} {r2.text[:300]}"
+                            )
+                        else:
+                            print("✅ Inserted response (alt schema)")
+                    else:
+                        print("✅ Inserted response")
                 except Exception as e:
                     print(f"⚠️ Failed to insert response into Supabase: {e}")
 
-            # Optionally mirror assistant message in chat_messages
+            # Optionally mirror assistant message in chat_messages (log failures)
             if req.session_id:
                 try:
                     payload = {
@@ -269,11 +294,25 @@ async def chat_cloud(req: ChatRequest):
                         "display_name": "AskVox",
                     }
 
-                    await client.post(f"{SUPABASE_URL}/rest/v1/chat_messages", headers=headers, json=payload)
+                    rc = await client.post(
+                        f"{SUPABASE_URL}/rest/v1/chat_messages",
+                        headers=headers,
+                        json=payload,
+                    )
+                    if rc.status_code >= 400:
+                        print(
+                            f"⚠️ Failed to insert assistant chat_message: {rc.status_code} {rc.text[:300]}"
+                        )
                 except Exception as e:
                     print(f"⚠️ Failed to insert assistant chat_message: {e}")
 
     return ChatResponse(answer=answer)
+
+
+# Alias to support older frontend paths
+@router.post("/cloud_plus", response_model=ChatResponse)
+async def chat_cloud_plus(req: ChatRequest):
+    return await chat_cloud(req)
 
 
 @router.post("/local", response_model=ChatResponse)

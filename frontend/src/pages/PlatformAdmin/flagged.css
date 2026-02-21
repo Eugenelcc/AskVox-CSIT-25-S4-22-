@@ -1,0 +1,526 @@
+/* ✅ Global typography for this page */
+.pa-flagged,
+.pa-flagged * {
+  font-family: "ABeeZee", sans-serif;
+  font-style: normal;
+  font-weight: 400;
+  letter-spacing: 0.02em;
+  color: #D1D1D1;
+}
+
+.pa-flagged {
+    position: relative;
+    min-height: 100vh;
+  }
+  
+  .pa-flagged__canvas {
+    position: relative;
+    width: min(1680px, calc(100vw - 280px));
+    margin-left: 260px;
+    padding: 28px 28px 40px;
+    box-sizing: border-box;
+  }
+  
+  @media (max-width: 900px) {
+    .pa-flagged__canvas {
+      width: calc(100vw - 24px);
+      margin-left: 12px;
+      padding: 18px 12px 28px;
+    }
+  }
+  
+  .pa-flagged__topRow {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 16px;
+    margin-bottom: 18px;
+  }
+
+  .pa-flagged__title {
+    font-size: 20px;
+    font-weight: 700;
+    color: #ffffff;
+    margin: 10px 0 0;
+  }
+
+  .pa-flagged__logout {
+    border: 1px solid #ff951c;
+    background: #1c1c1c;
+    color: #f0f0f0;
+    padding: 8px 18px;
+    border-radius: 16px;
+    box-shadow: 1px 1px 12.8px #ff951c;
+    cursor: pointer;
+    font-size: 16px;
+  }
+  
+  /* ===== Filters ===== */
+  .pa-flagged__filtersRow {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    flex-wrap: wrap;
+    margin-bottom: 14px;
+  }
+  
+  .pa-dd {
+    position: relative;
+  }
+  
+  .pa-dd__btn,
+  .pa-dd__btn--sm {
+    height: 34px;
+    padding: 0 16px;
+    border-radius: 999px;
+    border: 1px solid rgba(255, 149, 28, 0.95);
+    background: rgba(18, 18, 18, 0.55);
+    color: rgba(255, 255, 255, 0.92);
+    cursor: pointer;
+    display: inline-flex;
+    align-items: center;
+    gap: 10px;
+    box-shadow: none;
+  }
+  
+  .pa-dd__btn:hover {
+    background: rgba(18, 18, 18, 0.7);
+  }
+  
+  .pa-dd__btnValue {
+    max-width: 220px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  
+  .pa-dd__caret {
+    width: 10px;
+    height: 10px;
+    display: inline-block;
+    border-right: 2px solid rgba(255, 255, 255, 0.75);
+    border-bottom: 2px solid rgba(255, 255, 255, 0.75);
+    transform: rotate(45deg);
+    margin-bottom: 2px;
+  }
+  
+  .pa-dd__menu {
+    position: absolute;
+    top: 38px;
+    left: 0;
+    width: 220px;
+    border-radius: 12px;
+    border: 1px solid rgba(255, 149, 28, 0.55);
+    background: rgba(18, 18, 18, 0.92);
+    box-shadow: 0 10px 24px rgba(0, 0, 0, 0.35);
+    padding: 8px;
+    z-index: 50;
+  }
+  
+  .pa-dd__item {
+    width: 100%;
+    padding: 10px 10px;
+    border-radius: 10px;
+    border: none;
+    background: transparent;
+    color: rgba(255, 255, 255, 0.92);
+    text-align: left;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    gap: 10px;
+  }
+  
+  .pa-dd__item:hover {
+    background: rgba(255, 255, 255, 0.06);
+  }
+  
+  .pa-dd__check {
+    width: 14px;
+    height: 14px;
+    border-radius: 4px;
+    border: 1px solid rgba(255, 255, 255, 0.25);
+    display: inline-block;
+    box-sizing: border-box;
+  }
+  
+  .pa-dd__item.is-selected .pa-dd__check {
+    background: rgba(255, 149, 28, 0.95);
+    border-color: rgba(255, 149, 28, 0.95);
+  }
+  
+  /* Date range */
+  .pa-createdRange {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    background: rgba(18, 18, 18, 0.55);
+    border: 1px solid rgba(255, 149, 28, 0.95);
+    border-radius: 999px;
+    padding: 0 12px;
+    height: 34px;
+  }
+  
+  .pa-createdRange__input {
+    width: 120px;
+    height: 30px;
+    border: none;
+    outline: none;
+    color: rgba(255, 255, 255, 0.92);
+    background: transparent;
+  }
+  
+  .pa-createdRange__sep {
+    color: rgba(255, 255, 255, 0.6);
+  }
+  
+  /* Apply / Clear */
+  .pa-applyBtn,
+  .pa-applyBtn--sm {
+    height: 34px;
+    padding: 0 22px;
+    border-radius: 999px;
+    border: 1px solid rgba(255, 149, 28, 0.9);
+    background: linear-gradient(90deg, rgba(255, 149, 28, 0.9), rgba(46, 25, 66, 0.75));
+    color: rgba(255, 255, 255, 0.95);
+    font-weight: 700;
+    cursor: pointer;
+    box-shadow: none;
+  }
+  
+  .pa-applyBtn:hover {
+    filter: brightness(1.08);
+  }
+  
+  .pa-clearBtn,
+  .pa-clearBtn--sm {
+    height: 34px;
+    padding: 0 18px;
+    border-radius: 999px;
+    border: 1px solid rgba(255, 149, 28, 0.8);
+    background: rgba(18, 18, 18, 0.45);
+    color: rgba(255, 255, 255, 0.9);
+    font-weight: 700;
+    cursor: pointer;
+    box-shadow: none;
+  }
+  
+  .pa-clearBtn:hover {
+    background: rgba(18, 18, 18, 0.65);
+  }
+  
+  /* ===== Table ===== */
+  .pa-tableCard {
+    width: 100%;
+    border-radius: 24px;
+    background: rgba(52, 52, 52, 0.32);
+    border: 1px solid rgba(255, 149, 28, 0.25);
+    overflow: hidden;
+    min-height: 360px;
+  }
+  
+  .pa-tableHeader {
+    display: grid;
+    grid-template-columns: 90px 60px 180px 1fr 220px 120px 150px;
+    gap: 10px;
+    padding: 16px 18px;
+    color: rgba(255, 255, 255, 0.75);
+    font-weight: 700;
+    font-size: 13px;
+    background: rgba(80, 80, 80, 0.35);
+    border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+  }
+  
+  .pa-tableBody {
+    display: flex;
+    flex-direction: column;
+  }
+  
+  .pa-row {
+    display: grid;
+    grid-template-columns: 90px 60px 180px 1fr 220px 120px 150px;
+    gap: 10px;
+    padding: 18px 18px;
+    align-items: center;
+    border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+    color: rgba(255, 255, 255, 0.92);
+  }
+  
+  .pa-row.is-resolved {
+    background: rgba(255, 255, 255, 0.02);
+  }
+  
+  .pa-cell--truncate {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  
+  .pa-empty {
+    padding: 22px 18px;
+    color: rgba(255, 255, 255, 0.75);
+  }
+  
+  /* View button (작은 알약 + 보라 테두리 느낌) */
+  .pa-viewBtnFigma {
+    width: 132px;
+    height: 32px;
+    border-radius: 999px;
+    border: 1px solid #FF951C;
+    background: rgba(18, 18, 18, 0.35);
+    color: rgba(255, 255, 255, 0.92);
+    font-weight: 700;
+    cursor: pointer;
+    box-shadow: none;
+  }
+  
+  .pa-viewBtnFigma:hover {
+    background: rgba(18, 18, 18, 0.55);
+    border-color: rgba(255, 149, 28, 0.9);
+  }
+  
+  /* ===== Pagination (dots + arrows) ===== */
+  .pa-pagerRow {
+    margin-top: 16px;
+    display: flex;
+    align-items: center;
+    justify-content: flex-end;
+    gap: 16px;
+  }
+  
+  .pa-pagerDotsWrap {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+  }
+  
+  .pa-arrowBtn {
+    width: 34px;
+    height: 34px;
+    border-radius: 999px;
+    border: 1px solid rgba(255, 149, 28, 0.9);
+    background: rgba(18, 18, 18, 0.45);
+    color: rgba(255, 255, 255, 0.9);
+    font-size: 18px;
+    font-weight: 800;
+    cursor: pointer;
+    box-shadow: none;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+  }
+  
+  .pa-arrowBtn:hover {
+    background: rgba(18, 18, 18, 0.65);
+  }
+  
+  .pa-arrowBtn:disabled {
+    opacity: 0.35;
+    cursor: not-allowed;
+  }
+  
+  .pa-pagerDots {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+  }
+  
+  .pa-dotBtn {
+    width: 10px;
+    height: 10px;
+    border-radius: 999px;
+    border: 1px solid rgba(255, 255, 255, 0.22);
+    background: rgba(255, 255, 255, 0.18);
+    cursor: pointer;
+  }
+  
+  .pa-dotBtn.is-active {
+    background: rgba(255, 255, 255, 0.85);
+    border-color: rgba(255, 255, 255, 0.85);
+  }
+  
+  .pa-flagged__pageTextBtn {
+    border: none;
+    background: transparent;
+    color: rgba(255, 255, 255, 0.85);
+    cursor: pointer;
+    font-weight: 700;
+    padding: 8px 10px;
+  }
+  
+  .pa-flagged__pageTextBtn:hover {
+    color: #fff;
+  }
+  
+  .pa-flagged__pageTextBtn:disabled {
+    opacity: 0.35;
+    cursor: not-allowed;
+  }
+  
+  /* ===== Modal ===== */
+  .pa-modalOverlay {
+    position: fixed;
+    inset: 0;
+    background: rgba(0, 0, 0, 0.62);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 20px;
+    z-index: 1000;
+  }
+  
+  .pa-modal {
+    width: min(1002px, calc(100vw - 40px)); /* Rectangle 75 width 느낌 */
+    border-radius: 18px;
+    border: 1px solid rgba(255, 149, 28, 0.35);
+    background: rgba(20, 20, 20, 0.92);
+    box-shadow: 0 18px 46px rgba(0, 0, 0, 0.55);
+    overflow: hidden;
+    min-height: 560px;
+  }
+  
+  .pa-modal__topBar {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 14px 16px;
+    border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+  }
+  
+  .pa-modal__title {
+    font-weight: 800;
+    color: #fff;
+  }
+  
+  .pa-modal__close {
+    border: none;
+    background: transparent;
+    color: rgba(255, 255, 255, 0.8);
+    font-size: 22px;
+    cursor: pointer;
+  }
+  
+  .pa-modal__close:hover {
+    color: #fff;
+  }
+  
+  /* ✅ Rectangle 75 스타일로 “메시지(요청)창” */
+  .pa-modal__header {
+    box-sizing: border-box;
+    width: 100%;
+    margin: 14px 16px 0;
+    padding: 16px 16px;
+  
+    background: rgba(52, 52, 52, 0.54);
+    border: 1px solid #ff951c;
+    border-radius: 15px;
+  }
+  
+  .pa-modal__bigText {
+    color: rgba(255, 255, 255, 0.95);
+    font-size: 16px;
+    line-height: 1.45;
+    font-weight: 700;
+  }
+  
+  .pa-modal__reason {
+    margin-top: 10px;
+    color: rgba(255, 255, 255, 0.78);
+    font-weight: 600;
+  }
+  
+  .pa-modal__divider {
+    height: 1px;
+    background: rgba(255, 255, 255, 0.08);
+    margin: 14px 16px;
+  }
+  
+  .pa-modal__q {
+    margin: 0 16px 8px;
+    color: rgba(255, 255, 255, 0.88);
+    font-weight: 800;
+  }
+  
+  .pa-modal__textarea {
+    margin: 0 16px 14px;
+    width: calc(100% - 32px);
+    min-height: 180px;
+    border-radius: 15px;
+    border: 1px solid rgba(255, 149, 28, 0.55);
+    background: rgba(18, 18, 18, 0.6);
+    color: rgba(255, 255, 255, 0.94);
+    padding: 12px 12px;
+    outline: none;
+    resize: vertical;
+    box-sizing: border-box;
+  }
+  
+  .pa-modal__textarea:focus {
+    border-color: rgba(255, 149, 28, 0.85);
+  }
+  
+  .pa-modal__actions {
+    display: flex;
+    gap: 10px;
+    justify-content: flex-end;
+    padding: 0 16px 16px;
+  }
+  
+  .pa-modal__actionBtn {
+    height: 34px;
+    padding: 0 18px;
+    border-radius: 999px;
+    cursor: pointer;
+    font-weight: 800;
+    border: 1px solid rgba(255, 149, 28, 0.9);
+    background: rgba(18, 18, 18, 0.45);
+    color: rgba(255, 255, 255, 0.92);
+    box-shadow: none;
+  }
+  
+  .pa-modal__actionBtn:hover {
+    background: rgba(18, 18, 18, 0.65);
+  }
+  
+  .pa-modal__actionBtn:disabled {
+    opacity: 0.45;
+    cursor: not-allowed;
+  }
+  
+  .pa-modal__hint {
+    padding: 0 16px 18px;
+    color: rgba(255, 255, 255, 0.72);
+  }
+  
+  
+  /* ===============================
+   전체 레이아웃: 위에서 조금 내려오기
+   =============================== */
+.pa-flagged__canvas {
+    padding-top: 80px;     /* 전체를 아래로 내림 (60~120px 조절 가능) */
+    padding-bottom: 60px;  /* 하단 여백도 같이 주어 중심감 */
+    box-sizing: border-box;
+  }
+  
+  /* ===============================
+     내역(테이블) 박스 세로 확장
+     =============================== */
+  .pa-tableCard {
+    min-height: 520px;     /* 박스 자체를 더 길게 (480~650px 추천) */
+  }
+  
+  /* ===============================
+     행(Row) 간 여백 증가 (선택이지만 추천)
+     =============================== */
+  .pa-row {
+    padding-top: 22px;
+    padding-bottom: 22px;
+  }
+  
+  /* ===============================
+     테이블 하단 여유 (박스가 답답해 보일 때)
+     =============================== */
+  .pa-tableBody {
+    padding-bottom: 18px;
+  }
+  

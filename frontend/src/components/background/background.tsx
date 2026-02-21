@@ -25,19 +25,13 @@ const AskVoxStarBackground: React.FC = () => {
   return (
     <>
       <style>{`
-        * { margin: 0; padding: 0; box-sizing: border-box; }
-        body {
-          background: #000;
-          overflow: hidden;
-          font-family: system-ui, sans-serif;
-          height: 100vh;
-          color: #fff;
-        }
-
         .bg {
           position: fixed;
           inset: 0;
+          background: #000;
           overflow: hidden;
+          pointer-events: none; /* ensure background never blocks clicks */
+          z-index: -1;
         }
 
         .star {
@@ -49,6 +43,7 @@ const AskVoxStarBackground: React.FC = () => {
           box-shadow: 0 0 6px #ffae4a, 0 0 12px rgba(255,150,50,0.7);
           opacity: 0.7;
           animation: twinkle 2.4s ease-in-out infinite alternate;
+          pointer-events: none;
         }
 
         @keyframes twinkle {
@@ -67,6 +62,7 @@ const AskVoxStarBackground: React.FC = () => {
           
 
           animation: shoot 40s ease-out infinite;
+          pointer-events: none;
         }
 
         @keyframes shoot {
@@ -98,18 +94,6 @@ const AskVoxStarBackground: React.FC = () => {
         .shoot1 { top: 20%; left: -10%; animation-delay: 0s; }
         .shoot2 { top: 45%; left: -15%; animation-delay: 8s; }
         .shoot3 { top: 70%; left: -20%; animation-delay: 16s; }
-
-        .content {
-          position: relative;
-          z-index: 10;
-          height: 100vh;
-          display: flex;
-          flex-direction: column;
-          justify-content: center;
-          align-items: center;
-          text-align: center;
-          pointer-events: none;
-        }
       `}</style>
 
       <div className="bg">
